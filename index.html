@@ -184,6 +184,12 @@ details.box summary::after{content:" ▾"}
   padding:8px max(16px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));max-width:720px;margin:0 auto}
 .sheet .grab{width:44px;height:5px;border-radius:3px;background:var(--line);margin:4px auto 10px}
 .sheet h2{margin:0;font:700 24px/1.15 var(--f-display);text-wrap:balance}
+.faces{display:grid;grid-template-columns:1fr 1fr;gap:8px;max-width:620px;margin:0 auto}
+.faces img{width:100%;border-radius:10px;aspect-ratio:63/88;object-fit:cover;background:var(--sunk);cursor:zoom-in}
+.faces img.turned{transform:rotate(180deg)}
+.faces[data-solo="0"],.faces[data-solo="1"]{grid-template-columns:1fr;max-width:340px}
+.faces[data-solo="0"] img:nth-child(2),.faces[data-solo="1"] img:nth-child(1){display:none}
+.faces[data-solo] img{cursor:zoom-out}.faces[data-solo=""] img{cursor:zoom-in}
 .big{width:100%;max-width:300px;border-radius:12px;display:block;margin:0 auto;aspect-ratio:63/88;object-fit:cover;background:var(--sunk)}
 .oracle{white-space:pre-wrap;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:15px}
 .prices{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
@@ -292,13 +298,13 @@ let S = {};
 try { const t = localStorage.getItem(KEY); if (t) S = JSON.parse(t); } catch (e) {}
 function migrate() {
   S.coll = S.coll || {}; S.decks = S.decks || {}; S.meta = S.meta || {};
-  if (!S.binders || !Object.keys(S.binders).length) S.binders = {
+  if (!S.binders) S.binders = {
     main: { id: "main", name: "Collection" }, trade: { id: "trade", name: "Trade binder" }, wish: { id: "wish", name: "Wishlist", wish: true } };
   S.alerts = S.alerts || {}; S.ph = S.ph || {}; S.hist = S.hist || []; S.trade = S.trade || { give: [], get: [] };
   const nc = {};
   for (const k in S.coll) {
     const e = S.coll[k]; if (!e || !e.id) continue;
-    if (!e.binder || !S.binders[e.binder]) e.binder = "main";
+    if (!e.binder || !S.binders[e.binder]) e.binder = ownBinder();
     const nk = ckey(e.id, e.finish, e.binder);
     if (nc[nk]) nc[nk].qty += e.qty; else nc[nk] = e;
   }
@@ -377,6 +383,7 @@ function slim(c) {
     num: c.collector_number, rarity: c.rarity, type,
     cmc: c.cmc || 0, mana: c.mana_cost != null ? c.mana_cost : f.map(x => x.mana_cost).filter(Boolean).join(" // "),
     colors: c.colors || (f[0] && f[0].colors) || [], ci: c.color_identity || [], img: imgOf(c, "small"), imgN: imgOf(c, "normal"),
+    imgB: (f[1] && f[1].image_uris && f[1].image_uris.normal) || "", layout: c.layout || "",
     prices: c.prices || {}, finishes: c.finishes || ["nonfoil"], uri: c.scryfall_uri || "", lang: c.lang || "en",
     leg: c.legalities ? leg : undefined, cap, basic: /\bBasic\b/.test(front),
     canCmdr: (/Legendary/.test(front) && /Creature/.test(front)) || /can be your commander/i.test(text),
@@ -545,7 +552,15 @@ function attachAutocomplete(inp, ul, onPick) {
 
 /* ---------- collection helpers ---------- */
 const isWish = bid => !!(S.binders[bid] && S.binders[bid].wish);
-function defaultBinder() { return S.meta.binder && S.binders[S.meta.binder] ? S.meta.binder : "main"; }
+// Any binder can be deleted, including the original "Collection". Where cards go when nothing else is chosen:
+// the binder last picked, else the first binder that isn't a wishlist; if there are no binders, a new "Collection".
+function ownBinder() {
+  const b = Object.values(S.binders).find(x => !x.wish) || Object.values(S.binders)[0];
+  if (b) return b.id;
+  const id = S.binders.main ? uid() : "main"; S.binders[id] = { id, name: "Collection" }; return id;
+}
+function defaultBinder() { return S.meta.binder && S.binders[S.meta.binder] ? S.meta.binder : ownBinder(); }
+const binderName = id => (S.binders[id] || { name: "Collection" }).name;
 function addToColl(card, finish = "nonfoil", qty = 1, binder, noSave) {
   const s = isSlim(card) ? card : slim(card);
   binder = binder && S.binders[binder] ? binder : defaultBinder();
@@ -807,13 +822,13 @@ function drawCollList() {
   const selBar = !cv.select ? "" : `<div class="box selbar">
       <div class="row wrap"><b class="grow">${cv.sel.size ? `${cv.sel.size} selected (${nSel} card${nSel === 1 ? "" : "s"})` : "Tap cards to select them"}</b>
         <button class="btn sm ghost" id="sAll">Select all ${shown.length}</button>${cv.sel.size ? `<button class="btn sm ghost" id="sNone">Clear</button>` : ""}</div>
-      ${cv.sel.size ? `<div class="row wrap"><select id="sBin" class="grow" aria-label="Move selected to">${binderOptions(cv.binder !== "all" ? cv.binder : "main")}</select><button class="btn sm primary" id="sMove">Move</button><button class="btn sm danger" id="sDel">Remove</button></div>
+      ${cv.sel.size ? `<div class="row wrap"><select id="sBin" class="grow" aria-label="Move selected to">${binderOptions(cv.binder !== "all" ? cv.binder : defaultBinder())}</select><button class="btn sm primary" id="sMove">Move</button><button class="btn sm danger" id="sDel">Remove</button></div>
       <div class="row" id="sDelC" hidden><span class="grow small">Remove ${nSel} cards from your collection?</span><button class="btn sm danger" id="sDelY">Remove</button><button class="btn sm ghost" id="sDelN">Keep</button></div>` : ""}</div>`;
   el.innerHTML = `${selBar}<div class="list">${shown.map(([k, e]) => { const c = phChange(e), on = cv.sel.has(k); return `${dayHead(e)}
     <div class="item ${cv.select ? "selectable" : ""} ${on ? "picked" : ""}">${cv.select ? `<span class="check" aria-hidden="true">${on ? "✓" : ""}</span>` : `<img loading="lazy" src="${esc(e.img)}" alt="">`}
       <button class="tap" data-open="${esc(k)}"><div class="name">${esc(e.name)}</div>
         <div class="meta"><span>${setIcon(e.set, e.rarity)} ${esc(e.set.toUpperCase())} #${esc(e.num)}</span>${e.finish !== "nonfoil" ? `<span class="chip foil">${e.finish}</span>` : ""}
-          ${cv.binder === "all" && e.binder !== "main" ? `<span class="chip">${esc(S.binders[e.binder].name)}</span>` : ""}
+          ${cv.binder === "all" && Object.keys(S.binders).length > 1 ? `<span class="chip">${esc(binderName(e.binder))}</span>` : ""}
           <span class="num">${money(priceOf(e, e.finish))} ea</span>${e.priceFrom === "en" ? `<span class="chip" title="No price for this language, so the English printing's price is used">${esc((e.lang || "").toUpperCase())} · EN price</span>` : priceOf(e, e.finish) == null ? `<span class="chip warn">No price</span>` : ""}${c && c.d ? `<span class="num ${c.d > 0 ? "up" : "down"}">${signed(c.d)}</span>` : ""}
           ${e.scanned ? `<span class="scanned num" title="Last scanned ${esc(new Date(e.scanned).toLocaleString())}">Scanned ${esc(cv.sort === "scanned" ? clock(e.scanned) : scanWhen(e.scanned))}</span>` : ""}${deckChips(uses[e.name])}</div></button>
       <div class="right"><span class="price gold num">${money(val(e))}</span>
@@ -874,14 +889,17 @@ function valueSheet() {
 }
 function binderSheet() {
   const draw = () => {
+    const counts = {}; for (const e of Object.values(S.coll)) counts[e.binder] = (counts[e.binder] || 0) + e.qty;
     $("#bBody").innerHTML = `<h2>Binders and lists</h2>
       <p class="small muted">Binders marked as a wishlist hold cards you want. They don't count as owned or toward your collection value.</p>
       <form class="row" id="bNew"><input type="text" id="bNewName" class="grow" placeholder="New binder, e.g. Bulk rares" maxlength="40"><button class="btn primary">Add</button></form>
-      <div class="stack" style="margin-top:12px">${Object.values(S.binders).map(b => `<div class="box">
+      <div class="stack" style="margin-top:12px">${Object.keys(S.binders).length ? "" : `<p class="small muted">No binders. Add one above, or new cards will go into a new “Collection” binder.</p>`}${Object.values(S.binders).map(b => `<div class="box">
         <div class="row"><input type="text" id="bn-${b.id}" class="grow" value="${esc(b.name)}" maxlength="40"><button class="btn sm" data-ren="${b.id}">Rename</button></div>
         <div class="row wrap"><label class="toggle grow"><input type="checkbox" data-wish="${b.id}" ${b.wish ? "checked" : ""}> Wishlist</label>
-          ${b.id !== "main" ? `<button class="btn sm danger" data-del="${b.id}">Delete</button>` : `<span class="small muted">Main binder</span>`}</div>
-        <div class="row" id="bc-${b.id}" hidden><span class="grow small">Delete “${esc(b.name)}”? Its cards move to ${esc(S.binders.main.name)}.</span><button class="btn sm danger" data-yes="${b.id}">Delete</button><button class="btn sm" data-no="${b.id}">Keep</button></div>
+          <span class="small muted">${counts[b.id] || 0} card${counts[b.id] === 1 ? "" : "s"}</span><button class="btn sm danger" data-del="${b.id}">Delete</button></div>
+        <div class="stack" id="bc-${b.id}" hidden style="gap:6px;margin-top:6px"><span class="small">Delete “${esc(b.name)}”?${counts[b.id] ? ` Its ${counts[b.id]} card${counts[b.id] === 1 ? "" : "s"}:` : ""}</span>
+          ${counts[b.id] ? `<select id="bw-${b.id}">${Object.values(S.binders).filter(o => o.id !== b.id).map(o => `<option value="${o.id}">Move to ${esc(o.name)}</option>`).join("")}<option value="">Delete them too</option></select>` : ""}
+          <div class="row"><button class="btn sm danger" data-yes="${b.id}">Delete binder</button><button class="btn sm" data-no="${b.id}">Keep</button></div></div>
       </div>`).join("")}</div>`;
     $("#bNew").onsubmit = e => { e.preventDefault(); const n = $("#bNewName").value.trim(); if (!n) return; const id = uid(); S.binders[id] = { id, name: n, wish: /wish|want/i.test(n) }; save(); draw(); };
     const root = $("#bBody");
@@ -890,8 +908,15 @@ function binderSheet() {
     root.querySelectorAll("[data-del]").forEach(b => b.onclick = () => { $("#bc-" + b.dataset.del).hidden = false; });
     root.querySelectorAll("[data-no]").forEach(b => b.onclick = () => { $("#bc-" + b.dataset.no).hidden = true; });
     root.querySelectorAll("[data-yes]").forEach(b => b.onclick = () => {
-      const id = b.dataset.yes; for (const k of Object.keys(S.coll)) if (S.coll[k] && S.coll[k].binder === id) moveEntry(k, "main");
-      delete S.binders[id]; if (S.meta.binder === id) S.meta.binder = "main"; save(); draw(); toast("Binder deleted");
+      const id = b.dataset.yes, sel = $("#bw-" + id), to = sel ? sel.value : "", name = S.binders[id].name;
+      const back = { binders: JSON.parse(JSON.stringify(S.binders)), coll: JSON.parse(JSON.stringify(S.coll)), meta: S.meta.binder, trade: JSON.parse(JSON.stringify(S.trade)) };
+      let n = 0;
+      for (const k of Object.keys(S.coll)) { const e = S.coll[k]; if (!e || e.binder !== id) continue; n += e.qty; if (to) moveEntry(k, to); else delete S.coll[k]; }
+      S.trade.give = S.trade.give.filter(g => S.coll[g.key]);
+      delete S.binders[id]; if (S.meta.binder === id) delete S.meta.binder;
+      if (cv.binder === id) cv.binder = "all";
+      save(); draw();
+      toast(`Deleted “${name}”${n ? (to ? `, moved ${n} cards to ${S.binders[to].name}` : ` and its ${n} cards`) : ""}`, { label: "Undo", fn: () => { S.binders = back.binders; S.coll = back.coll; S.trade = back.trade; if (back.meta) S.meta.binder = back.meta; save(); $("#bBody") ? draw() : render(); } });
     });
   };
   openSheet(`<div id="bBody"></div>`, () => render()); draw();
@@ -924,7 +949,7 @@ function ioSheet() {
     const head = "Name,Set code,Set name,Collector number,Foil,Rarity,Quantity,Binder Name,Scryfall ID,Price USD,Date added,Last scanned,First scanned";
     const iso = t => t ? new Date(t).toISOString().replace("T", " ").slice(0, 16) : "";
     const q = s => `"${String(s ?? "").replace(/"/g, '""')}"`;
-    const lines = Object.values(S.coll).map(e => [q(e.name), q(e.set), q(e.setName), q(e.num), e.finish === "nonfoil" ? "normal" : e.finish, e.rarity, e.qty, q(S.binders[e.binder].name), e.id, priceOf(e, e.finish) ?? "", iso(e.added), iso(e.scanned), iso(e.firstScanned)].join(","));
+    const lines = Object.values(S.coll).map(e => [q(e.name), q(e.set), q(e.setName), q(e.num), e.finish === "nonfoil" ? "normal" : e.finish, e.rarity, e.qty, q(binderName(e.binder)), e.id, priceOf(e, e.finish) ?? "", iso(e.added), iso(e.scanned), iso(e.firstScanned)].join(","));
     download(`deckhand-collection-${stamp}.csv`, [head, ...lines].join("\n"), "text/csv");
   };
   $("#ioImp").onclick = () => pickCSV({ kind: "coll" });
@@ -1069,7 +1094,7 @@ async function csvImport(file, target) {
         const newBinders = new Set();
         for (const [c, w] of found) {
           let b = st.dest;
-          if (b === "__file") { const before = Object.keys(S.binders).length; b = w.binder ? binderByName(w.binder) : "main"; if (Object.keys(S.binders).length > before) newBinders.add(S.binders[b].name); }
+          if (b === "__file") { const before = Object.keys(S.binders).length; b = w.binder ? binderByName(w.binder) : defaultBinder(); if (Object.keys(S.binders).length > before) newBinders.add(S.binders[b].name); }
           addToColl(slim(c), w.finish, w.qty, b, true); cards += w.qty; if (w.guessed) guessed++;
         }
         where = st.dest === "__file" ? (newBinders.size ? `New binders: ${[...newBinders].join(", ")}.` : "") : `Added to ${S.binders[st.dest].name}.`;
@@ -1351,6 +1376,13 @@ function openSheet(html, onClose) {
 }
 function closeSheet() { $("#sheetRoot").innerHTML = ""; document.body.style.overflow = ""; const f = sheetOnClose; sheetOnClose = null; f && f(); }
 
+// The other side of a card: the back face of a two-sided card, or the same picture turned over for a flip card
+function backOf(s, full) {
+  if (s.imgB) return { src: s.imgB };
+  const f = full && full.card_faces; if (f && f[1] && f[1].image_uris) return { src: f[1].image_uris.normal };
+  if ((s.layout || (full && full.layout)) === "flip") return { src: s.imgN || s.img, flip: true };
+  return null;
+}
 function openCard(card, finish, binder) {
   let s = isSlim(card) ? card : slim(card), editing = null;
   let full = card.oracle_text !== undefined || card.card_faces ? card : null;
@@ -1359,13 +1391,14 @@ function openCard(card, finish, binder) {
   const draw = () => {
     const owned = Object.entries(S.coll).filter(([, e]) => e.name === s.name);
     const decks = Object.values(S.decks);
-    const faces = full && full.card_faces && !full.image_uris ? full.card_faces : null;
+    const back = backOf(s, full);
     const text = full ? (full.card_faces ? full.card_faces.map(f => `${f.name}  ${f.mana_cost || ""}\n${f.type_line || ""}\n${f.oracle_text || ""}`).join("\n\n") : `${full.type_line || ""}\n${full.oracle_text || ""}`) : s.type;
     const p = s.prices || {}, ak = pkey(s.id, fin), al = S.alerts[ak], hist = S.ph[ak] || [];
     const legal = s.leg ? Object.keys(FORMATS).filter(f => f !== "casual").map(f => `<span class="chip ${s.leg[f] === "l" ? "ok" : s.leg[f] === "r" ? "acc" : s.leg[f] === "b" ? "warn" : ""}">${FORMATS[f]}${s.leg[f] === "b" ? " banned" : s.leg[f] === "r" ? " restricted" : s.leg[f] === "n" ? " ✕" : ""}</span>`).join("") : "";
     $("#sheetBody").innerHTML = `
-      <img class="big" id="bigImg" src="${esc(s.imgN || s.img)}" alt="${esc(s.name)}">
-      ${faces ? `<p class="small muted" style="text-align:center;margin:4px 0 0">Tap the card to flip it</p>` : ""}
+      ${back ? `<div class="faces" id="faces"><img src="${esc(s.imgN || s.img)}" alt="${esc(s.name.split(" // ")[0])}, front"><img src="${esc(back.src)}" alt="${esc(s.name.split(" // ")[1] || s.name)}, ${back.flip ? "flipped" : "back"}" class="${back.flip ? "turned" : ""}"></div>
+        <p class="small muted" style="text-align:center;margin:4px 0 0">${back.flip ? "Normal and flipped" : "Front and back"}. Tap a side to enlarge it.</p>`
+        : `<img class="big" id="bigImg" src="${esc(s.imgN || s.img)}" alt="${esc(s.name)}">`}
       <div class="row" style="justify-content:space-between;align-items:flex-start;margin-top:12px"><h2>${esc(s.name)}</h2><span>${pips(s.mana)}</span></div>
       <div class="muted small">${setIcon(s.set, s.rarity, true)} ${esc(s.setName)} · ${esc(s.set.toUpperCase())} #${esc(s.num)} · ${esc(s.rarity)}</div>
       <div class="oracle" style="margin-top:10px">${esc(text)}</div>
@@ -1380,7 +1413,7 @@ function openCard(card, finish, binder) {
           return `<div class="row" style="justify-content:space-between"><span class="label">In your collection</span><span class="num">${own} owned${inDecks ? ` · ${inDecks} in decks · ${Math.max(0, own - inDecks)} free` : ""}</span></div>
           ${uses.length ? `<div class="chips">${uses.map(u => `<button class="chip deck" data-deck="${u.id}">In ${esc(u.name)}${u.qty > 1 ? " ×" + u.qty : ""} ›</button>`).join("")}</div>` : ""}`; })()}
         ${owned.map(([k, e], i) => `<div class="own ${editing === k ? "open" : ""}">
-          <div class="kv"><span class="grow">${e.qty}× ${setIcon(e.set, e.rarity)} ${esc(e.set.toUpperCase())} #${esc(e.num)}${e.finish !== "nonfoil" ? ` <span class="chip foil">${e.finish}</span>` : ""} <span class="chip">${esc((S.binders[e.binder] || S.binders.main).name)}</span>
+          <div class="kv"><span class="grow">${e.qty}× ${setIcon(e.set, e.rarity)} ${esc(e.set.toUpperCase())} #${esc(e.num)}${e.finish !== "nonfoil" ? ` <span class="chip foil">${e.finish}</span>` : ""} <span class="chip">${esc(binderName(e.binder))}</span>
             ${e.scanned ? `<span class="small muted" style="display:block">Last scanned ${esc(scanWhen(e.scanned))}${e.firstScanned && !sameDay(new Date(e.firstScanned), new Date(e.scanned)) ? ` · first ${esc(dayLabel(e.firstScanned))}` : ""}${e.scans > 1 ? ` · ${e.scans} scans` : ""}</span>` : e.added ? `<span class="small muted" style="display:block">Added ${esc(scanWhen(e.added))}</span>` : ""}</span>
             <button class="btn sm" data-edit="${esc(k)}">${editing === k ? "Done" : "Edit"}</button></div>
           ${editing === k ? `<div class="editbox">
@@ -1412,7 +1445,16 @@ function openCard(card, finish, binder) {
       <div class="row wrap" style="margin-top:10px"><button class="btn sm" id="cTrade">Add to trade</button><button class="btn sm" id="cPrints">Other printings</button>
         ${s.uri ? `<a class="btn sm ghost" href="${esc(s.uri)}" target="_blank" rel="noopener">Open on Scryfall</a>` : ""}</div>
       <div id="printBox"></div>`;
-    if (faces) { let fi = 0; $("#bigImg").onclick = () => { fi = (fi + 1) % faces.length; $("#bigImg").src = faces[fi].image_uris.normal; }; }
+    const fc = $("#faces"); if (fc) fc.querySelectorAll("img").forEach((im, i) => im.onclick = () => { fc.dataset.solo = fc.dataset.solo === String(i) ? "" : String(i); });
+    // a two-sided card saved before backs were kept: look it up once and remember the back
+    if (!back && s.name.includes(" // ") && !s.layout && !s._looked) {
+      s._looked = true;
+      sf("/cards/" + s.id).then(c => {
+        const sl = slim(c); s.imgB = sl.imgB; s.layout = sl.layout; full = full || c;
+        for (const e of Object.values(S.coll)) if (e.id === s.id) { e.imgB = sl.imgB; e.layout = sl.layout; }
+        save(); if ($("#sheetBody") && backOf(s, full)) draw();
+      }).catch(() => {});
+    }
     const fs = $("#finSeg"); if (fs) fs.onclick = e => { const b = e.target.closest("button"); if (b) { fin = b.dataset.f; draw(); } };
     $("#bSel").onchange = e => { bsel = e.target.value; S.meta.binder = bsel; save(); draw(); };
     const body = $("#sheetBody");
@@ -1606,7 +1648,7 @@ function drawSession() {
     if (it.state === "review") return `<div class="item">${pic}<button class="tap" data-pr="${it.id}"><div class="name">${esc(c.name)}</div>${meta}<div class="small ${it.exact ? "up" : it.conf === "medium" ? "gold" : "muted"}">${it.exact ? "Exact printing" : it.conf === "medium" ? "Likely match: please check" : "Name read clearly · tap to check the printing"}</div></button>
       <div class="right"><span class="stepper"><button data-dec="${it.id}" aria-label="One fewer">−</button><span class="num">${it.qty}</span><button data-inc="${it.id}" aria-label="One more">+</button></span>
       <span class="row" style="gap:4px"><button class="btn sm primary" data-add="${it.id}">Add</button><button class="btn sm ghost" data-skip="${it.id}">Skip</button></span></div></div>`;
-    if (it.state === "added") return `<div class="item">${pic}<div style="min-width:0"><div class="name">${esc(c.name)}</div>${meta}<div class="small up">Added ${it.qty}× to ${esc((S.binders[it.binder] || S.binders.main).name)}</div></div>
+    if (it.state === "added") return `<div class="item">${pic}<div style="min-width:0"><div class="name">${esc(c.name)}</div>${meta}<div class="small up">Added ${it.qty}× to ${esc(binderName(it.binder))}</div></div>
       <div class="right"><button class="btn sm ghost" data-undo="${it.id}">Undo</button></div></div>`;
     if (it.state === "pick") return `<div class="item">${pic}<div style="min-width:0"><div class="name">Which card is it?</div>${it.read ? `<div class="small muted">Read “${esc(it.read)}”</div>` : ""}
       <div class="chips" style="margin-top:6px">${(it.cands || []).map(n => `<button data-pick="${it.id}" data-n="${esc(n)}">${esc(n)}</button>`).join("")}</div></div>
@@ -2004,7 +2046,7 @@ const GRIDS = [["1x1", "1 card"], ["1x2", "2 cards side by side"], ["2x2", "4 ca
 async function scanPhotos(files, layout) {
   if (sc.gridBusy || !files.length) return;
   const [R, C] = (layout || "1x1").split("x").map(Number), st = t => { const e = $("#gStatus"); if (e) e.textContent = t; scStatus(t); };
-  sc.gridBusy = true; let found = 0, read = 0, check = 0, missing = 0;
+  sc.gridBusy = true; let found = 0, read = 0, check = 0, missing = 0, lowRes = null;
   try {
     await getWorkers().catch(() => {});
     for (let fi = 0; fi < files.length; fi++) {
@@ -2014,9 +2056,14 @@ async function scanPhotos(files, layout) {
       if (!bmp) { st(tag + "couldn't open that photo."); continue; }
       const k = Math.min(1, 5000 / Math.max(bmp.width, bmp.height)), P = stillCanvas(bmp.width * k, bmp.height * k);
       P.getContext("2d").drawImage(bmp, 0, 0, P.width, P.height); bmp.close && bmp.close();
-      const W = P.width, H = P.height, cw = W / C, ch = H / R;
-      for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
-        const n = r * C + c + 1; st(`${tag}reading card ${n} of ${R * C}…`);
+      const W = P.width, H = P.height;
+      // "3 rows of 4" on a photo taken the other way round: use whichever way makes card-shaped spots
+      let rr = R, cc = C;
+      if (R !== C) { const fit = (r, c) => Math.abs(Math.log((W / c) / (H / r) / 0.75)); if (fit(C, R) < fit(R, C)) { rr = C; cc = R; } }
+      const cw = W / cc, ch = H / rr, cardPx = Math.round(Math.min(ch * 0.9, cw * 0.9 * 88 / 63));
+      if (cardPx < 650) lowRes = { W, H, cardPx, n: R * C };
+      for (let r = 0; r < rr; r++) for (let c = 0; c < cc; c++) {
+        const n = r * cc + c + 1; st(`${tag}reading card ${n} of ${rr * cc}…`);
         // the cell plus a margin, so a card that sits a little off its spot is still whole
         const x0 = Math.max(0, (c - 0.07) * cw), y0 = Math.max(0, (r - 0.05) * ch), x1 = Math.min(W, (c + 1.07) * cw), y1 = Math.min(H, (r + 1.05) * ch);
         const cell = stillCanvas(x1 - x0, y1 - y0); cell.getContext("2d").drawImage(P, x0, y0, x1 - x0, y1 - y0, 0, 0, cell.width, cell.height);
@@ -2043,7 +2090,8 @@ async function scanPhotos(files, layout) {
       }
       P.width = P.height = 0;                                               // the photo is deleted
     }
-    st(`Done: ${found} card${found === 1 ? "" : "s"} found, ${read} read${check ? `, ${check} to check` : ""}${found - read ? `, ${found - read} not read` : ""}${missing ? `, ${missing} spot${missing === 1 ? "" : "s"} where no card edges were found` : ""}. See the list below.`);
+    st(`Done: ${found} card${found === 1 ? "" : "s"} found, ${read} read${check ? `, ${check} to check` : ""}${found - read ? `, ${found - read} not read` : ""}${missing ? `, ${missing} spot${missing === 1 ? "" : "s"} where no card edges were found` : ""}. See the list below.` +
+      (lowRes ? ` Note: the photo was only ${lowRes.W}×${lowRes.H}, so each card got about ${lowRes.cardPx} pixels, too few to read names reliably. Set your camera app to its highest resolution and use “Choose photos”, or put fewer cards in each photo (about ${Math.max(1, Math.floor(lowRes.n * (lowRes.cardPx / 700) ** 2))} at this size).` : ""));
     if (read) { beep(); if (navigator.vibrate) navigator.vibrate(40); }
   } finally {
     sc.gridBusy = false;
@@ -2053,7 +2101,8 @@ async function scanPhotos(files, layout) {
 }
 async function grabPhoto(vid) {
   if (!camDev.ic) return null;
-  let blob; try { blob = await camDev.ic.takePhoto(camDev.photoOpts); } catch (e) { try { blob = await camDev.ic.takePhoto(); } catch (e2) { return null; } }
+  const limit = (pr, ms) => Promise.race([pr, sleep(ms).then(() => { throw new Error("photo took too long"); })]);
+  let blob; try { blob = await limit(camDev.ic.takePhoto(camDev.photoOpts), 5000); } catch (e) { return null; }
   const bmp = await createImageBitmap(blob, { imageOrientation: "from-image" }).catch(() => null); blob = null;
   if (!bmp) return null;
   let pw = bmp.width, ph = bmp.height, rot = 0;
@@ -2495,7 +2544,7 @@ function renderTrade() {
       : `<p class="small muted" style="margin:0">Add the cards your friend is offering.</p>`}
 
     ${S.trade.give.length || S.trade.get.length ? `<div class="box">
-      <div class="row wrap"><label class="small grow">Put received cards in <select id="tBin">${binderOptions(isWish(defaultBinder()) ? "main" : defaultBinder())}</select></label></div>
+      <div class="row wrap"><label class="small grow">Put received cards in <select id="tBin">${binderOptions(isWish(defaultBinder()) ? ownBinder() : defaultBinder())}</select></label></div>
       <div class="row wrap"><button class="btn primary grow" id="tDone">Complete trade</button><button class="btn" id="tClear">Clear</button></div>
       <div class="row" id="tConfirm" hidden><span class="grow small">Remove the cards you give from your collection and add the ones you get?</span><button class="btn sm primary" id="tYes">Yes, trade</button><button class="btn sm" id="tNo">Not yet</button></div>
     </div>` : ""}
@@ -2542,7 +2591,7 @@ function renderTrade() {
 /* ================= DECKS ================= */
 const TYPES = ["Creature", "Planeswalker", "Battle", "Instant", "Sorcery", "Artifact", "Enchantment", "Land"];
 const typeOf = t => { for (const x of ["Land", "Creature", "Planeswalker", "Battle", "Instant", "Sorcery", "Artifact", "Enchantment"]) if ((t || "").split("//")[0].includes(x)) return x; return "Other"; };
-const DECK_FIELDS = ["id", "oid", "name", "set", "setName", "num", "rarity", "type", "cmc", "mana", "colors", "ci", "img", "imgN", "prices", "finishes", "uri", "leg", "cap", "basic", "canCmdr", "partner"];
+const DECK_FIELDS = ["id", "oid", "name", "set", "setName", "num", "rarity", "type", "cmc", "mana", "colors", "ci", "img", "imgN", "imgB", "layout", "prices", "finishes", "uri", "leg", "cap", "basic", "canCmdr", "partner"];
 function addToDeck(d, card, qty, side, noSave) {
   const s = isSlim(card) ? card : slim(card);
   const k = s.id + "|" + (side ? 1 : 0);
