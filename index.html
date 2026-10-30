@@ -1253,12 +1253,13 @@ async function showPrints(s, onPick) {
 
 /* ================= SCANNER ================= */
 let stream = null, torchOn = false;
-const sc = { mode: S.meta.scanMode || "ask", auto: S.meta.autoCap !== false, finish: "nonfoil", match: null, candidates: [], session: [], busy: false };
+const sc = { mode: S.meta.scanMode || "ask", auto: S.meta.autoCap !== false, finish: "nonfoil", items: [], busy: false, fixId: null, lastThumb: "", lastRead: "", lastKind: "" };
 const readyMsg = () => sc.auto ? "Ready. Hold a card inside the frame. It reads it by itself and tries again if needed." : "Ready. Tap the white button to scan.";
 const manualHint = "Fill the frame with one card. Keep the name and the bottom-left code inside the yellow boxes.";
 function scanHead() {
-  const val = sc.session.reduce((a, x) => a + (priceOf(x.card, x.finish) || 0) * x.qty, 0);
-  setHead("Scan", sc.session.length ? `${sc.session.reduce((a, x) => a + x.qty, 0)} added · ${money(val)}` : "");
+  const added = sc.items.filter(i => i.state === "added").reduce((a, x) => a + x.qty, 0);
+  const waiting = sc.items.filter(i => i.state !== "added").reduce((a, x) => a + (x.qty || 1), 0);
+  setHead("Scan", [sc.items.length ? `${sc.items.reduce((a, x) => a + (x.qty || 1), 0)} scanned` : "", added ? `${added} added` : "", waiting ? `${waiting} to review` : ""].filter(Boolean).join(" · "));
 }
 function renderScan() {
   if (!S.meta.usedScan) { S.meta.usedScan = true; save(); }
@@ -1277,18 +1278,17 @@ function renderScan() {
       <span class="seg" id="scFin"><button data-f="nonfoil" aria-pressed="${sc.finish === "nonfoil"}">Normal</button><button data-f="foil" aria-pressed="${sc.finish === "foil"}">Foil</button></span>
       <select id="scBinder" class="grow" aria-label="Add scanned cards to">${binderOptions(defaultBinder())}</select></div>
     <label class="small" style="display:flex;flex-direction:column;gap:4px">After each scan
-      <select id="scMode"><option value="ask" ${sc.mode === "ask" ? "selected" : ""}>Show me the card, I'll tap Add</option>
-        <option value="exact" ${sc.mode === "exact" ? "selected" : ""}>Add it if the exact printing was read</option>
-        <option value="any" ${sc.mode === "any" ? "selected" : ""}>Always add it (hands-free)</option></select></label>
+      <select id="scMode"><option value="ask" ${sc.mode === "ask" ? "selected" : ""}>Keep scanning, I'll choose what to add from the list</option>
+        <option value="exact" ${sc.mode === "exact" ? "selected" : ""}>Add exact-printing matches, list the rest</option>
+        <option value="any" ${sc.mode === "any" ? "selected" : ""}>Add everything automatically</option></select></label>
     <div class="status" id="scStatus" aria-live="polite"></div>
-    <div id="scMatch"></div>
     <div class="ac"><input type="search" id="scType" placeholder="Not recognized? Start typing the name" autocomplete="off" autocapitalize="off" spellcheck="false"><ul id="scAc" hidden></ul></div>
     <div id="scSession"></div>
   </div>`;
   layoutFrame(); window.onresize = layoutFrame;
   $("#shoot").onclick = () => { ana.armed = true; captureFrom("video"); };
   $("#photo").onclick = () => { const f = $("#fileIn"); f.accept = "image/*"; f.setAttribute("capture", "environment"); f.value = ""; f.onchange = () => { f.removeAttribute("capture"); f.files[0] && captureFrom("file", f.files[0]); }; f.click(); };
-  $("#scFin").onclick = e => { const b = e.target.closest("button"); if (b) { sc.finish = b.dataset.f; $("#scFin").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); if (sc.match) drawMatch(); } };
+  $("#scFin").onclick = e => { const b = e.target.closest("button"); if (b) { sc.finish = b.dataset.f; $("#scFin").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); } };
   $("#scBinder").onchange = e => { S.meta.binder = e.target.value; save(); };
   $("#scMode").onchange = e => { sc.mode = e.target.value; S.meta.scanMode = sc.mode; save(); };
   $("#autoBtn").onclick = () => {
@@ -1296,16 +1296,81 @@ function renderScan() {
     const b = $("#autoBtn"); b.setAttribute("aria-pressed", sc.auto); b.textContent = "Auto " + (sc.auto ? "on" : "off");
     camHint(sc.auto ? "Line up a card inside the frame" : manualHint);
     ana.since = 0; setFrameState("", 0);
-    if (!sc.match) scStatus(readyMsg());
+    scStatus(readyMsg());
   };
   $("#torch").onclick = toggleTorch;
-  attachAutocomplete($("#scType"), $("#scAc"), async name => { $("#scType").value = ""; try { setMatch(await sf("/cards/named?exact=" + encodeURIComponent(name)), false, true); } catch (e) { scStatus(e.message); } });
-  drawSession(); drawMatch(); startCamera();
+  attachAutocomplete($("#scType"), $("#scAc"), async name => {
+    $("#scType").value = "";
+    try {
+      const card = await sf("/cards/named?exact=" + encodeURIComponent(name));
+      const it = sc.fixId && sc.items.find(i => i.id === sc.fixId); sc.fixId = null; $("#scType").placeholder = "Not recognized? Start typing the name";
+      if (it) { setItemCard(it, card, false); it.state = "review"; saveSession(); drawSession(); scanHead(); }
+      else setMatch(card, false, true);
+    } catch (e) { scStatus(e.message); }
+  });
+  drawSession(); startCamera();
+}
+// The scanning session: everything scanned shows up here right away, newest first. Nothing waits
+// for you: decide later, card by card or all at once. Kept until you clear it (survives reloads).
+function saveSession() { S.scanSession = sc.items.slice(-200); save(); }
+function setItemCard(it, card, exact) {
+  it.card = isSlim(card) ? card : slim(card); it.exact = exact;
+  if (!it.card.finishes.includes(it.finish)) it.finish = it.card.finishes[0];
+  it.thumb = ""; it.cands = null;
 }
 function drawSession() {
   const el = $("#scSession"); if (!el) return;
-  el.innerHTML = sc.session.length ? `<h2 class="sec">Added this session</h2><div class="list">${sc.session.slice().reverse().map((x, i) => `<div class="item"><img src="${esc(x.card.img)}" alt=""><div style="min-width:0"><div class="name">${esc(x.card.name)}</div><div class="meta">${esc(x.card.set.toUpperCase())} #${esc(x.card.num)} ${x.finish !== "nonfoil" ? `<span class="chip foil">${x.finish}</span>` : ""}<span class="chip">${esc((S.binders[x.binder] || S.binders.main).name)}</span>${x.at ? `<span class="num">${esc(clock(x.at))}</span>` : ""}</div></div><div class="right"><span class="num">${x.qty}× ${money(priceOf(x.card, x.finish))}</span><button class="btn sm ghost" data-undo="${sc.session.length - 1 - i}">Undo</button></div></div>`).join("")}</div>` : "";
-  el.querySelectorAll("[data-undo]").forEach(b => b.onclick = () => { const x = sc.session.splice(+b.dataset.undo, 1)[0]; addToColl(x.card, x.finish, -x.qty, x.binder); drawSession(); scanHead(); toast("Removed " + x.card.name); });
+  const list = sc.items.slice().reverse();
+  if (!list.length) { el.innerHTML = `<p class="small muted" style="margin:0">Scanned cards appear here as you go. Keep scanning; choose what to add afterwards.</p>`; return; }
+  const review = sc.items.filter(i => i.state === "review"), nReview = review.reduce((a, x) => a + x.qty, 0);
+  const val = review.reduce((a, x) => a + (priceOf(x.card, x.finish) || 0) * x.qty, 0);
+  const row = it => {
+    const c = it.card, pic = c ? `<img src="${esc(c.img)}" alt="">` : it.thumb ? `<img src="${it.thumb}" alt="Picture of the scanned card">` : `<img alt="">`;
+    const fin = c && c.finishes.length > 1 && it.state === "review" ? `<button class="chip ${it.finish !== "nonfoil" ? "foil" : ""}" data-fin="${it.id}">${it.finish === "nonfoil" ? "normal" : it.finish} ▾</button>` : it.finish !== "nonfoil" ? `<span class="chip foil">${it.finish}</span>` : "";
+    const meta = c ? `<div class="meta"><span>${esc(c.set.toUpperCase())} #${esc(c.num)}</span>${fin}<span class="num">${money(priceOf(c, it.finish))}</span><span class="num">${esc(clock(it.at))}</span></div>` : "";
+    if (it.state === "review") return `<div class="item">${pic}<button class="tap" data-pr="${it.id}"><div class="name">${esc(c.name)}</div>${meta}<div class="small ${it.exact ? "up" : "muted"}">${it.exact ? "Exact printing" : "Tap to check the printing"}</div></button>
+      <div class="right"><span class="stepper"><button data-dec="${it.id}" aria-label="One fewer">−</button><span class="num">${it.qty}</span><button data-inc="${it.id}" aria-label="One more">+</button></span>
+      <span class="row" style="gap:4px"><button class="btn sm primary" data-add="${it.id}">Add</button><button class="btn sm ghost" data-skip="${it.id}">Skip</button></span></div></div>`;
+    if (it.state === "added") return `<div class="item">${pic}<div style="min-width:0"><div class="name">${esc(c.name)}</div>${meta}<div class="small up">Added ${it.qty}× to ${esc((S.binders[it.binder] || S.binders.main).name)}</div></div>
+      <div class="right"><button class="btn sm ghost" data-undo="${it.id}">Undo</button></div></div>`;
+    if (it.state === "pick") return `<div class="item">${pic}<div style="min-width:0"><div class="name">Which card is it?</div>${it.read ? `<div class="small muted">Read “${esc(it.read)}”</div>` : ""}
+      <div class="chips" style="margin-top:6px">${(it.cands || []).map(n => `<button data-pick="${it.id}" data-n="${esc(n)}">${esc(n)}</button>`).join("")}</div></div>
+      <div class="right"><button class="btn sm ghost" data-type="${it.id}">Type it</button><button class="btn sm ghost" data-skip="${it.id}">Remove</button></div></div>`;
+    return `<div class="item flagged">${pic}<div style="min-width:0"><div class="name">Couldn't read this card</div>${it.read ? `<div class="small muted">Read “${esc(it.read)}”</div>` : ""}</div>
+      <div class="right"><button class="btn sm ghost" data-type="${it.id}">Type it</button><button class="btn sm ghost" data-skip="${it.id}">Remove</button></div></div>`;
+  };
+  el.innerHTML = `<div class="row wrap" style="justify-content:space-between"><h2 class="sec" style="margin:0">Scanned this session</h2>
+      <span class="row" style="gap:6px">${nReview ? `<button class="btn sm primary" id="sesAll">Add all ${nReview} (${money(val)})</button>` : ""}<button class="btn sm ghost" id="sesClear">Clear list</button></span></div>
+    <div class="row" id="sesConfirm" hidden><span class="grow small">Clear the list? Cards you already added stay in your collection.</span><button class="btn sm" id="sesYes">Clear</button><button class="btn sm ghost" id="sesNo">Keep</button></div>
+    <div class="list" style="margin-top:8px">${list.map(row).join("")}</div>`;
+  const find = id => sc.items.find(i => i.id === id), redraw = () => { saveSession(); drawSession(); scanHead(); };
+  const sa = $("#sesAll"); if (sa) sa.onclick = () => { const n = nReview; review.forEach(it => addItem(it, it.qty)); redraw(); toast(`Added ${n} cards to ${S.binders[defaultBinder()].name}`); };
+  $("#sesClear").onclick = () => { $("#sesConfirm").hidden = false; };
+  $("#sesNo").onclick = () => { $("#sesConfirm").hidden = true; };
+  $("#sesYes").onclick = () => { sc.items = []; redraw(); };
+  el.querySelectorAll("[data-add]").forEach(b => b.onclick = () => { const it = find(b.dataset.add); addItem(it, it.qty); redraw(); });
+  el.querySelectorAll("[data-skip]").forEach(b => b.onclick = () => { sc.items = sc.items.filter(i => i.id !== b.dataset.skip); redraw(); });
+  el.querySelectorAll("[data-inc]").forEach(b => b.onclick = () => { find(b.dataset.inc).qty++; redraw(); });
+  el.querySelectorAll("[data-dec]").forEach(b => b.onclick = () => { const it = find(b.dataset.dec); it.qty = Math.max(1, it.qty - 1); redraw(); });
+  el.querySelectorAll("[data-fin]").forEach(b => b.onclick = () => { const it = find(b.dataset.fin), f = it.card.finishes; it.finish = f[(f.indexOf(it.finish) + 1) % f.length]; redraw(); });
+  el.querySelectorAll("[data-undo]").forEach(b => b.onclick = () => { const it = find(b.dataset.undo); addToColl(it.card, it.finish, -it.qty, it.binder); it.state = "review"; redraw(); toast("Taken back out of your collection"); });
+  el.querySelectorAll("[data-type]").forEach(b => b.onclick = () => { sc.fixId = b.dataset.type; const i = $("#scType"); i.placeholder = "Type the name of that card"; i.focus(); });
+  el.querySelectorAll("[data-pick]").forEach(b => b.onclick = async () => {
+    const it = find(b.dataset.pick);
+    try { setItemCard(it, await sf("/cards/named?exact=" + encodeURIComponent(b.dataset.n)), false); it.state = "review"; redraw(); } catch (e) { toast(e.message); }
+  });
+  el.querySelectorAll("[data-pr]").forEach(b => b.onclick = () => {
+    const it = find(b.dataset.pr);
+    openSheet(`<h2>${esc(it.card.name)}</h2><p class="small muted">Pick the printing you have.</p><div id="printBox"></div>`, () => drawSession());
+    showPrints(it.card, picked => { setItemCard(it, picked, true); saveSession(); closeSheet(); });
+  });
+}
+function addItem(it, qty) {
+  if (!it || !it.card) return;
+  it.binder = defaultBinder();
+  const k = addToColl(it.card, it.finish, qty, it.binder, true), at = Date.now(), e = S.coll[k];
+  if (e) { e.scanned = it.at || at; e.firstScanned = e.firstScanned || it.at || at; e.scans = (e.scans || 0) + qty; }
+  it.state = "added"; it.qty = qty;
 }
 function scStatus(t) { const el = $("#scStatus"); if (el) el.textContent = t; }
 function camHint(t) { const h = $("#camHint"); if (h && h.textContent !== t) h.textContent = t; }
@@ -1446,7 +1511,7 @@ async function startCamera() {
     if (camDev.caps.torch) $("#torch").hidden = false;
     if ((camDev.caps.focusMode || []).includes("continuous")) track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
     vid.onclick = e => { const t = camXform(vid), r = vid.getBoundingClientRect(); focusAt(((e.clientX - r.left) - t.ox) / t.s / vid.videoWidth, ((e.clientY - r.top) - t.oy) / t.s / vid.videoHeight, true); camHint("Focusing…"); };
-    if (!sc.match) scStatus(readyMsg());
+    scStatus(readyMsg());
     getWorker().catch(() => {});
     vid.onloadedmetadata = () => placeFrame(vid); placeFrame(vid);
     startAuto();
@@ -1495,7 +1560,6 @@ function diffL(a, b) { let s = 0, n = 0; for (let i = 0; i < a.length; i += 3) {
 function autoTick() {
   if (!sc.auto || tab !== "scan" || !stream || document.hidden || sc.busy || ana.shooting) return;
   const vid = $("#vid"); if (!vid || !vid.videoWidth) return;
-  if (sc.match || sc.candidates.length) { ana.since = 0; setFrameState("", 0); camHint("Tap Add or Skip below, then show the next card"); return; }
   const s = sampleCard(vid); if (!s) return;
   ana.last = s;
   const locked = cardLocked(), boxMoving = locked && det.moved > 0.04;
@@ -1543,13 +1607,17 @@ async function shootAndRead(s) {
   camHint(ana.fails ? `Trying again (${ana.fails + 1} of ${AUTO.tries})…` : "Reading…");
   const vid = $("#vid"), shot = vid && await grabBest(vid);
   if (!shot) { setFrameState("", 0); return; }
+  try { const t = document.createElement("canvas"); t.width = 63; t.height = 88; t.getContext("2d").drawImage(shot.c, 0, 0, 63, 88); sc.lastThumb = t.toDataURL("image/jpeg", 0.7); } catch (e) { sc.lastThumb = ""; }
   const ok = await captureFrom("snap", shot.c, ana.fails % 2 === 1);    // every other retry uses stronger settings
   shot.c.width = shot.c.height = 0;                                       // the snapshot is deleted once read
   if (!sc.auto) return;
   if (ok) { ana.armed = false; ana.sig = s.L; ana.fails = 0; ana.failMsg = ""; beep(); if (navigator.vibrate) navigator.vibrate(40); }
   else {
     ana.fails++; ana.cool = performance.now() + 250;                      // quick automatic retry with a fresh snapshot
-    if (ana.fails >= AUTO.tries) { ana.armed = false; ana.sig = s.L; ana.fails = 0; ana.failMsg = "Couldn't read this one. Type its name below, or show another card"; }
+    if (ana.fails >= AUTO.tries) {
+      ana.armed = false; ana.sig = s.L; ana.fails = 0; ana.failMsg = "Couldn't read that one. It's in the list below. Show the next card";
+      sc.items.push({ id: uid(), state: "failed", read: sc.lastRead, thumb: sc.lastThumb, finish: sc.finish, qty: 1, at: Date.now() }); saveSession(); drawSession(); scanHead();
+    }
   }
   setFrameState("", 0);
 }
@@ -1589,7 +1657,7 @@ function getWorkers() {
     const b = await mk(1);                     // second one reuses it from the cache
     await a.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',-", preserve_interword_spaces: "1" });
     await b.setParameters({ tessedit_pageseg_mode: "6", tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/•·*-. " });
-    workers = [a, b]; if (!sc.match) scStatus(readyMsg()); return workers;
+    workers = [a, b]; if (tab === "scan") scStatus(readyMsg()); return workers;
   })().catch(e => { workersP = null; throw e; });
   return workersP;
 }
@@ -1635,9 +1703,8 @@ async function captureFrom(kind, file, alt) {
   } catch (e) { scStatus("Scan failed: " + (e.message || e)); return false; }
   finally {
     sc.busy = false; scanning = false;
-    if (sc.match) scanProg(1, "Found " + sc.match.card.name, "ok");
-    else if (sc.candidates.length) scanProg(1, "Pick the right card below", "ok");
-    else if (ok) scanProg(1, "Added", "ok");
+    if (ok && sc.lastKind === "pick") scanProg(1, "Listed. Pick the right card later", "ok");
+    else if (ok) scanProg(1, sc.lastKind || "Found", "ok");
     else scanProg(1, "Couldn't read that card", "fail");
   }
 }
@@ -1658,6 +1725,7 @@ function parseInfo(t) {
 }
 async function identify(nameTxt, infoTxt) {
   const name = cleanName(nameTxt), info = parseInfo(infoTxt);
+  sc.lastRead = name; sc.lastKind = "";
   scanProg(0.8, "Finding the card…");
   // look up the printing from the set code + number while the name is being matched
   const codeP = info.set && info.num ? sf(`/cards/${info.set}/${encodeURIComponent(info.num)}`).catch(() => null) : Promise.resolve(null);
@@ -1685,46 +1753,27 @@ async function identify(nameTxt, infoTxt) {
   let picks = (cands || []).filter(c => c.score >= 0.5).map(c => c.name);
   if (!picks.length && name.length >= 4) picks = (suggest(name, 5) || []).slice();   // only part of the name was read
   if (byCode && !picks.includes(byCode.name)) picks.unshift(byCode.name);
-  if (picks.length) { sc.match = null; sc.candidates = picks.slice(0, 5); drawMatch(); scStatus(name ? `Read “${name}”. Which card is it?` : "Which card is it?"); return true; }
-  sc.match = null; sc.candidates = []; drawMatch();
+  if (picks.length) {
+    sc.items.push({ id: uid(), state: "pick", cands: picks.slice(0, 5), read: name, thumb: sc.lastThumb, finish: sc.finish, qty: 1, at: Date.now() });
+    sc.lastKind = "pick"; saveSession(); drawSession(); scanHead(); scStatus("Listed below: pick the right card when you're done scanning."); return true;
+  }
   scStatus(name ? `Read “${name}” but couldn't match it. Hold steady with good light, or type the name below.` : "Couldn't read the name. Fill the frame, add light, and try again.");
   return false;
 }
+// A card was found: list it (or add it right away, depending on the setting) and keep scanning.
 function setMatch(card, exact, typed) {
-  sc.match = { card: slim(card), exact }; sc.candidates = [];
-  if (!typed && (sc.mode === "any" || (sc.mode === "exact" && exact))) { addScan(1); return; }
-  scStatus(exact ? "Matched name and printing." : "Matched the name. Check the printing before adding.");
-  drawMatch();
-}
-function addScan(qty) {
-  const s = sc.match.card, fin = s.finishes.includes(sc.finish) ? sc.finish : s.finishes[0], b = defaultBinder();
-  const k = addToColl(s, fin, qty, b, true), at = Date.now(), e = S.coll[k];
-  if (e) { e.scanned = at; e.firstScanned = e.firstScanned || at; e.scans = (e.scans || 0) + qty; }
-  save(); sc.session.push({ card: s, finish: fin, qty, binder: b, at }); sc.match = null;
+  const s = slim(card), fin = s.finishes.includes(sc.finish) ? sc.finish : s.finishes[0];
+  const auto = !typed && (sc.mode === "any" || (sc.mode === "exact" && exact));
+  // the same printing scanned again while it's still waiting in the list: count it up instead of a new row
+  const same = !auto && sc.items.find(i => i.state === "review" && i.card.id === s.id && i.finish === fin);
+  let it;
+  if (same) { same.qty++; same.at = Date.now(); sc.items = sc.items.filter(i => i !== same).concat(same); it = same; }
+  else { it = { id: uid(), state: "review", card: s, exact, finish: fin, qty: 1, at: Date.now() }; sc.items.push(it); }
+  if (auto) addItem(it, 1);
+  sc.lastKind = (auto ? "Added " : "Listed ") + s.name;
   if (navigator.vibrate) navigator.vibrate(30);
-  drawSession(); drawMatch(); scanHead();
-  scStatus(`Added ${qty}× ${s.name} (${s.set.toUpperCase()} #${s.num}) to ${S.binders[b].name}. ${sc.auto ? "Show the next card." : "Ready for the next card."}`);
-}
-function drawMatch() {
-  const el = $("#scMatch"); if (!el) return;
-  if (sc.candidates.length) {
-    el.innerHTML = `<div class="chips">${sc.candidates.map(n => `<button data-n="${esc(n)}">${esc(n)}</button>`).join("")}</div>`;
-    el.firstChild.onclick = async e => { const b = e.target.closest("button"); if (b) { try { setMatch(await sf("/cards/named?exact=" + encodeURIComponent(b.dataset.n)), false); } catch (err) { scStatus(err.message); } } };
-    return;
-  }
-  if (!sc.match) { el.innerHTML = ""; return; }
-  const s = sc.match.card, fin = s.finishes.includes(sc.finish) ? sc.finish : s.finishes[0], own = ownedByName(s.name);
-  el.innerHTML = `<div class="match"><img src="${esc(s.imgN || s.img)}" alt="">
-    <div class="stack" style="gap:6px;min-width:0"><div><div style="font-weight:700">${esc(s.name)}</div>
-      <div class="small muted">${esc(s.setName)} · ${esc(s.set.toUpperCase())} #${esc(s.num)}</div>
-      <div class="small"><span class="price gold num">${money(priceOf(s, fin))}</span> ${fin !== "nonfoil" ? `<span class="chip foil">${fin}</span>` : ""} ${!s.finishes.includes(sc.finish) ? `<span class="chip">no ${sc.finish} version</span>` : ""}</div>
-      <div class="small muted">You own ${own}</div></div>
-      <div class="row wrap"><button class="btn sm primary" id="mAdd">Add 1</button><button class="btn sm" id="mAdd4">Add 4</button>
-        <button class="btn sm" id="mPr">Change printing</button><button class="btn sm ghost" id="mNo">Skip</button></div></div></div>
-    <div id="printBox"></div>`;
-  $("#mAdd").onclick = () => addScan(1); $("#mAdd4").onclick = () => addScan(4);
-  $("#mNo").onclick = () => { sc.match = null; drawMatch(); scStatus(readyMsg()); };
-  $("#mPr").onclick = () => showPrints(s, picked => { sc.match = { card: slim(picked), exact: true }; drawMatch(); });
+  saveSession(); drawSession(); scanHead();
+  scStatus(`${auto ? "Added" : "Scanned"} ${s.name} (${s.set.toUpperCase()} #${s.num}). ${sc.auto ? "Show the next card." : "Ready for the next card."}`);
 }
 
 /* ================= TRADE ================= */
@@ -2052,6 +2101,7 @@ async function boot() {
   if (idb.ok) { try { stored = await idbGet("state"); } catch (e) { idb.ok = false; } }
   if (stored && stored.coll) { S = stored; migrate(); applySearchPrefs(); sc.mode = S.meta.scanMode || "ask"; sc.auto = S.meta.autoCap !== false; }
   else if (Object.keys(S.coll).length || Object.keys(S.decks).length) await flushSave();     // move older data into the database
+  sc.items = Array.isArray(S.scanSession) ? S.scanSession : [];
   go("coll");
   loadNames().catch(() => {});
   if (S.meta.usedScan) setTimeout(() => getWorkers().catch(() => {}), 2500);
