@@ -98,6 +98,7 @@ select{width:auto;max-width:100%}
 .stepper button{border:0;background:var(--sunk);width:30px;height:30px;font-weight:700}
 .stepper span{min-width:28px;text-align:center;font-weight:600}
 .price{font-weight:600}
+.item .scanned{color:var(--accent);white-space:nowrap}
 .group-h{padding:8px 10px;background:var(--sunk);font:600 12px var(--f-display);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);display:flex;justify-content:space-between}
 
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px}
@@ -246,6 +247,15 @@ const signed = n => (n > 0 ? "+" : n < 0 ? "−" : "") + money(Math.abs(n));
 const uid = () => Math.random().toString(36).slice(2, 10);
 const today = () => Math.floor(Date.now() / 864e5);
 const dayStr = d => new Date(d * 864e5 + 12 * 36e5).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+const clock = t => new Date(t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+function dayLabel(t) {
+  const d = new Date(t), now = new Date(), y = new Date(now); y.setDate(now.getDate() - 1);
+  if (sameDay(d, now)) return "Today";
+  if (sameDay(d, y)) return "Yesterday";
+  return d.toLocaleDateString(undefined, d.getFullYear() === now.getFullYear() ? { weekday: "short", month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+}
+const scanWhen = t => { const l = dayLabel(t); return (l === "Today" || l === "Yesterday" ? l.toLowerCase() : l) + " " + clock(t); };
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 const norm = s => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
@@ -494,7 +504,9 @@ function moveEntry(k, b) {
   const e = S.coll[k]; if (!e || e.binder === b) return;
   delete S.coll[k]; e.binder = b;
   const nk = ckey(e.id, e.finish, b);
-  if (S.coll[nk]) S.coll[nk].qty += e.qty; else S.coll[nk] = e;
+  const t = S.coll[nk];
+  if (t) { t.qty += e.qty; if (e.scanned && (!t.scanned || e.scanned > t.scanned)) t.scanned = e.scanned; if (e.firstScanned && (!t.firstScanned || e.firstScanned < t.firstScanned)) t.firstScanned = e.firstScanned; t.scans = (t.scans || 0) + (e.scans || 0); }
+  else S.coll[nk] = e;
   save();
 }
 function ownedByName(name) { let n = 0; for (const k in S.coll) { const e = S.coll[k]; if (e.name === name && !isWish(e.binder)) n += e.qty; } return n; }
@@ -631,7 +643,7 @@ function renderColl() {
       : `<p class="small muted" style="margin:0">Your value chart starts after prices update on two different days. Deckhand updates them automatically once a day when you open it.</p>`) : ""}
     ${cv.binder === "all" ? moversHTML() : ""}
     <div class="row"><input type="search" id="cq" class="grow" placeholder="Filter by name, set or type" value="${esc(cv.q)}">
-      <select id="cs" aria-label="Sort"><option value="value">Value</option><option value="change">Price change</option><option value="name">Name</option><option value="set">Set</option><option value="recent">Recent</option></select></div>
+      <select id="cs" aria-label="Sort"><option value="value">Value</option><option value="change">Price change</option><option value="name">Name</option><option value="set">Set</option><option value="scanned">Date scanned</option><option value="recent">Recently added</option></select></div>
     <div class="row wrap"><button class="btn sm" id="cRefresh">Update prices</button><button class="btn sm" id="cImp">Import CSV</button><button class="btn sm" id="cMore">Backup / export</button></div>
     <div id="clist"></div></div>`;
   $("#cs").value = cv.sort; updRefreshBtn();
@@ -663,17 +675,27 @@ function drawCollList() {
   const val = e => (priceOf(e, e.finish) || 0) * e.qty;
   const chg = e => { const c = phChange(e); return c ? c.d * e.qty : 0; };
   const cmp = { value: (a, b) => val(b[1]) - val(a[1]), change: (a, b) => Math.abs(chg(b[1])) - Math.abs(chg(a[1])), name: (a, b) => a[1].name.localeCompare(b[1].name),
-    set: (a, b) => a[1].set.localeCompare(b[1].set) || (parseInt(a[1].num) || 0) - (parseInt(b[1].num) || 0), recent: (a, b) => b[1].added - a[1].added }[cv.sort];
+    set: (a, b) => a[1].set.localeCompare(b[1].set) || (parseInt(a[1].num) || 0) - (parseInt(b[1].num) || 0), recent: (a, b) => Math.max(b[1].added || 0, b[1].scanned || 0) - Math.max(a[1].added || 0, a[1].scanned || 0),
+    scanned: (a, b) => (b[1].scanned || 0) - (a[1].scanned || 0) || a[1].name.localeCompare(b[1].name) }[cv.sort] || ((a, b) => val(b[1]) - val(a[1]));
   rows.sort(cmp);
   const shown = rows.slice(0, 400);
   const el = $("#clist");
   if (!rows.length) { el.innerHTML = `<p class="muted">${q ? `No cards match “${esc(cv.q)}”.` : "Nothing in this binder yet. Add cards from Search or Scan and pick this binder."}</p>`; return; }
-  el.innerHTML = `<div class="list">${shown.map(([k, e]) => { const c = phChange(e); return `
+  let lastDay = null;
+  const dayHead = e => {
+    if (cv.sort !== "scanned") return "";
+    const lab = e.scanned ? dayLabel(e.scanned) : "Never scanned";
+    if (lab === lastDay) return ""; lastDay = lab;
+    const same = rows.filter(([, x]) => (x.scanned ? dayLabel(x.scanned) : "Never scanned") === lab).reduce((a, [, x]) => a + x.qty, 0);
+    return `<div class="group-h"><span>${esc(lab)}</span><span class="num">${same} card${same === 1 ? "" : "s"}</span></div>`;
+  };
+  el.innerHTML = `<div class="list">${shown.map(([k, e]) => { const c = phChange(e); return `${dayHead(e)}
     <div class="item"><img loading="lazy" src="${esc(e.img)}" alt="">
       <button class="tap" data-open="${esc(k)}"><div class="name">${esc(e.name)}</div>
         <div class="meta"><span>${esc(e.set.toUpperCase())} #${esc(e.num)}</span>${e.finish !== "nonfoil" ? `<span class="chip foil">${e.finish}</span>` : ""}
           ${cv.binder === "all" && e.binder !== "main" ? `<span class="chip">${esc(S.binders[e.binder].name)}</span>` : ""}
-          <span class="num">${money(priceOf(e, e.finish))} ea</span>${c && c.d ? `<span class="num ${c.d > 0 ? "up" : "down"}">${signed(c.d)}</span>` : ""}</div></button>
+          <span class="num">${money(priceOf(e, e.finish))} ea</span>${c && c.d ? `<span class="num ${c.d > 0 ? "up" : "down"}">${signed(c.d)}</span>` : ""}
+          ${e.scanned ? `<span class="scanned num" title="Last scanned ${esc(new Date(e.scanned).toLocaleString())}">Scanned ${esc(cv.sort === "scanned" ? clock(e.scanned) : scanWhen(e.scanned))}</span>` : ""}</div></button>
       <div class="right"><span class="price gold num">${money(val(e))}</span>
         <span class="stepper"><button data-dec="${esc(k)}" aria-label="Remove one">−</button><span class="num">${e.qty}</span><button data-inc="${esc(k)}" aria-label="Add one">+</button></span></div></div>`; }).join("")}</div>
     ${rows.length > shown.length ? `<p class="small muted">Showing the top 400 of ${rows.length}. Use the filter to find others.</p>` : ""}`;
@@ -736,9 +758,10 @@ function ioSheet() {
     catch (e) { $("#ioMsg").textContent = "That file isn't a Deckhand backup."; }
   });
   $("#ioCsv").onclick = () => {
-    const head = "Name,Set code,Set name,Collector number,Foil,Rarity,Quantity,Binder Name,Scryfall ID,Price USD";
+    const head = "Name,Set code,Set name,Collector number,Foil,Rarity,Quantity,Binder Name,Scryfall ID,Price USD,Date added,Last scanned,First scanned";
+    const iso = t => t ? new Date(t).toISOString().replace("T", " ").slice(0, 16) : "";
     const q = s => `"${String(s ?? "").replace(/"/g, '""')}"`;
-    const lines = Object.values(S.coll).map(e => [q(e.name), q(e.set), q(e.setName), q(e.num), e.finish === "nonfoil" ? "normal" : e.finish, e.rarity, e.qty, q(S.binders[e.binder].name), e.id, priceOf(e, e.finish) ?? ""].join(","));
+    const lines = Object.values(S.coll).map(e => [q(e.name), q(e.set), q(e.setName), q(e.num), e.finish === "nonfoil" ? "normal" : e.finish, e.rarity, e.qty, q(S.binders[e.binder].name), e.id, priceOf(e, e.finish) ?? "", iso(e.added), iso(e.scanned), iso(e.firstScanned)].join(","));
     download(`deckhand-collection-${stamp}.csv`, [head, ...lines].join("\n"), "text/csv");
   };
   $("#ioImp").onclick = () => pickCSV({ kind: "coll" });
@@ -1061,7 +1084,8 @@ function openCard(card, finish, binder) {
         ${spark(hist.map(x => x[1]))}<div class="kv small num"><span>${money(hist[0][1])}</span><span class="${hist.at(-1)[1] >= hist[0][1] ? "up" : "down"}">${signed(hist.at(-1)[1] - hist[0][1])}</span><span>${money(hist.at(-1)[1])}</span></div></div>` : ""}
       <div class="box" style="margin-top:12px">
         <div class="row" style="justify-content:space-between"><span class="label">In your collection</span><span class="num">${ownedByName(s.name)} owned</span></div>
-        ${owned.map(([k, e]) => `<div class="kv"><span class="grow">${e.qty}× ${esc(e.set.toUpperCase())} #${esc(e.num)}${e.finish !== "nonfoil" ? " " + e.finish : ""}</span>
+        ${owned.map(([k, e]) => `<div class="kv"><span class="grow">${e.qty}× ${esc(e.set.toUpperCase())} #${esc(e.num)}${e.finish !== "nonfoil" ? " " + e.finish : ""}
+            ${e.scanned ? `<span class="small muted" style="display:block">Last scanned ${esc(scanWhen(e.scanned))}${e.firstScanned && !sameDay(new Date(e.firstScanned), new Date(e.scanned)) ? ` · first ${esc(dayLabel(e.firstScanned))}` : ""}${e.scans > 1 ? ` · ${e.scans} scans` : ""}</span>` : e.added ? `<span class="small muted" style="display:block">Added ${esc(scanWhen(e.added))}</span>` : ""}</span>
           <select data-move="${esc(k)}" aria-label="Move to binder">${binderOptions(e.binder)}</select></div>`).join("")}
         <div class="row wrap">
           ${s.finishes.length > 1 ? `<span class="seg" id="finSeg">${s.finishes.map(f => `<button data-f="${f}" aria-pressed="${f === fin}">${f === "nonfoil" ? "Normal" : f[0].toUpperCase() + f.slice(1)}</button>`).join("")}</span>` : `<span class="chip">${s.finishes[0] === "nonfoil" ? "Normal only" : s.finishes[0] + " only"}</span>`}
@@ -1177,7 +1201,7 @@ function renderScan() {
 }
 function drawSession() {
   const el = $("#scSession"); if (!el) return;
-  el.innerHTML = sc.session.length ? `<h2 class="sec">Added this session</h2><div class="list">${sc.session.slice().reverse().map((x, i) => `<div class="item"><img src="${esc(x.card.img)}" alt=""><div style="min-width:0"><div class="name">${esc(x.card.name)}</div><div class="meta">${esc(x.card.set.toUpperCase())} #${esc(x.card.num)} ${x.finish !== "nonfoil" ? `<span class="chip foil">${x.finish}</span>` : ""}<span class="chip">${esc((S.binders[x.binder] || S.binders.main).name)}</span></div></div><div class="right"><span class="num">${x.qty}× ${money(priceOf(x.card, x.finish))}</span><button class="btn sm ghost" data-undo="${sc.session.length - 1 - i}">Undo</button></div></div>`).join("")}</div>` : "";
+  el.innerHTML = sc.session.length ? `<h2 class="sec">Added this session</h2><div class="list">${sc.session.slice().reverse().map((x, i) => `<div class="item"><img src="${esc(x.card.img)}" alt=""><div style="min-width:0"><div class="name">${esc(x.card.name)}</div><div class="meta">${esc(x.card.set.toUpperCase())} #${esc(x.card.num)} ${x.finish !== "nonfoil" ? `<span class="chip foil">${x.finish}</span>` : ""}<span class="chip">${esc((S.binders[x.binder] || S.binders.main).name)}</span>${x.at ? `<span class="num">${esc(clock(x.at))}</span>` : ""}</div></div><div class="right"><span class="num">${x.qty}× ${money(priceOf(x.card, x.finish))}</span><button class="btn sm ghost" data-undo="${sc.session.length - 1 - i}">Undo</button></div></div>`).join("")}</div>` : "";
   el.querySelectorAll("[data-undo]").forEach(b => b.onclick = () => { const x = sc.session.splice(+b.dataset.undo, 1)[0]; addToColl(x.card, x.finish, -x.qty, x.binder); drawSession(); scanHead(); toast("Removed " + x.card.name); });
 }
 function scStatus(t) { const el = $("#scStatus"); if (el) el.textContent = t; }
@@ -1544,7 +1568,9 @@ function setMatch(card, exact, typed) {
 }
 function addScan(qty) {
   const s = sc.match.card, fin = s.finishes.includes(sc.finish) ? sc.finish : s.finishes[0], b = defaultBinder();
-  addToColl(s, fin, qty, b); sc.session.push({ card: s, finish: fin, qty, binder: b }); sc.match = null;
+  const k = addToColl(s, fin, qty, b, true), at = Date.now(), e = S.coll[k];
+  if (e) { e.scanned = at; e.firstScanned = e.firstScanned || at; e.scans = (e.scans || 0) + qty; }
+  save(); sc.session.push({ card: s, finish: fin, qty, binder: b, at }); sc.match = null;
   if (navigator.vibrate) navigator.vibrate(30);
   drawSession(); drawMatch(); scanHead();
   scStatus(`Added ${qty}× ${s.name} (${s.set.toUpperCase()} #${s.num}) to ${S.binders[b].name}. ${sc.auto ? "Show the next card." : "Ready for the next card."}`);
