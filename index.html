@@ -1539,7 +1539,14 @@ function renderScan() {
     <details class="box" id="scLogBox"${S.meta.logOpen ? " open" : ""}><summary class="label" style="cursor:pointer">Scan log and speed</summary><div id="scLog"></div></details>
   </div>`;
   layoutFrame(); window.onresize = layoutFrame;
-  $("#shoot").onclick = () => { ana.armed = true; captureFrom("video"); };
+  $("#shoot").onclick = async () => {
+    ana.armed = true; const vid = $("#vid");
+    if (vid && vid.videoWidth && !cardLocked()) {             // look for the card's edges right now, at any angle
+      let best = null; for (const a of [0, ...TILTS]) { const r = straighten(vid, detectAt(vid, a)); if (r && (!best || r.score > best.score)) best = r; }
+      if (best) { det.box = best; det.seen = performance.now(); }
+    }
+    if (!await captureFrom("video")) await captureFrom("video", null, true);
+  };
   $("#photo").onclick = () => { const f = $("#fileIn"); f.accept = "image/*"; f.setAttribute("capture", "environment"); f.value = ""; f.onchange = () => { f.removeAttribute("capture"); f.files[0] && captureFrom("file", f.files[0]); }; f.click(); };
   $("#scFin").onclick = e => { const b = e.target.closest("button"); if (b) { sc.finish = b.dataset.f; $("#scFin").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); } };
   $("#scBinder").onchange = e => { S.meta.binder = e.target.value; save(); };
@@ -1820,7 +1827,7 @@ async function startCamera() {
     if ((camDev.caps.focusMode || []).includes("continuous")) track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
     vid.onclick = e => { const t = camXform(vid), r = vid.getBoundingClientRect(); focusAt(((e.clientX - r.left) - t.ox) / t.s / vid.videoWidth, ((e.clientY - r.top) - t.oy) / t.s / vid.videoHeight, true); camHint("Focusing…"); };
     scStatus(readyMsg());
-    getWorker().catch(() => {});
+    getWorker().catch(() => {}); loadSets().catch(() => {});
     vid.onloadedmetadata = () => placeFrame(vid); placeFrame(vid);
     startAuto();
   } catch (e) { scStatus("Camera blocked. Allow camera access in Chrome's site settings, or use the photo button."); }
@@ -1833,7 +1840,7 @@ async function toggleTorch() {
 }
 
 /* ---------- auto-capture: watch the frame, shoot when a card is in focus and still ---------- */
-const AUTO = { W: 144, H: 200, still: 7, hold: 300, holdLocked: 200, minStd: 20, minText: 12, minSharp: 2.5, rearm: 30, every: 120, tries: 4, tooSmall: 0.22 };
+const AUTO = { patience: 1200, guideWait: 2000, W: 144, H: 200, still: 7, hold: 300, holdLocked: 200, minStd: 20, minText: 12, minSharp: 2.5, rearm: 30, every: 120, tries: 4, tooSmall: 0.22 };
 const ana = { timer: null, prev: null, since: 0, armed: true, sig: null, fails: 0, cool: 0, cv: null, ac: null, failMsg: "" };
 function startAuto() { stopAuto(); ana.prev = null; ana.since = 0; ana.timer = setInterval(watchTick, AUTO.every); }
 function stopAuto() { if (ana.timer) clearInterval(ana.timer); ana.timer = null; setFrameState("", 0); }
@@ -1864,15 +1871,17 @@ function frameStats(L, W, H, mean) {
   const textVar = n ? m2 / n - (m1 / n) ** 2 : 0, lapVar = n ? s2 / n - (s1 / n) ** 2 : 0;
   return { std, text: Math.sqrt(Math.max(0, textVar)), sharp: textVar > 1 ? lapVar / textVar : 0 };
 }
+// motion measured on 8x8 blocks, so hand tremor of a pixel or two doesn't count as "moving"
+function coarseL(L, W, H) { const bw = 8, cw = W / bw | 0, ch = H / bw | 0, o = new Float32Array(cw * ch); for (let y = 0; y < ch * bw; y++) for (let x = 0; x < cw * bw; x++) o[(y / bw | 0) * cw + (x / bw | 0)] += L[y * W + x] / (bw * bw); return o; }
 function diffL(a, b) { let s = 0, n = 0; for (let i = 0; i < a.length; i += 3) { s += Math.abs(a[i] - b[i]); n++; } return s / n; }
 function autoTick() {
   if (!sc.auto || tab !== "scan" || !stream || document.hidden || sc.busy || ana.shooting) return;
   const vid = $("#vid"); if (!vid || !vid.videoWidth) return;
   const s = sampleCard(vid); if (!s) return;
   ana.last = s;
-  const locked = cardLocked(), boxMoving = locked && det.moved > 0.04;
-  const now = performance.now(), moving = ana.prev && !boxMoving ? diffL(s.L, ana.prev) : 99;
-  ana.prev = s.L;
+  const locked = cardLocked(), boxMoving = locked && det.moved > 0.1, cl = coarseL(s.L, AUTO.W, AUTO.H);
+  const now = performance.now(), moving = ana.prev && !boxMoving ? diffL(cl, ana.prev) * 3 : 99;
+  ana.prev = cl;
   const noCard = s.std < AUTO.minStd || s.text < AUTO.minText;
   if (!ana.armed) {
     // ready again once the card leaves the frame or a clearly different picture shows up
@@ -1883,12 +1892,23 @@ function autoTick() {
   const dt = Math.min(500, now - (ana.lastTick || now)); ana.lastTick = now;
   const pre = ana.pre || (ana.pre = { find: 0, small: 0, moving: 0, hold: 0 });
   if (!noCard) pre[!locked ? "find" : det.box.h * camXform(vid).s < camXform(vid).H * AUTO.tooSmall ? "small" : (moving > AUTO.still ? "moving" : "hold")] += dt;
+  if (noCard || !locked) ana.readySince = 0;
+  if (noCard || locked) ana.unlockSince = 0;
   if (noCard) { ana.since = 0; ana.seenAt = 0; ana.pre = null; setFrameState("", 0); camHint(locked ? "Hold the card flat and face-up" : "Show a card to the camera"); return; }
   if (!ana.seenAt) ana.seenAt = performance.now();
-  if (locked) { const t = camXform(vid); if (det.box.h * t.s < t.H * AUTO.tooSmall) { ana.since = 0; setFrameState("", 0); camHint("Move the card a little closer"); return; } }
+  if (locked) { const t = camXform(vid); if (det.box.h * t.s < t.H * AUTO.tooSmall) { ana.since = 0; ana.readySince = 0; setFrameState("", 0); camHint("Move the card a little closer"); return; } }
+  // Card edges not found yet: wait a moment for them (a guess at the frame position reads badly),
+  // then fall back to the on-screen frame.
+  if (!locked) {
+    if (!ana.unlockSince) ana.unlockSince = now;
+    if (now - ana.unlockSince < AUTO.guideWait) { ana.since = 0; setFrameState("", 0); camHint("Looking for the card's edges… a plain background helps"); return; }
+  }
+  if (locked && !ana.readySince) ana.readySince = now;
   // No sharpness gate: as soon as a card is in view and steady, take a snapshot and try to read it.
-  // If the read fails, a fresh snapshot is tried automatically (the read itself is the judge).
-  if (moving > AUTO.still) { ana.since = 0; setFrameState("steady", 0); camHint("Hold still…"); return; }
+  // A card that's found but never perfectly still (held in a hand) is shot anyway after a moment:
+  // the snapshot keeps the sharper of two frames, and a failed read retries automatically.
+  const patient = locked && now - ana.readySince > AUTO.patience;
+  if (moving > AUTO.still && !patient) { ana.since = 0; setFrameState("steady", 0); camHint("Hold still…"); return; }
   if (!ana.since) ana.since = now;
   const p = (now - ana.since) / (locked ? AUTO.holdLocked : AUTO.hold);
   setFrameState("steady", p); camHint("Hold still…");
@@ -2104,6 +2124,16 @@ function nameShare(read, cardName) {
   const a = tri(read), b = tri(cardName.split(" // ")[0]); if (!b.size) return 0;
   let n = 0; for (const x of b) if (a.has(x)) n++; return n / b.size;
 }
+// A set code that doesn't exist is usually a misread: try the usual confusions (I/1/L, O/0/D, an extra or missing letter)
+function fixSet(code) {
+  if (!code || !SETS) return code; code = code.toLowerCase(); if (SETS[code]) return code;
+  const sub = { i: "1l", "1": "il", l: "1i", o: "0d", "0": "od", d: "0o", s: "5", "5": "s", b: "8", "8": "b", z: "2", "2": "z" }, tries = [];
+  for (let i = 0; i < code.length; i++) {
+    tries.push(code.slice(0, i) + code.slice(i + 1));
+    for (const r of sub[code[i]] || "") tries.push(code.slice(0, i) + r + code.slice(i + 1));
+  }
+  return tries.find(t => t.length >= 3 && SETS[t]) || code;
+}
 function cleanName(t) {
   // digits and symbols the reader confuses with letters
   t = t.replace(/0/g, "o").replace(/[1|!]/g, "l").replace(/5/g, "s").replace(/8/g, "B").replace(/\$/g, "S").replace(/6/g, "G");
@@ -2127,7 +2157,9 @@ function parseInfo(t) {
 // Only "high" is ever added automatically; "medium" goes to the list marked "please check".
 async function identify(nameTxt, infoTxt, ocrConf) {
   const cur = sc.cur || (sc.cur = { t0: performance.now(), ms: {} }), t1 = performance.now();
+  if (!SETS) await Promise.race([loadSets().catch(() => {}), sleep(800)]);
   const name = cleanName(nameTxt), info = parseInfo(infoTxt);
+  if (info.set) info.set = fixSet(info.set);
   sc.lastRead = name; sc.lastKind = "";
   Object.assign(cur, { read: name, rawName: nameTxt.trim().slice(0, 60), set: info.set, num: info.num, ocrConf: ocrConf == null ? null : Math.round(ocrConf) });
   scanProg(0.8, "Finding the card…");
@@ -2156,8 +2188,9 @@ async function identify(nameTxt, infoTxt, ocrConf) {
   // set code + number found a card, and enough of its name is in the read: two separate clues agree
   const share = byCode ? nameShare(name, byCode.name) : 0; cur.share = byCode ? +share.toFixed(2) : null;
   if (byCode && share >= 0.4) return done(byCode, true, "high");
-  const strong = top && top.score >= 0.9 && margin >= 0.1 && (ocrConf == null || ocrConf >= 60);
-  const likely = top && top.score >= 0.72 && (margin >= 0.08 || top.score >= 0.92);
+  // a near-exact name ("Faerie Seer" read perfectly) is confident whatever the reader's own confidence says
+  const strong = top && margin >= 0.1 && (top.score >= 0.94 || (top.score >= 0.9 && (ocrConf == null || ocrConf >= 60)));
+  const likely = top && ((top.score >= 0.72 && (margin >= 0.08 || top.score >= 0.92)) || (top.score >= 0.66 && margin >= 0.3));
   if (strong || likely) {
     const inSet = info.set ? got[identKey({ name: top.name, set: info.set })] : null, card = inSet || got[identKey({ name: top.name })];
     if (card) return done(card, !!(inSet && info.num && inSet.num === info.num), strong ? "high" : "medium");
