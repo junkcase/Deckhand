@@ -1529,6 +1529,13 @@ function renderScan() {
     <div class="row wrap">
       <span class="seg" id="scFin"><button data-f="nonfoil" aria-pressed="${sc.finish === "nonfoil"}">Normal</button><button data-f="foil" aria-pressed="${sc.finish === "foil"}">Foil</button></span>
       <select id="scBinder" class="grow" aria-label="Add scanned cards to">${binderOptions(defaultBinder())}</select></div>
+    <div class="box stack" style="gap:8px" id="scGrid">
+      <div class="label">Scan a photo of several cards</div>
+      <div class="small muted">Lay the cards in rows with small gaps on a plain surface and take the photo from straight above. Every card is read and listed below; the photo isn't kept.</div>
+      <div class="row wrap" style="gap:8px"><select id="gLayout" aria-label="How the cards are laid out">${GRIDS.map(([v, l]) => `<option value="${v}" ${(S.meta.gridLayout || "2x2") === v ? "selected" : ""}>${l}</option>`).join("")}</select>
+        <button class="btn sm" id="gTake">Take photo</button><button class="btn sm ghost" id="gPick">Choose photos</button></div>
+      <div class="small" id="gStatus" aria-live="polite"></div>
+    </div>
     <label class="small" style="display:flex;flex-direction:column;gap:4px">After each scan
       <select id="scMode"><option value="ask" ${sc.mode === "ask" ? "selected" : ""}>Review: list every card, I'll choose what to add</option>
         <option value="exact" ${sc.mode === "exact" ? "selected" : ""}>Bulk: add exact-printing matches, list the rest</option>
@@ -1548,7 +1555,12 @@ function renderScan() {
     }
     if (!await captureFrom("video")) await captureFrom("video", null, true);
   };
-  $("#photo").onclick = () => { const f = $("#fileIn"); f.accept = "image/*"; f.setAttribute("capture", "environment"); f.value = ""; f.onchange = () => { f.removeAttribute("capture"); f.files[0] && captureFrom("file", f.files[0]); }; f.click(); };
+  const pickPhotos = (camera, layout) => { const f = $("#fileIn"); f.accept = "image/*"; f.multiple = !camera; if (camera) f.setAttribute("capture", "environment"); else f.removeAttribute("capture"); f.value = "";
+    f.onchange = () => { f.removeAttribute("capture"); f.multiple = false; const fs = [...f.files]; if (fs.length) scanPhotos(fs, layout()); }; f.click(); };
+  $("#photo").onclick = () => pickPhotos(true, () => "1x1");
+  $("#gLayout").onchange = e => { S.meta.gridLayout = e.target.value; save(); };
+  $("#gTake").onclick = () => pickPhotos(true, () => $("#gLayout").value);
+  $("#gPick").onclick = () => pickPhotos(false, () => $("#gLayout").value);
   $("#scFin").onclick = e => { const b = e.target.closest("button"); if (b) { sc.finish = b.dataset.f; $("#scFin").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); } };
   $("#scBinder").onchange = e => { S.meta.binder = e.target.value; save(); };
   $("#scMode").onchange = e => { sc.mode = e.target.value; S.meta.scanMode = sc.mode; save(); };
@@ -1676,7 +1688,7 @@ function placeFrame(vid) {
 }
 function layoutFrame() { placeFrame($("#vid")); }
 // Find an upright card: strong straight edges on all four sides with a card's 63:88 shape.
-const DET = { max: 200, minH: 0.27, aspLo: 0.62, aspHi: 0.82, minSide: 2.2 };
+const DET = { outerTol: 0.08, max: 200, minH: 0.27, aspLo: 0.62, aspHi: 0.82, minSide: 2.2 };
 function edgePeaks(P, n, sep) {
   const L = P.length, S = new Float32Array(L);
   for (let i = 0; i < L; i++) S[i] = (P[i - 1] || 0) + 2 * P[i] + (P[i + 1] || 0);
@@ -1738,7 +1750,7 @@ function detectCore(G, w, h) {
   // the OUTERMOST card-shaped rectangle that encloses the strongest one, so prefer that.
   let out = best;
   for (const c of pass) {
-    if (c.score < best.score * 0.55 || Math.abs(c.asp - 0.716) > 0.08) continue;
+    if (c.score < best.score * 0.55 || Math.abs(c.asp - 0.716) > DET.outerTol) continue;
     if (c.x > best.x + 1 || c.y > best.y + 1 || c.x + c.w < best.x + best.w - 1 || c.y + c.h < best.y + best.h - 1) continue;
     if (c.w * c.h > out.w * out.h) out = c;
   }
@@ -1750,9 +1762,9 @@ function detectCore(G, w, h) {
 // Big tilts the upright check can't see at all are found by also trying one other angle per frame.
 const DEG = Math.PI / 180, TILTS = [-8, 8, -14, 14].map(d => d * DEG);
 const roundA = a => Math.round(a / (0.5 * DEG)) * 0.5 * DEG;
-function detectAt(vid, a) {
-  const vw = vid.videoWidth, vh = vid.videoHeight, k = DET.max / Math.max(vw, vh), w = Math.max(16, Math.round(vw * k)), h = Math.max(16, Math.round(vh * k));
-  const c = det.cv || (det.cv = document.createElement("canvas")); if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+function detectAt(vid, a, max = DET.max) {
+  const vw = vid.videoWidth, vh = vid.videoHeight, k = max / Math.max(vw, vh), w = Math.max(16, Math.round(vw * k)), h = Math.max(16, Math.round(vh * k));
+  const c = max === DET.max ? det.cv || (det.cv = document.createElement("canvas")) : det.cvB || (det.cvB = document.createElement("canvas")); if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
   const g = c.getContext("2d", { willReadFrequently: true }); if (!g) return null;
   if (a) { g.save(); g.fillStyle = "#808080"; g.fillRect(0, 0, w, h); g.translate(w / 2, h / 2); g.rotate(a); g.translate(-w / 2, -h / 2); g.drawImage(vid, 0, 0, w, h); g.restore(); }
   else g.drawImage(vid, 0, 0, w, h);
@@ -1761,10 +1773,10 @@ function detectAt(vid, a) {
   const r = detectCore(G, w, h); if (!r) return null;
   return { x: r.x / k, y: r.y / k, w: r.w / k, h: r.h / k, a, score: r.score, tilt: r.tilt };
 }
-function straighten(vid, r, min = 0.75 * DEG) {
+function straighten(vid, r, min = 0.75 * DEG, max) {
   if (!r || Math.abs(r.tilt) < min) return r;
   const a = roundA(Math.max(-16 * DEG, Math.min(16 * DEG, r.a - r.tilt))); if (a === r.a) return r;
-  const r2 = detectAt(vid, a); return r2 && r2.score >= r.score * 0.9 ? r2 : r;
+  const r2 = detectAt(vid, a, max); return r2 && r2.score >= r.score * 0.9 ? r2 : r;
 }
 function detectCard(vid) {
   if (cardLocked()) { const r = detectAt(vid, det.box.a || 0); if (r) return straighten(vid, r, 1.5 * DEG); }
@@ -1888,7 +1900,7 @@ function frameStats(L, W, H, mean) {
 function coarseL(L, W, H) { const bw = 8, cw = W / bw | 0, ch = H / bw | 0, o = new Float32Array(cw * ch); for (let y = 0; y < ch * bw; y++) for (let x = 0; x < cw * bw; x++) o[(y / bw | 0) * cw + (x / bw | 0)] += L[y * W + x] / (bw * bw); return o; }
 function diffL(a, b) { let s = 0, n = 0; for (let i = 0; i < a.length; i += 3) { s += Math.abs(a[i] - b[i]); n++; } return s / n; }
 function autoTick() {
-  if (!sc.auto || tab !== "scan" || !stream || document.hidden || sc.busy || ana.shooting) return;
+  if (!sc.auto || tab !== "scan" || !stream || document.hidden || sc.busy || sc.gridBusy || ana.shooting) return;
   const vid = $("#vid"); if (!vid || !vid.videoWidth) return;
   const s = sampleCard(vid); if (!s) return;
   ana.last = s;
@@ -1905,7 +1917,8 @@ function autoTick() {
   const dt = Math.min(500, now - (ana.lastTick || now)); ana.lastTick = now;
   const pre = ana.pre || (ana.pre = { find: 0, small: 0, moving: 0, hold: 0 });
   if (!noCard) pre[!locked ? "find" : det.box.h * camXform(vid).s < camXform(vid).H * AUTO.tooSmall ? "small" : (moving > AUTO.still ? "moving" : "hold")] += dt;
-  if (noCard || !locked) ana.readySince = 0;
+  if (locked) ana.lostAt = 0; else if (!ana.lostAt) ana.lostAt = now;
+  if (noCard || (!locked && now - ana.lostAt > 600)) ana.readySince = 0;
   if (noCard || locked) ana.unlockSince = 0;
   if (noCard) { ana.since = 0; ana.seenAt = 0; ana.pre = null; setFrameState("", 0); camHint(locked ? "Hold the card flat and face-up" : "Show a card to the camera"); return; }
   if (!ana.seenAt) ana.seenAt = performance.now();
@@ -1931,6 +1944,113 @@ function photoNote() { const n = $("#scPhotoNote"); if (n) n.textContent = S.met
 // Full photo: the camera's photo mode (full sensor resolution, processed for sharpness) instead of a video frame.
 // The card is found again in the photo itself (photo and preview can be framed differently), copied out, and the
 // photo is thrown away. Falls back to a video snapshot if the photo fails or no card is found in it.
+// Find the card in a still image (a canvas with videoWidth/videoHeight): upright first, refining the tilt a few
+// times since there are no following frames to do it; other starting angles only if that finds nothing good.
+// The tilt of the straight lines in a still image: a card's border, frame, art box, text box and title bar all
+// line up, so try each angle within ±18° and keep the one where the edges stack up into the sharpest lines
+// (a tilted edge is a staircase pixel by pixel, so the direction has to be measured over whole lines).
+function dominantTilt(P) {
+  const S_ = 360, k = S_ / Math.max(P.videoWidth, P.videoHeight), w = Math.round(P.videoWidth * k), h = Math.round(P.videoHeight * k);
+  const c = det.cvT || (det.cvT = document.createElement("canvas")); c.width = w; c.height = h;
+  const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(P, 0, 0, w, h);
+  const d = g.getImageData(0, 0, w, h).data, G = new Float32Array(w * h);
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) G[j] = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+  const vx = [], vy = [], vm = [], hx = [], hy = [], hm = [];               // edge pixels of near-vertical and near-horizontal lines
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = y * w + x, gx = Math.abs(G[i + 1] - G[i - 1]), gy = Math.abs(G[i + w] - G[i - w]);
+    if (gx > 30 && gx > 2 * gy) { vx.push(x); vy.push(y); vm.push(gx); } else if (gy > 30 && gy > 2 * gx) { hx.push(x); hy.push(y); hm.push(gy); }
+  }
+  const n = w + h, bins = new Float32Array(4 * n);
+  let best = -1, bt = 0;
+  for (let deg = -18; deg <= 18.001; deg += 0.25) {
+    const t = deg * DEG, cs = Math.cos(t), sn = Math.sin(t); bins.fill(0);
+    for (let i = 0; i < vx.length; i++) bins[Math.round(vx[i] * cs + vy[i] * sn) + n] += vm[i];
+    for (let i = 0; i < hx.length; i++) bins[Math.round(-hx[i] * sn + hy[i] * cs) + 3 * n] += hm[i];  // own range: different lines
+    let sc_ = 0; for (let i = 0; i < bins.length; i++) sc_ += bins[i] * bins[i];
+    if (sc_ > best) { best = sc_; bt = t; }
+  }
+  return bt;
+}
+// Find the card in a still image (a canvas with videoWidth/videoHeight). The tilt comes from the direction of its
+// straight lines, the card is found in the image turned upright by that much, then fine-tuned at twice the detail.
+// Photos are stricter about the card's shape than the live preview: in a photo of several cards the
+// neighbours' edges are close by, while live tilted cards need the looser shape.
+function findCardIn(P) { DET.outerTol = 0.045; try { return findCardInImpl(P); } finally { DET.outerTol = 0.08; } }
+function findCardInImpl(P) {
+  const refine = (r, max) => { for (let i = 0; i < 3 && r; i++) { const r2 = straighten(P, r, 0.5 * DEG, max); if (r2 === r) break; r = r2; } return r; };
+  // 1. rough find: upright first, other starting angles only if that finds nothing good
+  let best = refine(detectAt(P, 0));
+  if (!best || best.score <= 6) for (const a of TILTS) { const r = refine(detectAt(P, a)); if (r && (!best || r.score > best.score)) best = r; }
+  if (!best) return null;
+  // 2. exact tilt from the direction of the lines inside the card only (the table's own lines don't count)
+  const pad = 0.04, R = { x: best.x - best.w * pad, y: best.y - best.h * pad, w: best.w * (1 + 2 * pad), h: best.h * (1 + 2 * pad), a: best.a };
+  const k = Math.min(1, 500 / R.h), Q = stillCanvas(R.w * k, R.h * k); drawBox(Q.getContext("2d"), P, R, Q.width, Q.height);
+  const t = dominantTilt(Q); Q.width = Q.height = 0;
+  if (Math.abs(t) >= 0.4 * DEG) {
+    const r2 = detectAt(P, roundA((best.a || 0) - t));
+    if (r2 && Math.abs(r2.h - best.h) < best.h * 0.1 && Math.abs(r2.w - best.w) < best.w * 0.1) best = r2;
+  }
+  // 3. the edges placed at twice the detail, kept only if it's the same card (not an inner frame or a neighbour)
+  const fine = detectAt(P, best.a || 0, DET.max * 2);
+  const near = (u, v, size) => Math.abs(u - v) < size * 0.02;
+  if (fine && near(fine.x, best.x, best.w) && near(fine.y, best.y, best.h) && near(fine.x + fine.w, best.x + best.w, best.w) && near(fine.y + fine.h, best.y + best.h, best.h)) return fine;
+  return best;
+}
+const stillCanvas = (w, h) => { const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); Object.defineProperty(c, "videoWidth", { value: c.width }); Object.defineProperty(c, "videoHeight", { value: c.height }); return c; };
+function thumbOf(src) { try { const t = document.createElement("canvas"); t.width = 63; t.height = 88; t.getContext("2d").drawImage(src, 0, 0, 63, 88); return t.toDataURL("image/jpeg", 0.7); } catch (e) { return ""; } }
+
+/* ---------- several cards in one photo: laid out in rows, each grid cell searched for its card ---------- */
+const GRIDS = [["1x1", "1 card"], ["1x2", "2 cards side by side"], ["2x2", "4 cards (2 × 2)"], ["2x3", "6 cards (2 rows of 3)"], ["3x2", "6 cards (3 rows of 2)"], ["3x3", "9 cards (3 × 3)"], ["3x4", "12 cards (3 rows of 4)"], ["4x3", "12 cards (4 rows of 3)"]];
+async function scanPhotos(files, layout) {
+  if (sc.gridBusy || !files.length) return;
+  const [R, C] = (layout || "1x1").split("x").map(Number), st = t => { const e = $("#gStatus"); if (e) e.textContent = t; scStatus(t); };
+  sc.gridBusy = true; let found = 0, read = 0, check = 0, missing = 0;
+  try {
+    await getWorkers().catch(() => {});
+    for (let fi = 0; fi < files.length; fi++) {
+      const tag = files.length > 1 ? `Photo ${fi + 1} of ${files.length}: ` : "";
+      st(tag + "opening the photo…");
+      const bmp = await createImageBitmap(files[fi], { imageOrientation: "from-image" }).catch(() => null);
+      if (!bmp) { st(tag + "couldn't open that photo."); continue; }
+      const k = Math.min(1, 5000 / Math.max(bmp.width, bmp.height)), P = stillCanvas(bmp.width * k, bmp.height * k);
+      P.getContext("2d").drawImage(bmp, 0, 0, P.width, P.height); bmp.close && bmp.close();
+      const W = P.width, H = P.height, cw = W / C, ch = H / R;
+      for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+        const n = r * C + c + 1; st(`${tag}reading card ${n} of ${R * C}…`);
+        // the cell plus a margin, so a card that sits a little off its spot is still whole
+        const x0 = Math.max(0, (c - 0.07) * cw), y0 = Math.max(0, (r - 0.05) * ch), x1 = Math.min(W, (c + 1.07) * cw), y1 = Math.min(H, (r + 1.05) * ch);
+        const cell = stillCanvas(x1 - x0, y1 - y0); cell.getContext("2d").drawImage(P, x0, y0, x1 - x0, y1 - y0, 0, 0, cell.width, cell.height);
+        const box = findCardIn(cell);
+        if (!box) {
+          // an empty spot (plain surface) is skipped quietly; something there but no card edges is listed
+          const t = cell.getContext("2d", { willReadFrequently: true }); const d = stillCanvas(48, 64), g = d.getContext("2d", { willReadFrequently: true }); g.drawImage(cell, 0, 0, 48, 64);
+          const a = g.getImageData(0, 0, 48, 64).data; let m = 0, v = 0; for (let i = 0; i < a.length; i += 4) m += a[i + 1]; m /= a.length / 4; for (let i = 0; i < a.length; i += 4) v += (a[i + 1] - m) ** 2;
+          if (Math.sqrt(v / (a.length / 4)) > 22) { missing++; sc.items.push({ id: uid(), state: "failed", read: `no card edges found (row ${r + 1}, spot ${c + 1})`, thumb: thumbOf(cell), finish: sc.finish, qty: 1, at: Date.now() }); saveSession(); drawSession(); scanHead(); }
+          cell.width = cell.height = 0; continue;
+        }
+        found++;
+        const kk = Math.min(1, 1600 / box.h), crop = document.createElement("canvas"); crop.width = Math.max(1, Math.round(box.w * kk)); crop.height = Math.max(1, Math.round(box.h * kk));
+        drawBox(crop.getContext("2d"), cell, box, crop.width, crop.height); cell.width = cell.height = 0;
+        sc.lastThumb = thumbOf(crop);
+        let ok = false;
+        for (let tryN = 1; tryN <= 2 && !ok; tryN++) {
+          sc.cur = { t0: performance.now(), wait: 0, try: tryN, ms: {}, src: `photo of ${R * C}`, res: W + "x" + H };
+          ok = await captureFrom("snap", crop, tryN === 2);
+        }
+        crop.width = crop.height = 0;
+        if (ok) { read++; const it = sc.items.at(-1); if (it && (it.state === "pick" || it.conf === "medium")) check++; }
+        else { sc.items.push({ id: uid(), state: "failed", read: sc.lastRead, thumb: sc.lastThumb, finish: sc.finish, qty: 1, at: Date.now() }); saveSession(); drawSession(); scanHead(); }
+      }
+      P.width = P.height = 0;                                               // the photo is deleted
+    }
+    st(`Done: ${found} card${found === 1 ? "" : "s"} found, ${read} read${check ? `, ${check} to check` : ""}${found - read ? `, ${found - read} not read` : ""}${missing ? `, ${missing} spot${missing === 1 ? "" : "s"} where no card edges were found` : ""}. See the list below.`);
+    if (read) { beep(); if (navigator.vibrate) navigator.vibrate(40); }
+  } finally {
+    sc.gridBusy = false;
+    // the phone's camera app may have stopped the live preview: start it again
+    if (tab === "scan" && (!stream || stream.getVideoTracks().every(t => t.readyState === "ended"))) { stream = null; startCamera(); }
+  }
+}
 async function grabPhoto(vid) {
   if (!camDev.ic) return null;
   let blob; try { blob = await camDev.ic.takePhoto(camDev.photoOpts); } catch (e) { try { blob = await camDev.ic.takePhoto(); } catch (e2) { return null; } }
@@ -1949,9 +2069,7 @@ async function grabPhoto(vid) {
   bmp.close && bmp.close();
   Object.defineProperty(P, "videoWidth", { value: pw }); Object.defineProperty(P, "videoHeight", { value: ph });
   // one photo, no following frames: try each starting angle and refine the tilt a few times
-  const refine = r => { for (let i = 0; i < 3 && r; i++) { const r2 = straighten(P, r, 0.5 * DEG); if (r2 === r) break; r = r2; } return r; };
-  let best = refine(detectAt(P, 0));
-  if (!best || best.score <= 6) for (const a of TILTS) { const r = refine(detectAt(P, a)); if (r && (!best || r.score > best.score)) best = r; }
+  const best = findCardIn(P);
   if (!best) { P.width = P.height = 0; return null; }
   const k = Math.min(1, 1600 / best.h), c = document.createElement("canvas");
   c.width = Math.max(1, Math.round(best.w * k)); c.height = Math.max(1, Math.round(best.h * k));
