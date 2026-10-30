@@ -136,11 +136,6 @@ details.box summary::after{content:" ▾"}
 .cam .hint{position:absolute;left:0;right:0;top:10px;text-align:left;color:#fff;font-size:14px;font-weight:600;text-shadow:0 1px 3px #000;padding:0 104px 0 12px;min-height:20px}
 .cam .frame{transition:left .12s linear,top .12s linear,width .12s linear,height .12s linear,border-color .15s}
 .cam .frame.locked{border-style:solid;border-color:#fff}
-.cam .ov{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
-.cam .ov path{fill:rgba(0,0,0,.38)}
-.cam .ov polygon{fill:none;stroke:#fff;stroke-width:2.5;stroke-linejoin:round;transition:stroke .15s}
-.cam .ov.steady polygon{stroke:#ffd76a}
-.cam .ov.good polygon{stroke:#5cc489;stroke-width:4}
 .cam .frame.locked .band{opacity:.45}
 .cam .frame.steady{border-color:#ffd76a}
 .cam .frame.good{border-color:#5cc489;border-width:3px}
@@ -153,15 +148,6 @@ details.box summary::after{content:" ▾"}
 .cam .sfill{height:100%;width:0;background:#62a9dc;border-radius:4px;transition:width .18s linear}
 .cam .sbar.ok .sfill{background:#5cc489}
 .cam .sbar.fail .sfill{background:#ef7462}
-.cam .flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
-.cam .zoombar{position:absolute;left:10px;top:40px;display:flex;gap:4px;background:rgba(0,0,0,.55);border-radius:999px;padding:3px}
-.cam .zoombar button{border:0;background:none;color:#fff;font:700 12px var(--f-display);border-radius:999px;padding:5px 9px;min-width:38px}
-.cam .zoombar button[aria-pressed="true"]{background:#ffd76a;color:#000}
-.cam .flash.on{animation:camflash .28s ease-out}
-@keyframes camflash{from{opacity:.55}to{opacity:0}}
-.ibar{height:5px;border-radius:3px;background:var(--sunk);overflow:hidden;margin-top:6px}
-.ibar div{height:100%;width:0;background:var(--accent);transition:width .18s linear}
-.scan-pending img{opacity:.85}
 .cam .ctrl{position:absolute;left:0;right:0;bottom:12px;display:flex;justify-content:center;align-items:center;gap:22px}
 .shutter{width:70px;height:70px;border-radius:50%;border:4px solid #fff;background:rgba(255,255,255,.25)}
 .shutter:active{background:rgba(255,255,255,.6)}
@@ -1266,18 +1252,13 @@ async function showPrints(s, onPick) {
 }
 
 /* ================= SCANNER ================= */
-// Snapshot scanning: as soon as a card is in range and sharp, a still picture of it is taken and
-// queued. Pictures are read one after another in the background while you show the next card;
-// each picture is deleted once its card is found (kept only while a card still needs your help).
 let stream = null, torchOn = false;
-const sc = { mode: S.meta.scanMode || "ask", auto: S.meta.autoCap !== false, finish: "nonfoil", items: [], working: false, fixId: null };
-const readyMsg = () => sc.auto ? "Ready. Show a card: it takes a picture by itself, then show the next one. No need to hold still while it reads." : "Ready. Tap the white button to take a picture of the card.";
+const sc = { mode: S.meta.scanMode || "ask", auto: S.meta.autoCap !== false, finish: "nonfoil", match: null, candidates: [], session: [], busy: false };
+const readyMsg = () => sc.auto ? "Ready. Hold a card inside the frame. It reads it by itself and tries again if needed." : "Ready. Tap the white button to scan.";
 const manualHint = "Fill the frame with one card. Keep the name and the bottom-left code inside the yellow boxes.";
-const pendingCount = () => sc.items.filter(i => i.state === "queued" || i.state === "reading").length;
 function scanHead() {
-  const added = sc.items.filter(i => i.state === "added"), n = added.reduce((a, x) => a + x.qty, 0);
-  const val = added.reduce((a, x) => a + (priceOf(x.card, x.finish) || 0) * x.qty, 0), p = pendingCount();
-  setHead("Scan", [n ? `${n} added · ${money(val)}` : "", p ? `${p} reading` : ""].filter(Boolean).join(" · "));
+  const val = sc.session.reduce((a, x) => a + (priceOf(x.card, x.finish) || 0) * x.qty, 0);
+  setHead("Scan", sc.session.length ? `${sc.session.reduce((a, x) => a + x.qty, 0)} added · ${money(val)}` : "");
 }
 function renderScan() {
   if (!S.meta.usedScan) { S.meta.usedScan = true; save(); }
@@ -1285,16 +1266,12 @@ function renderScan() {
   $("#view").innerHTML = `<div class="stack">
     <div class="cam" id="cam"><video id="vid" playsinline muted autoplay></video>
       <div class="frame" id="frame"><div class="band name"></div><div class="band info"></div><div class="fprog" id="fprog"></div></div>
-      <svg class="ov" id="ov" hidden aria-hidden="true"><path id="ovMask" fill-rule="evenodd"></path><polygon id="ovQuad"></polygon></svg>
       <div class="hint" id="camHint">${sc.auto ? "Show a card to the camera" : manualHint}</div>
       <div class="sbar" id="sbar" hidden><div class="strack"><div class="sfill" id="sfill"></div></div><span id="slabel">Reading…</span></div>
-      <div class="flash" id="flash"></div>
       <button class="pill" id="autoBtn" aria-pressed="${sc.auto}">Auto ${sc.auto ? "on" : "off"}</button>
-      <div class="zoombar" id="zoomBar" hidden></div>
       <div class="ctrl"><button class="round" id="torch" aria-pressed="${torchOn}" aria-label="Flashlight" hidden>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 2h8l-2 7h-4zM10 9v13h4V9"/></svg></button>
-        <button class="shutter" id="shoot" aria-label="Take a picture of the card"></button>
-        <button class="round" id="camSw" aria-label="Switch camera" hidden><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h3l2-2h6l2 2h3v11H4z"/><path d="M9.5 13.5a2.5 2.5 0 0 0 4.6 1.3M14.5 12.5a2.5 2.5 0 0 0-4.6-1.3"/><path d="M14.4 15.6l-.3-.8.9-.1M9.6 10.4l.3.8-.9.1"/></svg></button>
+        <button class="shutter" id="shoot" aria-label="Scan card now"></button>
         <button class="round" id="photo" aria-label="Use a photo instead"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="12" cy="12" r="3.5"/></svg></button></div></div>
     <div class="row wrap">
       <span class="seg" id="scFin"><button data-f="nonfoil" aria-pressed="${sc.finish === "nonfoil"}">Normal</button><button data-f="foil" aria-pressed="${sc.finish === "foil"}">Foil</button></span>
@@ -1304,85 +1281,37 @@ function renderScan() {
         <option value="exact" ${sc.mode === "exact" ? "selected" : ""}>Add it if the exact printing was read</option>
         <option value="any" ${sc.mode === "any" ? "selected" : ""}>Always add it (hands-free)</option></select></label>
     <div class="status" id="scStatus" aria-live="polite"></div>
+    <div id="scMatch"></div>
     <div class="ac"><input type="search" id="scType" placeholder="Not recognized? Start typing the name" autocomplete="off" autocapitalize="off" spellcheck="false"><ul id="scAc" hidden></ul></div>
-    <div id="scItems"></div>
+    <div id="scSession"></div>
   </div>`;
   layoutFrame(); window.onresize = layoutFrame;
-  $("#shoot").onclick = () => { unlockBeep(); const vid = $("#vid"), q = vid && frameQuad(vid); if (!q) { scStatus("The camera isn't ready yet."); return; } snapNow(vid, null); };
-  $("#photo").onclick = () => { const f = $("#fileIn"); f.accept = "image/*"; f.setAttribute("capture", "environment"); f.value = ""; f.onchange = () => { f.removeAttribute("capture"); f.files[0] && snapFromFile(f.files[0]); }; f.click(); };
-  $("#scFin").onclick = e => { const b = e.target.closest("button"); if (b) { sc.finish = b.dataset.f; $("#scFin").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); } };
+  $("#shoot").onclick = () => { ana.armed = true; captureFrom("video"); };
+  $("#photo").onclick = () => { const f = $("#fileIn"); f.accept = "image/*"; f.setAttribute("capture", "environment"); f.value = ""; f.onchange = () => { f.removeAttribute("capture"); f.files[0] && captureFrom("file", f.files[0]); }; f.click(); };
+  $("#scFin").onclick = e => { const b = e.target.closest("button"); if (b) { sc.finish = b.dataset.f; $("#scFin").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); if (sc.match) drawMatch(); } };
   $("#scBinder").onchange = e => { S.meta.binder = e.target.value; save(); };
   $("#scMode").onchange = e => { sc.mode = e.target.value; S.meta.scanMode = sc.mode; save(); };
   $("#autoBtn").onclick = () => {
     sc.auto = !sc.auto; S.meta.autoCap = sc.auto; save(); unlockBeep();
     const b = $("#autoBtn"); b.setAttribute("aria-pressed", sc.auto); b.textContent = "Auto " + (sc.auto ? "on" : "off");
-    camHint(sc.auto ? "Show a card to the camera" : manualHint);
-    ana.good = 0; setFrameState("", 0); scStatus(readyMsg());
+    camHint(sc.auto ? "Line up a card inside the frame" : manualHint);
+    ana.since = 0; setFrameState("", 0);
+    if (!sc.match) scStatus(readyMsg());
   };
   $("#torch").onclick = toggleTorch;
-  $("#camSw").onclick = switchCamera;
-  attachAutocomplete($("#scType"), $("#scAc"), async name => {
-    $("#scType").value = "";
-    try {
-      const card = slim(await sf("/cards/named?exact=" + encodeURIComponent(name)));
-      const it = sc.fixId && sc.items.find(i => i.id === sc.fixId);
-      sc.fixId = null; $("#scType").placeholder = "Not recognized? Start typing the name";
-      if (it) { it.card = card; it.exact = false; it.finish = card.finishes.includes(it.finish) ? it.finish : card.finishes[0]; addItem(it, 1); dropSnap(it, true); }
-      else { sc.items.push({ id: uid(), state: "review", card, exact: false, finish: card.finishes.includes(sc.finish) ? sc.finish : card.finishes[0], binder: defaultBinder(), at: Date.now(), qty: 1 }); }
-      drawItems(); scanHead();
-    } catch (e) { scStatus(e.message); }
-  });
-  drawItems(); scStatus(readyMsg()); startCamera();
+  attachAutocomplete($("#scType"), $("#scAc"), async name => { $("#scType").value = ""; try { setMatch(await sf("/cards/named?exact=" + encodeURIComponent(name)), false, true); } catch (e) { scStatus(e.message); } });
+  drawSession(); drawMatch(); startCamera();
 }
-const finLabel = f => f === "nonfoil" ? "normal" : f;
-function drawItems() {
-  const el = $("#scItems"); if (!el) return;
-  const list = sc.items.slice().reverse();
-  if (!list.length) { el.innerHTML = ""; return; }
-  const added = sc.items.filter(i => i.state === "added").length;
-  const row = it => {
-    const c = it.card, pic = c ? `<img src="${esc(c.img)}" alt="">` : it.thumb ? `<img src="${it.thumb}" alt="Picture of the card">` : `<img alt="">`;
-    const meta = c ? `<div class="meta">${esc(c.set.toUpperCase())} #${esc(c.num)}${c.finishes.length > 1 && it.state === "review" ? `<button class="chip ${it.finish !== "nonfoil" ? "foil" : ""}" data-fin="${it.id}">${finLabel(it.finish)} ▾</button>` : it.finish !== "nonfoil" ? `<span class="chip foil">${it.finish}</span>` : ""}<span class="num">${money(priceOf(c, it.finish))}</span>${it.state === "added" ? `<span class="chip">${esc((S.binders[it.binder] || S.binders.main).name)}</span><span class="num">${esc(clock(it.at))}</span>` : ""}</div>` : "";
-    if (it.state === "queued" || it.state === "reading") return `<div class="item scan-pending">${pic}<div style="min-width:0"><div class="name">${it.state === "reading" ? "Reading…" : "Waiting to be read"}</div>
-        <div class="ibar"><div style="width:${Math.round((it.p || 0) * 100)}%"></div></div></div><div class="right"><span class="small muted num">${esc(clock(it.at))}</span></div></div>`;
-    if (it.state === "review") return `<div class="item">${pic}<div style="min-width:0"><div class="name">${esc(c.name)}</div>${meta}
-        <div class="small ${it.exact ? "up" : "muted"}">${it.exact ? "Exact printing matched" : "Check the printing"}</div></div>
-        <div class="right"><span class="row" style="gap:6px"><button class="btn sm primary" data-add="${it.id}">Add</button><button class="btn sm" data-add4="${it.id}">+4</button></span>
-        <span class="row" style="gap:6px"><button class="btn sm ghost" data-pr="${it.id}">Printing</button><button class="btn sm ghost" data-skip="${it.id}">Skip</button></span></div></div>`;
-    if (it.state === "pick") return `<div class="item">${pic}<div style="min-width:0"><div class="name">Which card is it?</div>${it.read ? `<div class="small muted">Read “${esc(it.read)}”</div>` : ""}
-        <div class="chips" style="margin-top:6px">${it.cands.map(n => `<button data-pick="${it.id}" data-n="${esc(n)}">${esc(n)}</button>`).join("")}</div></div>
-        <div class="right"><button class="btn sm ghost" data-type="${it.id}">Type it</button><button class="btn sm ghost" data-skip="${it.id}">Remove</button></div></div>`;
-    if (it.state === "failed") return `<div class="item flagged">${pic}<div style="min-width:0"><div class="name">Couldn't read this card</div><div class="small muted">${it.read ? `Read “${esc(it.read)}”. ` : ""}${it.tries > 1 ? "Try a new picture with more light." : ""}</div></div>
-        <div class="right">${it.snap && it.tries < 2 ? `<button class="btn sm" data-retry="${it.id}">Try again</button>` : ""}<button class="btn sm ghost" data-type="${it.id}">Type it</button><button class="btn sm ghost" data-skip="${it.id}">Remove</button></div></div>`;
-    if (it.state === "added") return `<div class="item">${pic}<div style="min-width:0"><div class="name">${esc(c.name)}</div>${meta}</div>
-        <div class="right"><span class="num">${it.qty}×</span><button class="btn sm ghost" data-undo="${it.id}">Undo</button></div></div>`;
-    return "";
-  };
-  el.innerHTML = `<h2 class="sec">This session${added ? ` · ${added} added` : ""}</h2><div class="list">${list.map(row).join("")}</div>`;
-  const find = id => sc.items.find(i => i.id === id);
-  el.querySelectorAll("[data-add]").forEach(b => b.onclick = () => { addItem(find(b.dataset.add), 1); drawItems(); scanHead(); });
-  el.querySelectorAll("[data-add4]").forEach(b => b.onclick = () => { addItem(find(b.dataset.add4), 4); drawItems(); scanHead(); });
-  el.querySelectorAll("[data-skip]").forEach(b => b.onclick = () => { const it = find(b.dataset.skip); dropSnap(it, true); sc.items = sc.items.filter(i => i !== it); drawItems(); scanHead(); });
-  el.querySelectorAll("[data-undo]").forEach(b => b.onclick = () => { const it = find(b.dataset.undo); addToColl(it.card, it.finish, -it.qty, it.binder); sc.items = sc.items.filter(i => i !== it); drawItems(); scanHead(); toast("Removed " + it.card.name); });
-  el.querySelectorAll("[data-fin]").forEach(b => b.onclick = () => { const it = find(b.dataset.fin), f = it.card.finishes; it.finish = f[(f.indexOf(it.finish) + 1) % f.length]; drawItems(); });
-  el.querySelectorAll("[data-retry]").forEach(b => b.onclick = () => { const it = find(b.dataset.retry); it.state = "queued"; drawItems(); processQueue(); });
-  el.querySelectorAll("[data-type]").forEach(b => b.onclick = () => { sc.fixId = b.dataset.type; const i = $("#scType"); i.placeholder = "Type the name of that card"; i.focus(); i.scrollIntoView({ block: "center" }); });
-  el.querySelectorAll("[data-pick]").forEach(b => b.onclick = async () => {
-    const it = find(b.dataset.pick);
-    try { const card = slim(await sf("/cards/named?exact=" + encodeURIComponent(b.dataset.n))); it.card = card; it.exact = false; it.finish = card.finishes.includes(it.finish) ? it.finish : card.finishes[0]; addItem(it, 1); dropSnap(it, true); drawItems(); scanHead(); }
-    catch (e) { toast(e.message); }
-  });
-  el.querySelectorAll("[data-pr]").forEach(b => b.onclick = () => {
-    const it = find(b.dataset.pr);
-    openSheet(`<h2>${esc(it.card.name)}</h2><p class="small muted">Pick the printing you have.</p><div id="printBox"></div>`, () => { drawItems(); });
-    showPrints(it.card, picked => { it.card = slim(picked); it.exact = true; if (!it.card.finishes.includes(it.finish)) it.finish = it.card.finishes[0]; closeSheet(); });
-  });
+function drawSession() {
+  const el = $("#scSession"); if (!el) return;
+  el.innerHTML = sc.session.length ? `<h2 class="sec">Added this session</h2><div class="list">${sc.session.slice().reverse().map((x, i) => `<div class="item"><img src="${esc(x.card.img)}" alt=""><div style="min-width:0"><div class="name">${esc(x.card.name)}</div><div class="meta">${esc(x.card.set.toUpperCase())} #${esc(x.card.num)} ${x.finish !== "nonfoil" ? `<span class="chip foil">${x.finish}</span>` : ""}<span class="chip">${esc((S.binders[x.binder] || S.binders.main).name)}</span>${x.at ? `<span class="num">${esc(clock(x.at))}</span>` : ""}</div></div><div class="right"><span class="num">${x.qty}× ${money(priceOf(x.card, x.finish))}</span><button class="btn sm ghost" data-undo="${sc.session.length - 1 - i}">Undo</button></div></div>`).join("")}</div>` : "";
+  el.querySelectorAll("[data-undo]").forEach(b => b.onclick = () => { const x = sc.session.splice(+b.dataset.undo, 1)[0]; addToColl(x.card, x.finish, -x.qty, x.binder); drawSession(); scanHead(); toast("Removed " + x.card.name); });
 }
 function scStatus(t) { const el = $("#scStatus"); if (el) el.textContent = t; }
 function camHint(t) { const h = $("#camHint"); if (h && h.textContent !== t) h.textContent = t; }
 /* ---------- where the card is: guide frame, or the card's own edges once found ---------- */
-const det = { box: null, quad: null, deg: 0, cand: null, seen: 0, cv: null, moved: 1, lastPOI: 0, lastRefocus: 0, blurSince: 0, tick: 0 };
-const camDev = { track: null, caps: {}, held: false };
+const det = { box: null, cand: null, seen: 0, cv: null, moved: 1, lastPOI: 0, lastRefocus: 0, blurSince: 0 };
+const camDev = { track: null, caps: {} };
 function camXform(vid) {
   const cam = $("#cam"), W = cam.clientWidth, H = cam.clientHeight, vw = vid.videoWidth, vh = vid.videoHeight;
   const sc_ = Math.max(W / vw, H / vh); return { s: sc_, ox: (W - vw * sc_) / 2, oy: (H - vh * sc_) / 2, W, H };
@@ -1393,200 +1322,17 @@ function guideScreen(cam) {
   return { x: (W - w) / 2, y: (H - h) / 2, w, h };
 }
 function guideBox(vid) { const g = guideScreen($("#cam")), t = camXform(vid); return { x: (g.x - t.ox) / t.s, y: (g.y - t.oy) / t.s, w: g.w / t.s, h: g.h / t.s }; }
-const TRACK = { lockHits: 3, switchHits: 3, hold: 800, same: 0.5, calm: 0.15, quick: 0.7 };
-const cardLocked = () => !!det.box && performance.now() - det.seen < TRACK.hold;
+const cardLocked = () => !!det.box && performance.now() - det.seen < 450;
 function frameRect(vid) { if (!vid || !vid.videoWidth || !$("#cam")) return null; return cardLocked() ? det.box : guideBox(vid); }
-// The card's four corners (video pixels): the found card at any tilt, or the guide box.
-function frameQuad(vid) { if (!vid || !vid.videoWidth || !$("#cam")) return null; return cardLocked() && det.quad ? det.quad : rectQuad(guideBox(vid)); }
 function placeFrame(vid) {
-  const fr = $("#frame"), cam = $("#cam"), ov = $("#ov"); if (!fr || !cam) return;
-  const locked = cardLocked() && det.quad && vid && vid.videoWidth;
-  if (!locked) {
-    const r = vid && vid.videoWidth ? (() => { const b = guideBox(vid), t = camXform(vid); return { x: b.x * t.s + t.ox, y: b.y * t.s + t.oy, w: b.w * t.s, h: b.h * t.s }; })() : guideScreen(cam);
-    fr.style.left = r.x + "px"; fr.style.top = r.y + "px"; fr.style.width = r.w + "px"; fr.style.height = r.h + "px";
-    fr.hidden = false; if (ov) ov.hidden = true; return;
-  }
-  // a found card: outline its real corners, darken everything else
-  const t = camXform(vid), P = det.quad.map(p => [p.x * t.s + t.ox, p.y * t.s + t.oy]);
-  fr.hidden = true; if (!ov) return; ov.hidden = false;
-  ov.setAttribute("viewBox", `0 0 ${t.W} ${t.H}`);
-  const pts = P.map(p => p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
-  $("#ovQuad").setAttribute("points", pts);
-  $("#ovMask").setAttribute("d", `M0 0H${t.W}V${t.H}H0Z M${P.map(p => p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" L")}Z`);
+  const fr = $("#frame"), cam = $("#cam"); if (!fr || !cam) return;
+  let r;
+  if (vid && vid.videoWidth) { const b = frameRect(vid), t = camXform(vid); r = { x: b.x * t.s + t.ox, y: b.y * t.s + t.oy, w: b.w * t.s, h: b.h * t.s }; }
+  else r = guideScreen(cam);
+  fr.style.left = r.x + "px"; fr.style.top = r.y + "px"; fr.style.width = r.w + "px"; fr.style.height = r.h + "px";
+  fr.classList.toggle("locked", cardLocked());
 }
 function layoutFrame() { placeFrame($("#vid")); }
-// Homography from the card's own coordinates (u,v) to image points: 4 point pairs -> 3x3 matrix.
-function homography(dst, src) {
-  const A = [], b = [];
-  for (let i = 0; i < 4; i++) {
-    const { x: u, y: v } = dst[i], { x, y } = src[i];
-    A.push([u, v, 1, 0, 0, 0, -u * x, -v * x]); b.push(x);
-    A.push([0, 0, 0, u, v, 1, -u * y, -v * y]); b.push(y);
-  }
-  for (let c = 0; c < 8; c++) {                                  // Gaussian elimination with pivoting
-    let p = c; for (let r = c + 1; r < 8; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
-    [A[c], A[p]] = [A[p], A[c]]; [b[c], b[p]] = [b[p], b[c]];
-    for (let r = 0; r < 8; r++) { if (r === c) continue; const f = A[r][c] / A[c][c]; for (let k = c; k < 8; k++) A[r][k] -= f * A[c][k]; b[r] -= f * b[c]; }
-  }
-  return b.map((v, i) => v / A[i][i]).concat(1);
-}
-// Straighten: fill a W×H image of the card from source pixels (RGBA, sw×sh, offset ox,oy).
-function warpQuad(src, sw, sh, ox, oy, quad, W, H, gray) {
-  const Hm = homography([{ x: 0, y: 0 }, { x: W, y: 0 }, { x: W, y: H }, { x: 0, y: H }], quad);
-  const out = gray ? new Float32Array(W * H) : new Uint8ClampedArray(W * H * 4);
-  for (let v = 0; v < H; v++) for (let u = 0; u < W; u++) {
-    const uu = u + 0.5, vv = v + 0.5, z = Hm[6] * uu + Hm[7] * vv + 1;
-    let x = (Hm[0] * uu + Hm[1] * vv + Hm[2]) / z - ox - 0.5, y = (Hm[3] * uu + Hm[4] * vv + Hm[5]) / z - oy - 0.5;
-    if (x < 0) x = 0; if (y < 0) y = 0; if (x > sw - 1.001) x = sw - 1.001; if (y > sh - 1.001) y = sh - 1.001;
-    const x0 = x | 0, y0 = y | 0, fx = x - x0, fy = y - y0, i00 = (y0 * sw + x0) * 4, i10 = i00 + 4, i01 = i00 + sw * 4, i11 = i01 + 4;
-    const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy, o = v * W + u;
-    if (gray) {
-      const l = k => src[k] * 0.299 + src[k + 1] * 0.587 + src[k + 2] * 0.114;
-      out[o] = l(i00) * w00 + l(i10) * w10 + l(i01) * w01 + l(i11) * w11;
-    } else for (let ch = 0; ch < 4; ch++) out[o * 4 + ch] = src[i00 + ch] * w00 + src[i10 + ch] * w10 + src[i01 + ch] * w01 + src[i11 + ch] * w11;
-  }
-  return out;
-}
-const quadBBox = q => { const xs = q.map(p => p.x), ys = q.map(p => p.y), x = Math.min(...xs), y = Math.min(...ys); return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y }; };
-const rectQuad = r => [{ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }, { x: r.x + r.w, y: r.y + r.h }, { x: r.x, y: r.y + r.h }];
-
-/* ---------- tilted cards: undo the tilt, use the upright detector, then fit the real edges ---------- */
-// Rotate the picture by -deg around its center (same size), bilinear.
-function rotateGray(G, w, h, deg) {
-  const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), cx = (w - 1) / 2, cy = (h - 1) / 2, out = new Float32Array(w * h);
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const dx = x - cx, dy = y - cy, sx = cx + dx * c - dy * s, sy = cy + dx * s + dy * c;   // where this pixel comes from
-    if (sx < 0 || sy < 0 || sx > w - 1.001 || sy > h - 1.001) { out[y * w + x] = 128; continue; }
-    const x0 = sx | 0, y0 = sy | 0, fx = sx - x0, fy = sy - y0, i = y0 * w + x0;
-    out[y * w + x] = G[i] * (1 - fx) * (1 - fy) + G[i + 1] * fx * (1 - fy) + G[i + w] * (1 - fx) * fy + G[i + w + 1] * fx * fy;
-  }
-  return out;
-}
-function unrotate(p, w, h, deg) {
-  const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), cx = (w - 1) / 2, cy = (h - 1) / 2, dx = p.x - cx, dy = p.y - cy;
-  return { x: cx + dx * c - dy * s, y: cy + dx * s + dy * c };
-}
-// Fit each side of a rough outline to the real edge pixels near it (handles a card held at an angle).
-function refineQuad(G, w, h, q) {
-  const n = w * h, mag = new Float32Array(n), gxA = new Float32Array(n), gyA = new Float32Array(n);
-  let sum = 0;
-  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
-    const i = y * w + x, gx = G[i + 1] - G[i - 1], gy = G[i + w] - G[i - w], m = Math.hypot(gx, gy);
-    mag[i] = m; gxA[i] = gx / (m || 1); gyA[i] = gy / (m || 1); sum += m;
-  }
-  const thr = Math.max(10, 2 * sum / n);
-  const lineFrom = (P, Q) => { const dx = Q.x - P.x, dy = Q.y - P.y, L = Math.hypot(dx, dy) || 1, c = -dy / L, s = dx / L; return { c, s, rho: P.x * c + P.y * s, P, Q }; };
-  const fit1 = (l, band) => {
-    let W = 0, mx = 0, my = 0; const pts = [];
-    const x0 = Math.max(1, Math.floor(Math.min(l.P.x, l.Q.x) - band - 2)), x1 = Math.min(w - 2, Math.ceil(Math.max(l.P.x, l.Q.x) + band + 2));
-    const y0 = Math.max(1, Math.floor(Math.min(l.P.y, l.Q.y) - band - 2)), y1 = Math.min(h - 2, Math.ceil(Math.max(l.P.y, l.Q.y) + band + 2));
-    const dx = l.Q.x - l.P.x, dy = l.Q.y - l.P.y, LL = dx * dx + dy * dy || 1;
-    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
-      const i = y * w + x, m = mag[i]; if (m < thr) continue;
-      if (Math.abs(x * l.c + y * l.s - l.rho) > band) continue;
-      const t = ((x - l.P.x) * dx + (y - l.P.y) * dy) / LL; if (t < 0.1 || t > 0.9) continue;     // stay away from the corners
-      if (Math.abs(gxA[i] * l.c + gyA[i] * l.s) < 0.85) continue;
-      pts.push(x, y, m); mx += x * m; my += y * m; W += m;
-    }
-    if (pts.length < 45) return l;
-    mx /= W; my /= W; let sxx = 0, syy = 0, sxy = 0;
-    for (let k = 0; k < pts.length; k += 3) { const ex = pts[k] - mx, ey = pts[k + 1] - my, m = pts[k + 2]; sxx += m * ex * ex; syy += m * ey * ey; sxy += m * ex * ey; }
-    const th = 0.5 * Math.atan2(2 * sxy, sxx - syy) + Math.PI / 2;
-    let c = Math.cos(th), s = Math.sin(th); if (c * l.c + s * l.s < 0) { c = -c; s = -s; }
-    return { c, s, rho: mx * c + my * s, P: l.P, Q: l.Q };
-  };
-  const X = (p, r) => { const det = p.c * r.s - p.s * r.c; if (Math.abs(det) < 1e-6) return null; return { x: (p.rho * r.s - p.s * r.rho) / det, y: (p.c * r.rho - p.rho * r.c) / det }; };
-  const L = [lineFrom(q[0], q[1]), lineFrom(q[1], q[2]), lineFrom(q[2], q[3]), lineFrom(q[3], q[0])].map(l => fit1(fit1(fit1(l, 4), 3), 2));
-  const r = [X(L[3], L[0]), X(L[0], L[1]), X(L[1], L[2]), X(L[2], L[3])];
-  if (r.some(p => !p)) return q;
-  // keep the refinement only if it stays a sensible card shape close to the rough outline
-  const size = Math.hypot(q[0].x - q[3].x, q[0].y - q[3].y);
-  if (r.some((p, i) => Math.hypot(p.x - q[i].x, p.y - q[i].y) > size * 0.08)) return q;
-  return r;
-}
-// The found outline is often the inside edge of the card's black border. Look just outside each
-// side for a parallel outer edge (the card against the background) and move the side out to it.
-function expandToOuter(G, w, h, q) {
-  const n = w * h, mag = new Float32Array(n), ux = new Float32Array(n), uy = new Float32Array(n); let sum = 0;
-  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const i = y * w + x, gx = G[i + 1] - G[i - 1], gy = G[i + w] - G[i - w], m = Math.hypot(gx, gy); mag[i] = m; ux[i] = gx / (m || 1); uy[i] = gy / (m || 1); sum += m; }
-  const thr = Math.max(10, 2 * sum / n), cx = q.reduce((t, p) => t + p.x, 0) / 4, cy = q.reduce((t, p) => t + p.y, 0) / 4;
-  const size = Math.hypot(q[0].x - q[3].x, q[0].y - q[3].y), maxOff = Math.max(3, Math.round(size * 0.07));
-  const lines = [];
-  for (let s = 0; s < 4; s++) {
-    const P = q[s], Q = q[(s + 1) % 4], dx = Q.x - P.x, dy = Q.y - P.y, L = Math.hypot(dx, dy) || 1;
-    let nx = -dy / L, ny = dx / L; const mx = (P.x + Q.x) / 2, my = (P.y + Q.y) / 2;
-    if ((mx - cx) * nx + (my - cy) * ny < 0) { nx = -nx; ny = -ny; }            // point outward
-    const hits = off => { let k = 0; for (let j = 1; j <= 20; j++) { const t = 0.1 + 0.8 * j / 21, x = Math.round(P.x + dx * t + nx * off), y = Math.round(P.y + dy * t + ny * off); if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) continue; const i = y * w + x; if (mag[i] >= thr && Math.abs(ux[i] * nx + uy[i] * ny) > 0.8) k++; } return k / 20; };
-    let best = 0;
-    for (let off = 2; off <= maxOff; off++) { const v = Math.max(hits(off), hits(off + 0.5)); if (v >= 0.5) best = off; }
-    lines.push({ P: { x: P.x + nx * best, y: P.y + ny * best }, Q: { x: Q.x + nx * best, y: Q.y + ny * best } });
-  }
-  const X = (a, b) => { const d1x = a.Q.x - a.P.x, d1y = a.Q.y - a.P.y, d2x = b.Q.x - b.P.x, d2y = b.Q.y - b.P.y, den = d1x * d2y - d1y * d2x; if (Math.abs(den) < 1e-6) return null; const t = ((b.P.x - a.P.x) * d2y - (b.P.y - a.P.y) * d2x) / den; return { x: a.P.x + d1x * t, y: a.P.y + d1y * t }; };
-  const r = [X(lines[3], lines[0]), X(lines[0], lines[1]), X(lines[1], lines[2]), X(lines[2], lines[3])];
-  return r.some(p => !p) ? q : r;
-}
-// Try each likely tilt with the upright detector; keep the best-scoring card.
-function detectTilted(G, w, h, angles) {
-  let best = null;
-  for (const deg of angles) {
-    const R = deg ? rotateGray(G, w, h, deg) : G, r = detectCore(R, w, h);
-    if (r && (!best || r.score > best.r.score)) best = { r, deg };
-  }
-  if (!best) return null;
-  const toQuad = (r, deg) => [{ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }, { x: r.x + r.w, y: r.y + r.h }, { x: r.x, y: r.y + r.h }].map(p => deg ? unrotate(p, w, h, deg) : p);
-  let q = refineQuad(G, w, h, toQuad(best.r, best.deg)), deg = best.deg, score = best.r.score;
-  // second pass: take the tilt from the edges just found (average of the two long sides) and look again
-  const sideDeg = (a, b) => Math.atan2(b.x - a.x, b.y - a.y) * -180 / Math.PI;
-  const est = (sideDeg(q[0], q[3]) + sideDeg(q[1], q[2])) / 2;
-  if (Math.abs(est - deg) >= 2.5 && Math.abs(est) < 46) {
-    const R = rotateGray(G, w, h, est), r2 = detectCore(R, w, h);
-    if (r2 && r2.score >= score - 0.3) { q = refineQuad(G, w, h, toQuad(r2, est)); deg = est; score = r2.score; }
-  }
-  if (!borderLooksLikeCard(G, w, h, q) && score < 5.5) return null;   // no card border and only middling edges: probably not a card
-  return { pts: expandToOuter(G, w, h, q), deg, score };
-}
-// Tilt candidates from the strongest long straight lines (Hough peaks), folded to [-45°, 45°).
-function houghTilts(G, w, h, n = 2) {
-  const TB = 90, dT = Math.PI / TB, diag = Math.ceil(Math.hypot(w, h)), RB = 2 * diag + 1, acc = new Float32Array(TB * RB);
-  const COS = new Float32Array(TB), SIN = new Float32Array(TB); for (let k = 0; k < TB; k++) { COS[k] = Math.cos(k * dT); SIN[k] = Math.sin(k * dT); }
-  let sum = 0; const mag = new Float32Array(w * h), ang = new Float32Array(w * h);
-  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const i = y * w + x, gx = G[i + 1] - G[i - 1], gy = G[i + w] - G[i - w], m = Math.hypot(gx, gy); mag[i] = m; ang[i] = Math.atan2(gy, gx); sum += m; }
-  const thr = Math.max(12, 2.2 * sum / (w * h));
-  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
-    const i = y * w + x, m = mag[i]; if (m < thr) continue;
-    let t = ang[i]; if (t < 0) t += Math.PI; if (t >= Math.PI) t -= Math.PI;
-    const kb = Math.round(t / dT);
-    for (let d = -2; d <= 2; d++) { const k = ((kb + d) % TB + TB) % TB; acc[k * RB + Math.round(x * COS[k] + y * SIN[k]) + diag] += m; }
-  }
-  // the card's long straight sides make the tallest peaks; sum the top peaks per folded angle
-  const top = [];
-  for (let k = 0; k < TB; k++) { let bestV = 0; for (let r = 0; r < RB; r++) if (acc[k * RB + r] > bestV) bestV = acc[k * RB + r]; top.push([k, bestV]); }
-  const fold = new Float32Array(45);                              // 2° bins over [-45, 45)
-  for (const [k, v] of top) { const deg = k * 2; const f = ((deg + 45) % 90) - 45; fold[Math.floor((f + 45) / 2) % 45] += v * v; }
-  const order = [...fold.keys()].sort((a, b) => fold[b] - fold[a]);
-  const out = [];
-  for (const b of order) { const a = b * 2 - 45 + 1; if (out.every(o => Math.abs(o - a) >= 5)) out.push(a); if (out.length >= n) break; }
-  if (!out.some(a => Math.abs(a) < 3)) out.push(0);
-  return out;
-}
-// Does this outline look like a card? Just inside it, most of the way round, is one border colour
-// that differs from what's just outside (a finger may cover part of it).
-function borderLooksLikeCard(G, w, h, q) {
-  const Hm = homography([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }], q);
-  const at = (u, v) => { const z = Hm[6] * u + Hm[7] * v + 1, x = Math.round((Hm[0] * u + Hm[1] * v + Hm[2]) / z), y = Math.round((Hm[3] * u + Hm[4] * v + Hm[5]) / z); return x >= 0 && y >= 0 && x < w && y < h ? G[y * w + x] : null; };
-  const ins = [], diffs = [];
-  for (let k = 0; k < 48; k++) {
-    const t = 0.08 + 0.84 * ((k % 12) / 11), side = k / 12 | 0;
-    const [u, v, uo, vo] = side === 0 ? [t, 0.02, t, -0.035] : side === 1 ? [0.973, t, 1.045, t] : side === 2 ? [t, 0.98, t, 1.035] : [0.027, t, -0.045, t];
-    const a = at(u, v), b = at(uo, vo); if (a == null) continue; ins.push(a); if (b != null) diffs.push(Math.abs(a - b));
-  }
-  if (ins.length < 30) return false;
-  const sorted = ins.slice().sort((x, y) => x - y), med = sorted[sorted.length >> 1];
-  const even = ins.filter(v => Math.abs(v - med) < 24).length / ins.length;
-  const contrast = diffs.filter(d => d > 16).length / (diffs.length || 1);
-  return even >= 0.62 && contrast >= 0.5;
-}
-
 // Find an upright card: strong straight edges on all four sides with a card's 63:88 shape.
 const DET = { max: 200, minH: 0.27, aspLo: 0.62, aspHi: 0.82, minSide: 2.2 };
 function edgePeaks(P, n, sep) {
@@ -1643,138 +1389,70 @@ function detectCard(vid) {
   g.drawImage(vid, 0, 0, w, h);
   const d = g.getImageData(0, 0, w, h).data, G = new Float32Array(w * h);
   for (let i = 0, j = 0; i < d.length; i += 4, j++) G[j] = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
-  // While a card is being tracked, look only at its current tilt (fast); search all tilts every few frames or when lost.
-  det.tick++;
-  const angles = cardLocked() && det.tick % 6 ? [det.deg] : houghTilts(G, w, h, 2);
-  const r = detectTilted(G, w, h, angles); if (!r) return null;
-  return { pts: r.pts.map(p => ({ x: p.x / k, y: p.y / k })), deg: r.deg };
+  const r = detectCore(G, w, h); if (!r) return null;
+  return { x: r.x / k, y: r.y / k, w: r.w / k, h: r.h / k };
 }
 function iou(a, b) {
   const x0 = Math.max(a.x, b.x), y0 = Math.max(a.y, b.y), x1 = Math.min(a.x + a.w, b.x + b.w), y1 = Math.min(a.y + a.h, b.y + b.h);
   const I = Math.max(0, x1 - x0) * Math.max(0, y1 - y0); return I / (a.w * a.h + b.w * b.h - I);
 }
-// Tracking: follow one card smoothly instead of trusting every frame on its own.
-// - lock on after 3 frames that agree;
-// - while locked, small wobbles are averaged out heavily, real movement is followed quickly;
-// - a detection somewhere else must repeat 3 frames in a row before the outline moves there;
-// - missed frames are bridged for 0.8 s before falling back to the guide box.
-const meanShift = (a, b, size) => a.reduce((t, p, i) => t + Math.hypot(p.x - b[i].x, p.y - b[i].y), 0) / 4 / (size || 1);
-function updateBox(vid, found) {
-  if (!found) { det.moved = cardLocked() ? det.moved * 0.5 : 1; return; }
-  const r = quadBBox(found.pts);
+function updateBox(vid, r) {
+  if (!r) { det.moved = 1; return; }
   const t = camXform(vid), cx = (r.x + r.w / 2) * t.s + t.ox, cy = (r.y + r.h / 2) * t.s + t.oy;
   if (cx < 0 || cy < 0 || cx > t.W || cy > t.H) return;                       // off the visible screen
-  const now = performance.now();
-  // keep a candidate: consecutive detections that agree with each other
-  const c = det.cand;
-  if (c && iou(quadBBox(c.pts), r) > 0.6) { c.hits++; c.pts = c.pts.map((p, i) => ({ x: (p.x + found.pts[i].x) / 2, y: (p.y + found.pts[i].y) / 2 })); c.deg = found.deg; }
-  else det.cand = { pts: found.pts, deg: found.deg, hits: 1 };
-  if (!cardLocked()) {
-    if (det.cand.hits < TRACK.lockHits) return;
-    det.quad = det.cand.pts; det.deg = det.cand.deg; det.box = quadBBox(det.quad); det.seen = now; det.moved = 1; return;
+  const b = det.box, now = performance.now();
+  if (!cardLocked()) {                                   // lock on only after two frames in a row agree
+    const c = det.cand; det.cand = r;
+    if (!c || iou(c, r) < 0.6) return;
   }
-  const b = det.box, size = b.h;
-  if (iou(b, r) > TRACK.same) {
-    // same card: smooth. Tiny shifts (jitter) barely move the outline; big ones (real motion) move it fast.
-    const d = meanShift(det.quad, found.pts, size);
-    if (d > 0.07 && det.cand.hits < 2) return;                                 // a sudden jump seen once: wait for the next frame to confirm it
-    const a = Math.max(TRACK.calm, Math.min(TRACK.quick, d * 9));
-    det.quad = det.quad.map((p, i) => ({ x: p.x + (found.pts[i].x - p.x) * a, y: p.y + (found.pts[i].y - p.y) * a }));
-    det.moved = d; det.deg = found.deg; det.seen = now;
-  } else if (det.cand.hits >= TRACK.switchHits) {
-    // somewhere else, and it's been there for several frames: the card really moved
-    det.quad = det.cand.pts; det.deg = det.cand.deg; det.moved = 1; det.seen = now;
-  } else return;                                                               // a stray detection: ignore it
-  det.box = quadBBox(det.quad);
+  if (b && cardLocked() && iou(b, r) > 0.55) {
+    det.moved = Math.hypot(r.x + r.w / 2 - (b.x + b.w / 2), r.y + r.h / 2 - (b.y + b.h / 2)) / b.h + Math.abs(r.h - b.h) / b.h;
+    const a = 0.5; det.box = { x: b.x + (r.x - b.x) * a, y: b.y + (r.y - b.y) * a, w: b.w + (r.w - b.w) * a, h: b.h + (r.h - b.h) * a };
+  } else { det.moved = 1; det.box = r; }
+  det.seen = now;
 }
-// Focus: aim at the card once, then HOLD that focus for the next cards (a stack is scanned at the
-// same distance, so the camera shouldn't refocus on the table every time a card is swapped).
-// Focus is released and redone only if the card stays blurry. Tap the preview to focus by hand.
-const hasFM = m => (camDev.caps.focusMode || []).includes(m);
+// Focus: point the camera's focus at the card, refocus when text stays blurry, tap to focus.
 function focusAt(nx, ny, once) {
   const tr = camDev.track; if (!tr) return;
-  const adv = { pointsOfInterest: [{ x: Math.max(0, Math.min(1, nx)), y: Math.max(0, Math.min(1, ny)) }] };
-  if (once && hasFM("single-shot")) adv.focusMode = "single-shot"; else if (hasFM("continuous")) adv.focusMode = "continuous";
-  camDev.held = false;
+  const fm = camDev.caps.focusMode || [], adv = { pointsOfInterest: [{ x: Math.max(0, Math.min(1, nx)), y: Math.max(0, Math.min(1, ny)) }] };
+  if (once && fm.includes("single-shot")) adv.focusMode = "single-shot"; else if (fm.includes("continuous")) adv.focusMode = "continuous";
   tr.applyConstraints({ advanced: [adv] }).catch(() => {});
+  if (once && fm.includes("single-shot") && fm.includes("continuous")) setTimeout(() => { if (camDev.track) camDev.track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {}); }, 900);
 }
-function holdFocus() {
-  const tr = camDev.track; if (!tr || camDev.held) return;
-  let fd; try { fd = tr.getSettings().focusDistance; } catch (e) {}
-  if (hasFM("manual") && camDev.caps.focusDistance && fd != null) tr.applyConstraints({ advanced: [{ focusMode: "manual", focusDistance: fd }] }).catch(() => {});
-  else if (hasFM("single-shot")) tr.applyConstraints({ advanced: [{ focusMode: "single-shot" }] }).catch(() => {});   // focuses once, then stays put
-  else return;
-  camDev.held = true;
-}
-function releaseFocus() { camDev.held = false; if (camDev.track && hasFM("continuous")) camDev.track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {}); }
 function focusTick(vid) {
   if (!cardLocked()) { det.blurSince = 0; return; }
   const now = performance.now(), b = det.box, nx = (b.x + b.w / 2) / vid.videoWidth, ny = (b.y + b.h * 0.3) / vid.videoHeight;
-  if (det.moved >= 1 && !camDev.held && now - det.lastPOI > 1200) { focusAt(nx, ny, false); det.lastPOI = now; }   // a newly found card: aim focus at it
-  const s = ana.last; if (!s || s.text < AUTO.minText) { det.blurSince = 0; return; }
-  const ref = S.meta.sharpRef, blurry = s.sharp < (ref ? ref * 0.45 : AUTO.floor0 * 0.8);
+  if (det.moved > 0.08 && now - det.lastPOI > 700) { focusAt(nx, ny, false); det.lastPOI = now; }
+  const blurry = ana.last && ana.last.text >= AUTO.minText && ana.last.sharp < AUTO.minSharp;
   if (!blurry) { det.blurSince = 0; return; }
   if (!det.blurSince) det.blurSince = now;
-  if (now - det.blurSince > 700 && now - det.lastRefocus > 1500) { focusAt(nx, ny, !hasFM("continuous")); det.lastRefocus = now; det.blurSince = 0; }
+  if (now - det.blurSince > 1000 && now - det.lastRefocus > 2500) { focusAt(nx, ny, true); det.lastRefocus = now; det.blurSince = 0; }
 }
-// Zoom lets the phone stay farther from the card, where phone cameras focus faster.
-function zoomButtons() {
-  const z = camDev.caps.zoom, bar = $("#zoomBar"); if (!bar) return;
-  if (!z || !(z.max >= 1.4)) { bar.hidden = true; return; }
-  const opts = [1, 1.5, 2].filter(v => v >= (z.min || 1) && v <= z.max);
-  if (S.meta.zoom == null) S.meta.zoom = opts.includes(1.5) ? 1.5 : 1;
-  bar.hidden = false;
-  bar.innerHTML = opts.map(v => `<button data-z="${v}" aria-pressed="${S.meta.zoom === v}">${v}×</button>`).join("");
-  bar.onclick = e => { const b = e.target.closest("button"); if (!b) return; S.meta.zoom = +b.dataset.z; save(); applyZoom(); zoomButtons(); releaseFocus(); };
-  applyZoom();
-}
-function applyZoom() { if (camDev.track && camDev.caps.zoom) camDev.track.applyConstraints({ advanced: [{ zoom: S.meta.zoom || 1 }] }).catch(() => {}); }
 function watchTick() {
   if (tab !== "scan" || !stream || document.hidden) return;
   const vid = $("#vid"); if (!vid || !vid.videoWidth) return;
-  try { updateBox(vid, detectCard(vid)); } catch (e) {}
+  if (!sc.busy) { try { updateBox(vid, detectCard(vid)); } catch (e) {} }
   placeFrame(vid); focusTick(vid); autoTick();
 }
 async function startCamera() {
   const vid = $("#vid"); if (!vid) return;
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { scStatus("Camera isn't available here. Use the photo button instead. The page must be opened over https."); return; }
   try {
-    const want = { width: { ideal: 2560 }, height: { ideal: 1440 } };
-    if (!stream) {
-      try { stream = await navigator.mediaDevices.getUserMedia({ video: Object.assign(S.meta.camId ? { deviceId: { exact: S.meta.camId } } : { facingMode: { ideal: "environment" } }, want), audio: false }); }
-      catch (e) { if (!S.meta.camId) throw e; S.meta.camId = null; stream = await navigator.mediaDevices.getUserMedia({ video: Object.assign({ facingMode: { ideal: "environment" } }, want), audio: false }); }
-    }
+    if (!stream) stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 2560 }, height: { ideal: 1440 } }, audio: false });
     if (tab !== "scan") { stopCamera(); return; }
     vid.srcObject = stream; await vid.play().catch(() => {});
     const track = stream.getVideoTracks()[0];
-    camDev.track = track; camDev.caps = track.getCapabilities ? track.getCapabilities() : {}; camDev.held = false;
-    zoomButtons();
+    camDev.track = track; camDev.caps = track.getCapabilities ? track.getCapabilities() : {};
     if (camDev.caps.torch) $("#torch").hidden = false;
-    listCameras();
     if ((camDev.caps.focusMode || []).includes("continuous")) track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
-    vid.onclick = e => { const t = camXform(vid), r = vid.getBoundingClientRect(); focusAt(((e.clientX - r.left) - t.ox) / t.s / vid.videoWidth, ((e.clientY - r.top) - t.oy) / t.s / vid.videoHeight, true); ana.sh = []; camHint("Focusing…"); };
-    scStatus(readyMsg());
+    vid.onclick = e => { const t = camXform(vid), r = vid.getBoundingClientRect(); focusAt(((e.clientX - r.left) - t.ox) / t.s / vid.videoWidth, ((e.clientY - r.top) - t.oy) / t.s / vid.videoHeight, true); camHint("Focusing…"); };
+    if (!sc.match) scStatus(readyMsg());
     getWorker().catch(() => {});
     vid.onloadedmetadata = () => placeFrame(vid); placeFrame(vid);
     startAuto();
   } catch (e) { scStatus("Camera blocked. Allow camera access in Chrome's site settings, or use the photo button."); }
 }
-function stopCamera() { stopAuto(); camDev.track = null; camDev.held = false; det.box = null; det.quad = null; det.cand = null; if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; torchOn = false; } window.onresize = null; }
-// Several cameras (front/back, or a tablet's extra lenses): show a switch button and cycle through them.
-let cams = [];
-async function listCameras() {
-  try { cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput"); } catch (e) { cams = []; }
-  const b = $("#camSw"); if (b) b.hidden = cams.length < 2;
-}
-async function switchCamera() {
-  if (cams.length < 2) return;
-  let cur = ""; try { cur = camDev.track.getSettings().deviceId || ""; } catch (e) {}
-  const i = cams.findIndex(c => c.deviceId === cur), next = cams[(i + 1) % cams.length];
-  S.meta.camId = next.deviceId; save();
-  stopCamera(); await startCamera(); layoutFrame(); window.onresize = layoutFrame;
-  let face = ""; try { face = camDev.track.getSettings().facingMode || ""; } catch (e) {}
-  toast(face === "user" ? "Front camera: hold the card up to the screen" : face === "environment" ? "Back camera" : (next.label || "Camera switched"));
-}
+function stopCamera() { stopAuto(); camDev.track = null; det.box = null; if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; torchOn = false; } window.onresize = null; }
 async function toggleTorch() {
   if (!stream) return; torchOn = !torchOn;
   try { await stream.getVideoTracks()[0].applyConstraints({ advanced: [{ torch: torchOn }] }); } catch (e) { torchOn = false; }
@@ -1782,41 +1460,25 @@ async function toggleTorch() {
 }
 
 /* ---------- auto-capture: watch the frame, shoot when a card is in focus and still ---------- */
-const AUTO = { W: 216, H: 300, still: 6, snapStill: 8, maxQueue: 6, minStd: 20, minText: 12, minSharp: 2.5, floor0: 1.4, plateau: 1.1, peakFrac: 0.85, rearm: 30, every: 120 };
-const ana = { timer: null, prev: null, good: 0, armed: true, sig: null, cv: null, ac: null, last: null, sh: [], prevSharp: null, blurFor: 0 };
-function startAuto() { stopAuto(); ana.prev = null; ana.good = 0; ana.timer = setInterval(watchTick, AUTO.every); }
+const AUTO = { W: 144, H: 200, still: 7, hold: 300, holdLocked: 200, minStd: 20, minText: 12, minSharp: 2.5, rearm: 30, every: 120, tries: 4, tooSmall: 0.22 };
+const ana = { timer: null, prev: null, since: 0, armed: true, sig: null, fails: 0, cool: 0, cv: null, ac: null, failMsg: "" };
+function startAuto() { stopAuto(); ana.prev = null; ana.since = 0; ana.timer = setInterval(watchTick, AUTO.every); }
 function stopAuto() { if (ana.timer) clearInterval(ana.timer); ana.timer = null; setFrameState("", 0); }
 function setFrameState(st, p) {
   const fr = $("#frame"); if (!fr) return;
   fr.classList.toggle("steady", st === "steady"); fr.classList.toggle("good", st === "good");
-  const ov = $("#ov"); if (ov) { ov.classList.toggle("steady", st === "steady"); ov.classList.toggle("good", st === "good"); }
   const b = $("#fprog"); if (b) b.style.transform = `scaleX(${Math.max(0, Math.min(1, p))})`;
 }
-// Copy the area around the card out of the video (scaled so its long side is at most maxSide).
-function grabRegion(src, quad, maxSide, canvas) {
-  const b = quadBBox(quad), x = Math.max(0, Math.floor(b.x)), y = Math.max(0, Math.floor(b.y));
-  const sw = src.videoWidth || src.width, sh = src.videoHeight || src.height;
-  const w = Math.max(2, Math.min(sw - x, Math.ceil(b.w) + 2)), h = Math.max(2, Math.min(sh - y, Math.ceil(b.h) + 2)), k = Math.min(1, maxSide / Math.max(w, h));
-  const c = canvas || document.createElement("canvas"); c.width = Math.max(2, Math.round(w * k)); c.height = Math.max(2, Math.round(h * k));
-  const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(src, x, y, w, h, 0, 0, c.width, c.height);
-  return { c, g, local: quad.map(p => ({ x: (p.x - x) * k, y: (p.y - y) * k })) };
-}
-const isUpright = q => Math.abs(q[0].y - q[1].y) < 1 && Math.abs(q[0].x - q[3].x) < 1 && Math.abs(q[1].x - q[2].x) < 1;
 function sampleCard(vid) {
-  const q = frameQuad(vid); if (!q) return null;
-  const { W, H } = AUTO; let L, sum = 0;
-  if (isUpright(q)) {
-    const r = quadBBox(q), c = ana.cv || (ana.cv = document.createElement("canvas")); c.width = W; c.height = H;
-    const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(vid, r.x, r.y, r.w, r.h, 0, 0, W, H);
-    const d = g.getImageData(0, 0, W, H).data; L = new Float32Array(W * H);
-    for (let i = 0, j = 0; i < d.length; i += 4, j++) { const y = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114; L[j] = y; sum += y; }
-  } else {                                                         // tilted card: straighten it first
-    const R = grabRegion(vid, q, 420, ana.cv2 || (ana.cv2 = document.createElement("canvas")));
-    const d = R.g.getImageData(0, 0, R.c.width, R.c.height).data;
-    L = warpQuad(d, R.c.width, R.c.height, 0, 0, R.local, W, H, true);
-    for (let i = 0; i < L.length; i++) sum += L[i];
-  }
-  return Object.assign({ L, mean: sum / L.length }, frameStats(L, W, H, sum / L.length));
+  const r = frameRect(vid); if (!r) return null;
+  const { W, H } = AUTO, c = ana.cv || (ana.cv = document.createElement("canvas"));
+  c.width = W; c.height = H;
+  const g = c.getContext("2d", { willReadFrequently: true });
+  g.drawImage(vid, r.x, r.y, r.w, r.h, 0, 0, W, H);
+  const d = g.getImageData(0, 0, W, H).data, L = new Float32Array(W * H);
+  let sum = 0;
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) { const y = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114; L[j] = y; sum += y; }
+  return Object.assign({ L }, frameStats(L, W, H, sum / L.length));
 }
 function frameStats(L, W, H, mean) {
   let v = 0; for (let i = 0; i < L.length; i++) v += (L[i] - mean) ** 2;
@@ -1831,103 +1493,67 @@ function frameStats(L, W, H, mean) {
 }
 function diffL(a, b) { let s = 0, n = 0; for (let i = 0; i < a.length; i += 3) { s += Math.abs(a[i] - b[i]); n++; } return s / n; }
 function autoTick() {
-  if (!sc.auto || tab !== "scan" || !stream || document.hidden) return;
+  if (!sc.auto || tab !== "scan" || !stream || document.hidden || sc.busy || ana.shooting) return;
   const vid = $("#vid"); if (!vid || !vid.videoWidth) return;
+  if (sc.match || sc.candidates.length) { ana.since = 0; setFrameState("", 0); camHint("Tap Add or Skip below, then show the next card"); return; }
   const s = sampleCard(vid); if (!s) return;
   ana.last = s;
-  const locked = cardLocked(), boxMoving = locked && det.moved > 0.05;
-  const moving = ana.prev && !boxMoving ? diffL(s.L, ana.prev) : 99;
+  const locked = cardLocked(), boxMoving = locked && det.moved > 0.04;
+  const now = performance.now(), moving = ana.prev && !boxMoving ? diffL(s.L, ana.prev) : 99;
   ana.prev = s.L;
   const noCard = s.std < AUTO.minStd || s.text < AUTO.minText;
   if (!ana.armed) {
-    // ready for the next picture once this card leaves the frame or a different one shows up
-    if (noCard || (ana.sig && diffL(s.L, ana.sig) > AUTO.rearm)) ana.armed = true;
-    else { camHint(pendingCount() ? "Got it. Show the next card" : "Got it. Show the next card"); return; }
+    // ready again once the card leaves the frame or a clearly different picture shows up
+    if (noCard || (ana.sig && diffL(s.L, ana.sig) > AUTO.rearm)) { ana.armed = true; ana.fails = 0; ana.failMsg = ""; }
+    else { setFrameState("", 0); camHint(ana.failMsg || "Got it. Show the next card"); return; }
   }
-  if (pendingCount() >= AUTO.maxQueue) { ana.good = 0; setFrameState("", 0); camHint("One moment, reading the last few cards…"); return; }
-  if (noCard) { ana.good = 0; ana.sh = []; ana.prevSharp = null; ana.blurFor = 0; setFrameState("", 0); camHint(locked ? "Hold the card flat and face-up" : "Show a card to the camera"); return; }
-  if (locked) { const t = camXform(vid); if (det.box.h * t.s < t.H * 0.32) { ana.good = 0; setFrameState("", 0); camHint("Move the card a little closer"); return; } }
-  // In focus = the picture has stopped getting sharper (two frames agree) and is near the best seen
-  // for this card, above a floor learned from cards this phone has read successfully.
-  const now = performance.now(), ref = S.meta.sharpRef, floor = ref ? ref * 0.55 : AUTO.floor0;
-  ana.sh.push(s.sharp); if (ana.sh.length > 10) ana.sh.shift();
-  const peak = Math.max(...ana.sh), prevS = ana.prevSharp; ana.prevSharp = s.sharp;
-  const plateau = prevS != null && s.sharp <= prevS * AUTO.plateau && s.sharp >= prevS / AUTO.plateau;
-  if (!(s.sharp >= floor && s.sharp >= peak * AUTO.peakFrac && plateau)) {
-    ana.good = 0; setFrameState("", 0);
-    if (!ana.blurFor) ana.blurFor = now;
-    const long = now - ana.blurFor > 1500;
-    camHint(!long ? "Focusing…" : s.mean < 70 && !torchOn ? "It's dark here. Tap the flashlight" : camDev.caps.zoom && (S.meta.zoom || 1) < 1.5 ? "Still focusing. Try 1.5× zoom and hold the phone a bit farther away" : "Still focusing. Hold the phone a bit farther from the card");
-    return;
-  }
-  ana.blurFor = 0;
-  if (moving > AUTO.snapStill) { ana.good = 0; setFrameState("steady", 0.25); camHint("Steady…"); return; }
-  ana.good = (ana.good || 0) + 1;
-  const need = 1;                                    // focus plateau already needs two agreeing frames
-  setFrameState("steady", ana.good / need);
-  if (ana.good >= need) { ana.good = 0; snapNow(vid, s); }
+  if (now < ana.cool) return;
+  if (noCard) { ana.since = 0; setFrameState("", 0); camHint(locked ? "Hold the card flat and face-up" : "Show a card to the camera"); return; }
+  if (locked) { const t = camXform(vid); if (det.box.h * t.s < t.H * AUTO.tooSmall) { ana.since = 0; setFrameState("", 0); camHint("Move the card a little closer"); return; } }
+  // No sharpness gate: as soon as a card is in view and steady, take a snapshot and try to read it.
+  // If the read fails, a fresh snapshot is tried automatically (the read itself is the judge).
+  if (moving > AUTO.still) { ana.since = 0; setFrameState("steady", 0); camHint("Hold still…"); return; }
+  if (!ana.since) ana.since = now;
+  const p = (now - ana.since) / (locked ? AUTO.holdLocked : AUTO.hold);
+  setFrameState("steady", p); camHint("Hold still…");
+  if (p >= 1) { ana.since = 0; autoShoot(s); }
 }
-// Take the picture: copy just the card out of the frame at full resolution, straightened if it was tilted.
-function takeSnapshot(src, quad) {
-  const c = document.createElement("canvas");
-  if (isUpright(quad)) {
-    const r = quadBBox(quad), k = Math.min(1, 1200 / r.h);
-    c.width = Math.max(1, Math.round(r.w * k)); c.height = Math.max(1, Math.round(r.h * k));
-    c.getContext("2d").drawImage(src, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
-  } else {
-    const R = grabRegion(src, quad, 1500), side = Math.hypot(R.local[0].x - R.local[3].x, R.local[0].y - R.local[3].y);
-    const H = Math.max(300, Math.min(1100, Math.round(side))), W = Math.round(H * 63 / 88);
-    const px = warpQuad(R.g.getImageData(0, 0, R.c.width, R.c.height).data, R.c.width, R.c.height, 0, 0, R.local, W, H, false);
-    c.width = W; c.height = H; c.getContext("2d").putImageData(new ImageData(px, W, H), 0, 0);
-    R.c.width = R.c.height = 0;
-  }
-  let thumb = "";
-  try { const t = document.createElement("canvas"); t.width = 63; t.height = 88; t.getContext("2d").drawImage(c, 0, 0, 63, 88); thumb = t.toDataURL("image/jpeg", 0.7); } catch (e) {}
-  return { snap: c, thumb };
-}
-// A quick burst: grab 3 frames ~90 ms apart (cheap copies of the area around the card), keep the
-// sharpest, and straighten only that one. A slight hand shake then rarely spoils the picture.
-const BURST = { n: 3, gap: 90 };
-async function snapNow(vid, s) {
-  if (!frameQuad(vid)) return;
-  if (s) { ana.armed = false; ana.sig = s.L; }
-  const f = $("#flash"); if (f) { f.classList.remove("on"); void f.offsetWidth; f.classList.add("on"); }
-  setFrameState("good", 1); setTimeout(() => setFrameState("", 0), 260);
-  shutter(); if (navigator.vibrate) navigator.vibrate(25);
-  camHint("Got it. Show the next card");
-  if (s) holdFocus();
+// Snapshot burst: copy the card out of 3 frames ~80 ms apart and keep the sharpest copy.
+async function grabBest(vid) {
   const frames = [];
-  for (let i = 0; i < BURST.n; i++) {
-    if (i) await sleep(BURST.gap);
-    const q = frameQuad(vid); if (!q) break;
-    const smp = sampleCard(vid);
-    const R = grabRegion(vid, q, 1500);                              // fast GPU copy of just this frame's card area
-    frames.push({ R, sharp: smp ? smp.sharp : 0 });
+  for (let i = 0; i < 3; i++) {
+    if (i) await sleep(80);
+    const r = frameRect(vid); if (!r) break;
+    const smp = sampleCard(vid), k = Math.min(1, 1200 / r.h), c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(r.w * k)); c.height = Math.max(1, Math.round(r.h * k));
+    c.getContext("2d").drawImage(vid, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
+    frames.push({ c, sharp: smp ? smp.sharp : 0 });
   }
-  if (!frames.length) return;
+  if (!frames.length) return null;
   frames.sort((a, b) => b.sharp - a.sharp);
-  const best = frames[0];
-  for (const fr of frames.slice(1)) fr.R.c.width = fr.R.c.height = 0;      // drop the others right away
-  const shot = takeSnapshot(best.R.c, best.R.local);
-  best.R.c.width = best.R.c.height = 0;
-  shot.sharp = best.sharp || (s ? s.sharp : null);
-  enqueue(shot);
+  frames.slice(1).forEach(f => { f.c.width = f.c.height = 0; });          // throw away the others
+  return frames[0];
 }
-async function snapFromFile(file) {
-  let src = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => null);
-  if (!src) { const img = new Image(); img.src = URL.createObjectURL(file); await img.decode(); src = img; }
-  const iw = src.width, ih = src.height, ch = Math.min(ih, iw * 88 / 63) * 0.96, cw = ch * 63 / 88;
-  enqueue(takeSnapshot(src, rectQuad({ x: (iw - cw) / 2, y: (ih - ch) / 2, w: cw, h: ch })));
+async function autoShoot(s) {
+  if (ana.shooting) return; ana.shooting = true;
+  try { await shootAndRead(s); } finally { ana.shooting = false; }
+}
+async function shootAndRead(s) {
+  setFrameState("good", 1);
+  camHint(ana.fails ? `Trying again (${ana.fails + 1} of ${AUTO.tries})…` : "Reading…");
+  const vid = $("#vid"), shot = vid && await grabBest(vid);
+  if (!shot) { setFrameState("", 0); return; }
+  const ok = await captureFrom("snap", shot.c, ana.fails % 2 === 1);    // every other retry uses stronger settings
+  shot.c.width = shot.c.height = 0;                                       // the snapshot is deleted once read
+  if (!sc.auto) return;
+  if (ok) { ana.armed = false; ana.sig = s.L; ana.fails = 0; ana.failMsg = ""; beep(); if (navigator.vibrate) navigator.vibrate(40); }
+  else {
+    ana.fails++; ana.cool = performance.now() + 250;                      // quick automatic retry with a fresh snapshot
+    if (ana.fails >= AUTO.tries) { ana.armed = false; ana.sig = s.L; ana.fails = 0; ana.failMsg = "Couldn't read this one. Type its name below, or show another card"; }
+  }
+  setFrameState("", 0);
 }
 function unlockBeep() { try { ana.ac = ana.ac || new (window.AudioContext || window.webkitAudioContext)(); if (ana.ac.state === "suspended") ana.ac.resume(); } catch (e) {} }
-function shutter() {
-  try {
-    unlockBeep(); const a = ana.ac; if (!a) return;
-    const o = a.createOscillator(), g = a.createGain(); o.type = "triangle"; o.frequency.setValueAtTime(1400, a.currentTime); o.frequency.exponentialRampToValueAtTime(500, a.currentTime + 0.05);
-    g.gain.setValueAtTime(0.06, a.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + 0.07);
-    o.connect(g); g.connect(a.destination); o.start(); o.stop(a.currentTime + 0.08);
-  } catch (e) {}
-}
 function beep() {
   try {
     unlockBeep(); const a = ana.ac; if (!a) return;
@@ -1955,7 +1581,7 @@ function getWorkers() {
   if (!workersP) workersP = (async () => {
     const mk = idx => Tesseract.createWorker("eng", 1, {
       logger: m => {
-        if (scanning && m.status === "recognizing text") { ocrProg[idx] = m.progress || 0; readProg(0.18 + 0.6 * (ocrProg[0] + ocrProg[1]) / 2); }
+        if (scanning && m.status === "recognizing text") { ocrProg[idx] = m.progress || 0; scanProg(0.18 + 0.6 * (ocrProg[0] + ocrProg[1]) / 2, "Reading the card…"); }
         else if (!workers && m.status && /load|init/i.test(m.status)) scStatus(`Getting the text reader ready (first time only)… ${Math.round((m.progress || 0) * 100)}%`);
       }
     });
@@ -1963,7 +1589,7 @@ function getWorkers() {
     const b = await mk(1);                     // second one reuses it from the cache
     await a.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',-", preserve_interword_spaces: "1" });
     await b.setParameters({ tessedit_pageseg_mode: "6", tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/•·*-. " });
-    workers = [a, b]; if (tab === "scan") scStatus(readyMsg()); return workers;
+    workers = [a, b]; if (!sc.match) scStatus(readyMsg()); return workers;
   })().catch(e => { workersP = null; throw e; });
   return workersP;
 }
@@ -1982,71 +1608,38 @@ function prep(src, sx, sy, sw, sh, targetW = 1100, binarize = false) {
   for (let i = 0; i < a.length; i += 4) { let y = (a[i] - lo) * 255 / span; y = y < 0 ? 0 : y > 255 ? 255 : y; if (invert) y = 255 - y; if (binarize) y = y < 128 ? 0 : 255; a[i] = a[i + 1] = a[i + 2] = y; }
   g.putImageData(d, 0, 0); return c;
 }
-function enqueue(shot) {
-  sc.items.push({ id: uid(), state: "queued", snap: shot.snap, thumb: shot.thumb, sharp: shot.sharp, finish: sc.finish, binder: defaultBinder(), at: Date.now(), qty: 1, tries: 0, p: 0 });
-  if (sc.items.length > 80) sc.items.splice(0, sc.items.length - 80);
-  drawItems(); scanHead(); processQueue();
-}
-// Free a picture's memory. Keep the little thumbnail only while the card still needs attention.
-function dropSnap(it, all) { if (it.snap) { it.snap.width = it.snap.height = 0; it.snap = null; } if (all) it.thumb = null; }
-let curItem = null;
-function readProg(p, label) {
-  if (curItem) { curItem.p = p; const bar = document.querySelector(".scan-pending .ibar div"); if (bar) bar.style.width = Math.round(p * 100) + "%"; }
-  const more = pendingCount() - 1;
-  scanProg(p, label || `Reading card${more > 0 ? ` · ${more} more waiting` : ""}…`);
-}
-async function processQueue() {
-  if (sc.working) return; sc.working = true;
+async function captureFrom(kind, file, alt) {
+  if (sc.busy) return false; sc.busy = true; scanning = true; ocrProg[0] = ocrProg[1] = 0;
+  let ok = false;
   try {
-    let it;
-    while ((it = sc.items.find(i => i.state === "queued"))) {
-      it.state = "reading"; curItem = it; it.p = 0.04; drawItems(); scanHead();
-      let res;
-      try { res = await readSnapshot(it); } catch (e) { res = { kind: "none", read: "", err: e.message }; }
-      curItem = null;
-      applyResult(it, res);
+    scanProg(0.04, "Capturing…");
+    let src, cx, cy, cw, ch;
+    if (kind === "snap") { src = file; cx = 0; cy = 0; cw = file.width; ch = file.height; }
+    else if (kind === "video") {
+      const vid = $("#vid"), shot = vid && await grabBest(vid); if (!shot) { scStatus("The camera isn't ready yet."); return false; }
+      src = shot.c; cx = 0; cy = 0; cw = src.width; ch = src.height;
+    } else {
+      src = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => null);
+      if (!src) { const img = new Image(); img.src = URL.createObjectURL(file); await img.decode(); src = img; }
+      const iw = src.width, ih = src.height; ch = Math.min(ih, iw * 88 / 63) * 0.96; cw = ch * 63 / 88; cx = (iw - cw) / 2; cy = (ih - ch) / 2;
     }
-  } finally { sc.working = false; curItem = null; }
-}
-async function readSnapshot(it) {
-  scanning = true; ocrProg[0] = ocrProg[1] = 0;
-  try {
-    const c = it.snap; if (!c || !c.width) return { kind: "none", read: "" };
-    const W = c.width, H = c.height, alt = it.tries > 0;          // a second try uses taller crops and a hard black/white filter
-    readProg(0.08);
-    const nameImg = alt ? prep(c, W * 0.025, H * 0.012, W * 0.82, H * 0.115, 820, true) : prep(c, W * 0.03, H * 0.022, W * 0.80, H * 0.09, 760);
-    const infoImg = alt ? prep(c, W * 0.02, H * 0.86, W * 0.52, H * 0.13, 700, true) : prep(c, W * 0.025, H * 0.885, W * 0.48, H * 0.095, 640);
-    readProg(0.14);
+    scStatus("Reading the card…");
+    const nameImg = alt ? prep(src, cx + cw * 0.025, cy + ch * 0.012, cw * 0.82, ch * 0.115, 820, true) : prep(src, cx + cw * 0.03, cy + ch * 0.022, cw * 0.80, ch * 0.09, 760);
+    const infoImg = alt ? prep(src, cx + cw * 0.02, cy + ch * 0.86, cw * 0.52, ch * 0.13, 700, true) : prep(src, cx + cw * 0.025, cy + ch * 0.885, cw * 0.48, ch * 0.095, 640);
+    scanProg(0.12, "Reading the card…");
     const [wn, wi] = await getWorkers();
-    readProg(0.18);
+    scanProg(0.18, "Reading the card…");
     const [nr, ir] = await Promise.all([wn.recognize(nameImg), wi.recognize(infoImg)]);
-    return await resolveCard(nr.data.text || "", ir.data.text || "");
-  } finally { scanning = false; it.tries++; }
-}
-function applyResult(it, res) {
-  if (res.kind === "card") {
-    it.card = slim(res.card); it.exact = res.exact;
-    if (it.sharp) { const r = S.meta.sharpRef; S.meta.sharpRef = r ? r * 0.7 + it.sharp * 0.3 : it.sharp; }
-    if (!it.card.finishes.includes(it.finish)) it.finish = it.card.finishes[0];
-    dropSnap(it, true);
-    if (sc.mode === "any" || (sc.mode === "exact" && res.exact)) { addItem(it, 1); scanProg(1, "Added " + it.card.name, "ok"); }
-    else { it.state = "review"; scanProg(1, "Found " + it.card.name, "ok"); beep(); }
-  } else if (res.kind === "pick") {
-    it.state = "pick"; it.cands = res.cands; it.read = res.read; dropSnap(it, false); scanProg(1, "Pick the right card below", "ok");
-  } else {
-    it.state = "failed"; it.read = res.read || ""; releaseFocus();
-    if (it.tries >= 2) dropSnap(it, false);                        // no more retries: free the picture
-    scanProg(1, "Couldn't read that card", "fail");
+    ok = await identify(nr.data.text || "", ir.data.text || "");
+    return ok;
+  } catch (e) { scStatus("Scan failed: " + (e.message || e)); return false; }
+  finally {
+    sc.busy = false; scanning = false;
+    if (sc.match) scanProg(1, "Found " + sc.match.card.name, "ok");
+    else if (sc.candidates.length) scanProg(1, "Pick the right card below", "ok");
+    else if (ok) scanProg(1, "Added", "ok");
+    else scanProg(1, "Couldn't read that card", "fail");
   }
-  drawItems(); scanHead();
-  if (!pendingCount()) scStatus(sc.items.some(i => i.state === "review" || i.state === "pick" || i.state === "failed") ? "Done reading. Check the cards below." : readyMsg());
-}
-function addItem(it, qty) {
-  if (!it || !it.card) return;
-  const k = addToColl(it.card, it.finish, qty, it.binder, true), at = Date.now(), e = S.coll[k];
-  if (e) { e.scanned = at; e.firstScanned = e.firstScanned || at; e.scans = (e.scans || 0) + qty; }
-  it.state = "added"; it.qty = qty; it.at = at; save();
-  beep(); if (navigator.vibrate) navigator.vibrate(30);
 }
 function cleanName(t) {
   // digits and symbols the reader confuses with letters
@@ -2063,21 +1656,22 @@ function parseInfo(t) {
   const set = (u.match(/\b([A-Z0-9]{3,5})\s*[•·*.\-]?\s*(EN|ES|FR|DE|IT|PT|JA|JP|KO|RU|ZH)\b/) || [])[1];
   return { num, set: set && /[A-Z]/.test(set) ? set.toLowerCase() : null };
 }
-async function resolveCard(nameTxt, infoTxt) {
+async function identify(nameTxt, infoTxt) {
   const name = cleanName(nameTxt), info = parseInfo(infoTxt);
-  readProg(0.8, "Finding the card…");
+  scanProg(0.8, "Finding the card…");
+  // look up the printing from the set code + number while the name is being matched
   const codeP = info.set && info.num ? sf(`/cards/${info.set}/${encodeURIComponent(info.num)}`).catch(() => null) : Promise.resolve(null);
   if (!NAMES) await Promise.race([loadNames().catch(() => {}), sleep(1500)]);
   let cands = name.length >= 3 ? nameMatches(name) : [];
   const byCode = await codeP;
-  readProg(0.9, "Checking the printing…");
+  scanProg(0.9, "Checking the printing…");
   const sameName = (c, n) => c && stripName(c.name.split(" // ")[0]) === stripName(n.split(" // ")[0]);
   // 1. set code + number agree with something close to the name we read: exact printing
-  if (byCode && (cands || []).some(c => c.score >= 0.55 && sameName(byCode, c.name))) return { kind: "card", card: byCode, exact: true };
-  if (byCode && !name && info.num) return { kind: "card", card: byCode, exact: false };
+  if (byCode && (cands || []).some(c => c.score >= 0.55 && sameName(byCode, c.name))) { setMatch(byCode, true); return true; }
+  if (byCode && !name && info.num) { setMatch(byCode, false); return true; }
   // 2. a confident name match
   if (cands === null && name.length >= 3) {                         // name list not loaded yet: ask Scryfall
-    try { const c = await sf("/cards/named?fuzzy=" + encodeURIComponent(name)); return { kind: "card", card: c, exact: sameName(byCode, c.name) }; } catch (e) { cands = []; }
+    try { const c = await sf("/cards/named?fuzzy=" + encodeURIComponent(name)); setMatch(c, sameName(byCode, c.name)); return true; } catch (e) { cands = []; }
   }
   const top = cands[0], second = cands[1];
   const confident = top && top.score >= 0.72 && (!second || top.score - second.score >= 0.08 || top.score >= 0.92);
@@ -2085,14 +1679,52 @@ async function resolveCard(nameTxt, infoTxt) {
     let card = null;
     if (info.set) card = await sf(`/cards/named?exact=${encodeURIComponent(top.name)}&set=${info.set}`).catch(() => null);
     if (!card) card = await sf(`/cards/named?exact=${encodeURIComponent(top.name)}`).catch(() => null);
-    if (card) return { kind: "card", card, exact: false };
+    if (card) { setMatch(card, false); return true; }
   }
   // 3. close calls: let the person pick
   let picks = (cands || []).filter(c => c.score >= 0.5).map(c => c.name);
   if (!picks.length && name.length >= 4) picks = (suggest(name, 5) || []).slice();   // only part of the name was read
   if (byCode && !picks.includes(byCode.name)) picks.unshift(byCode.name);
-  if (picks.length) return { kind: "pick", cands: picks.slice(0, 5), read: name };
-  return { kind: "none", read: name };
+  if (picks.length) { sc.match = null; sc.candidates = picks.slice(0, 5); drawMatch(); scStatus(name ? `Read “${name}”. Which card is it?` : "Which card is it?"); return true; }
+  sc.match = null; sc.candidates = []; drawMatch();
+  scStatus(name ? `Read “${name}” but couldn't match it. Hold steady with good light, or type the name below.` : "Couldn't read the name. Fill the frame, add light, and try again.");
+  return false;
+}
+function setMatch(card, exact, typed) {
+  sc.match = { card: slim(card), exact }; sc.candidates = [];
+  if (!typed && (sc.mode === "any" || (sc.mode === "exact" && exact))) { addScan(1); return; }
+  scStatus(exact ? "Matched name and printing." : "Matched the name. Check the printing before adding.");
+  drawMatch();
+}
+function addScan(qty) {
+  const s = sc.match.card, fin = s.finishes.includes(sc.finish) ? sc.finish : s.finishes[0], b = defaultBinder();
+  const k = addToColl(s, fin, qty, b, true), at = Date.now(), e = S.coll[k];
+  if (e) { e.scanned = at; e.firstScanned = e.firstScanned || at; e.scans = (e.scans || 0) + qty; }
+  save(); sc.session.push({ card: s, finish: fin, qty, binder: b, at }); sc.match = null;
+  if (navigator.vibrate) navigator.vibrate(30);
+  drawSession(); drawMatch(); scanHead();
+  scStatus(`Added ${qty}× ${s.name} (${s.set.toUpperCase()} #${s.num}) to ${S.binders[b].name}. ${sc.auto ? "Show the next card." : "Ready for the next card."}`);
+}
+function drawMatch() {
+  const el = $("#scMatch"); if (!el) return;
+  if (sc.candidates.length) {
+    el.innerHTML = `<div class="chips">${sc.candidates.map(n => `<button data-n="${esc(n)}">${esc(n)}</button>`).join("")}</div>`;
+    el.firstChild.onclick = async e => { const b = e.target.closest("button"); if (b) { try { setMatch(await sf("/cards/named?exact=" + encodeURIComponent(b.dataset.n)), false); } catch (err) { scStatus(err.message); } } };
+    return;
+  }
+  if (!sc.match) { el.innerHTML = ""; return; }
+  const s = sc.match.card, fin = s.finishes.includes(sc.finish) ? sc.finish : s.finishes[0], own = ownedByName(s.name);
+  el.innerHTML = `<div class="match"><img src="${esc(s.imgN || s.img)}" alt="">
+    <div class="stack" style="gap:6px;min-width:0"><div><div style="font-weight:700">${esc(s.name)}</div>
+      <div class="small muted">${esc(s.setName)} · ${esc(s.set.toUpperCase())} #${esc(s.num)}</div>
+      <div class="small"><span class="price gold num">${money(priceOf(s, fin))}</span> ${fin !== "nonfoil" ? `<span class="chip foil">${fin}</span>` : ""} ${!s.finishes.includes(sc.finish) ? `<span class="chip">no ${sc.finish} version</span>` : ""}</div>
+      <div class="small muted">You own ${own}</div></div>
+      <div class="row wrap"><button class="btn sm primary" id="mAdd">Add 1</button><button class="btn sm" id="mAdd4">Add 4</button>
+        <button class="btn sm" id="mPr">Change printing</button><button class="btn sm ghost" id="mNo">Skip</button></div></div></div>
+    <div id="printBox"></div>`;
+  $("#mAdd").onclick = () => addScan(1); $("#mAdd4").onclick = () => addScan(4);
+  $("#mNo").onclick = () => { sc.match = null; drawMatch(); scStatus(readyMsg()); };
+  $("#mPr").onclick = () => showPrints(s, picked => { sc.match = { card: slim(picked), exact: true }; drawMatch(); });
 }
 
 /* ================= TRADE ================= */
