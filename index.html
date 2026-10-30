@@ -140,6 +140,11 @@ details.box summary::after{content:" ▾"}
 .cam .frame.good .fprog{background:#5cc489}
 .cam .pill{position:absolute;top:8px;right:10px;border:0;border-radius:999px;padding:7px 12px;font:700 12px var(--f-display);letter-spacing:.06em;text-transform:uppercase;background:rgba(0,0,0,.6);color:#fff}
 .cam .pill[aria-pressed="true"]{background:#5cc489;color:#06210f}
+.cam .sbar{position:absolute;left:12%;right:12%;bottom:96px;background:rgba(0,0,0,.72);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:5px;color:#fff;font-size:13px;font-weight:600}
+.cam .strack{height:8px;border-radius:4px;background:rgba(255,255,255,.22);overflow:hidden}
+.cam .sfill{height:100%;width:0;background:#62a9dc;border-radius:4px;transition:width .18s linear}
+.cam .sbar.ok .sfill{background:#5cc489}
+.cam .sbar.fail .sfill{background:#ef7462}
 .cam .ctrl{position:absolute;left:0;right:0;bottom:12px;display:flex;justify-content:center;align-items:center;gap:22px}
 .shutter{width:70px;height:70px;border-radius:50%;border:4px solid #fff;background:rgba(255,255,255,.25)}
 .shutter:active{background:rgba(255,255,255,.6)}
@@ -359,7 +364,60 @@ function loadNames() {
   })();
   return namesP;
 }
-function setNames(list) { NAMES = list; NAMES_N = list.map(norm); }
+let NAMES_F = null;
+const stripName = n => norm(n).replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+let NAMES_H = null;
+const letterHist = (str, out, o) => { for (let k = 0; k < 27; k++) out[o + k] = 0; for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i) - 97; out[o + (c >= 0 && c < 26 ? c : 26)]++; } };
+function setNames(list) {
+  NAMES = list; NAMES_N = list.map(norm); NAMES_F = list.map(n => stripName(n.split(" // ")[0]));
+  NAMES_H = new Uint8Array(list.length * 27); NAMES_F.forEach((n, i) => letterHist(n, NAMES_H, i * 27));
+}
+// Edit distance with an early exit once it can't beat maxD.
+let edA = new Int32Array(64), edB = new Int32Array(64);
+// Banded edit distance (only cells within maxD of the diagonal); returns maxD + 1 when it's farther than that.
+function editDist(a, b, maxD) {
+  const n = a.length, m = b.length, INF = maxD + 1;
+  if (Math.abs(n - m) > maxD) return INF;
+  if (edA.length <= m + 1) { edA = new Int32Array(m + 2); edB = new Int32Array(m + 2); }
+  let prev = edA, cur = edB;
+  for (let j = 0; j <= Math.min(m, maxD); j++) prev[j] = j;
+  if (maxD + 1 <= m) prev[maxD + 1] = INF;
+  for (let i = 1; i <= n; i++) {
+    const lo = Math.max(1, i - maxD), hi = Math.min(m, i + maxD), ac = a.charCodeAt(i - 1);
+    cur[lo - 1] = lo === 1 ? i : INF;
+    let best = cur[lo - 1];
+    for (let j = lo; j <= hi; j++) {
+      let v = prev[j - 1] + (ac === b.charCodeAt(j - 1) ? 0 : 1);
+      const up = prev[j] + 1, left = cur[j - 1] + 1;
+      if (up < v) v = up; if (left < v) v = left; if (v > INF) v = INF;
+      cur[j] = v; if (v < best) best = v;
+    }
+    if (hi + 1 <= m) cur[hi + 1] = INF;
+    if (best > maxD) return INF;
+    const t = prev; prev = cur; cur = t;
+  }
+  return prev[m] > INF ? INF : prev[m];
+}
+// Closest card names to what the camera read, best first, with a 0–1 score.
+function nameMatches(read, k = 4) {
+  if (!NAMES_F) return null;
+  const q = stripName(read); if (q.length < 3) return [];
+  const maxD = Math.min(7, Math.max(2, Math.floor(q.length * 0.36))), top = [], qh = new Uint8Array(27);
+  letterHist(q, qh, 0);
+  for (let i = 0; i < NAMES_F.length; i++) {
+    const n = NAMES_F[i];
+    if (Math.abs(n.length - q.length) > maxD || !n) continue;
+    const lim = top.length >= k ? Math.min(maxD, top[k - 1].d - 1) : maxD;
+    if (lim < 0) continue;
+    // cheap lower bound: letters that differ in count need at least half that many edits
+    let diff = 0; const o = i * 27;
+    for (let c = 0; c < 27; c++) { const x = qh[c] - NAMES_H[o + c]; diff += x < 0 ? -x : x; }
+    if ((diff + 1 >> 1) > lim) continue;
+    const d = editDist(q, n, lim);
+    if (d <= lim) { top.push({ i, d }); top.sort((x, y) => x.d - y.d || NAMES[x.i].length - NAMES[y.i].length); if (top.length > k) top.pop(); }
+  }
+  return top.map(t => ({ name: NAMES[t.i], score: 1 - t.d / Math.max(q.length, NAMES_F[t.i].length) }));
+}
 function suggest(q, n = 8) {
   if (!NAMES) return null;
   const nq = norm(q.trim()); if (nq.length < 2) return [];
@@ -1079,6 +1137,7 @@ function renderScan() {
     <div class="cam" id="cam"><video id="vid" playsinline muted autoplay></video>
       <div class="frame" id="frame"><div class="band name"></div><div class="band info"></div><div class="fprog" id="fprog"></div></div>
       <div class="hint" id="camHint">${sc.auto ? "Line up a card inside the frame" : manualHint}</div>
+      <div class="sbar" id="sbar" hidden><div class="strack"><div class="sfill" id="sfill"></div></div><span id="slabel">Reading…</span></div>
       <button class="pill" id="autoBtn" aria-pressed="${sc.auto}">Auto ${sc.auto ? "on" : "off"}</button>
       <div class="ctrl"><button class="round" id="torch" aria-pressed="${torchOn}" aria-label="Flashlight" hidden>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 2h8l-2 7h-4zM10 9v13h4V9"/></svg></button>
@@ -1157,7 +1216,7 @@ async function toggleTorch() {
 }
 
 /* ---------- auto-capture: watch the frame, shoot when a card is in focus and still ---------- */
-const AUTO = { W: 144, H: 200, still: 6, hold: 650, minStd: 20, minText: 12, minSharp: 2.5, rearm: 30, every: 180 };
+const AUTO = { W: 144, H: 200, still: 6, hold: 380, minStd: 20, minText: 12, minSharp: 2.5, rearm: 30, every: 140 };
 const ana = { timer: null, prev: null, since: 0, armed: true, sig: null, fails: 0, cool: 0, cv: null, ac: null, failMsg: "" };
 function startAuto() { stopAuto(); if (!sc.auto) return; ana.prev = null; ana.since = 0; ana.timer = setInterval(autoTick, AUTO.every); }
 function stopAuto() { if (ana.timer) clearInterval(ana.timer); ana.timer = null; setFrameState("", 0); }
@@ -1231,14 +1290,36 @@ function beep() {
   } catch (e) {}
 }
 
-let worker = null, workerP = null;
-function getWorker() {
-  if (worker) return Promise.resolve(worker);
+/* ---------- text reader: two workers so the name and set code are read at the same time ---------- */
+let workers = null, workersP = null;
+const ocrProg = [0, 0];
+let scanning = false, sbarT = null;
+function scanProg(p, label, state) {
+  const bar = $("#sbar"); if (!bar) return;
+  clearTimeout(sbarT); bar.hidden = false;
+  bar.classList.toggle("ok", state === "ok"); bar.classList.toggle("fail", state === "fail");
+  $("#sfill").style.width = Math.round(Math.max(0, Math.min(1, p)) * 100) + "%";
+  if (label) $("#slabel").textContent = label;
+  if (state) sbarT = setTimeout(() => { const b = $("#sbar"); if (b) b.hidden = true; }, state === "ok" ? 900 : 1600);
+}
+function getWorker() { return getWorkers().then(w => w[0]); }
+function getWorkers() {
+  if (workers) return Promise.resolve(workers);
   if (typeof Tesseract === "undefined") return Promise.reject(new Error("The text reader didn't load. Check your connection."));
-  if (!workerP) workerP = Tesseract.createWorker("eng", 1, {
-    logger: m => { if (m.status && /load|init/i.test(m.status) && !worker) scStatus(`Getting the text reader ready (first time only)… ${Math.round((m.progress || 0) * 100)}%`); }
-  }).then(w => { worker = w; if (!sc.match) scStatus(readyMsg()); return w; }).catch(e => { workerP = null; throw e; });
-  return workerP;
+  if (!workersP) workersP = (async () => {
+    const mk = idx => Tesseract.createWorker("eng", 1, {
+      logger: m => {
+        if (scanning && m.status === "recognizing text") { ocrProg[idx] = m.progress || 0; scanProg(0.18 + 0.6 * (ocrProg[0] + ocrProg[1]) / 2, "Reading the card…"); }
+        else if (!workers && m.status && /load|init/i.test(m.status)) scStatus(`Getting the text reader ready (first time only)… ${Math.round((m.progress || 0) * 100)}%`);
+      }
+    });
+    const a = await mk(0);                     // first one downloads the language data
+    const b = await mk(1);                     // second one reuses it from the cache
+    await a.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',-", preserve_interword_spaces: "1" });
+    await b.setParameters({ tessedit_pageseg_mode: "6", tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/•·*-. " });
+    workers = [a, b]; if (!sc.match) scStatus(readyMsg()); return workers;
+  })().catch(e => { workersP = null; throw e; });
+  return workersP;
 }
 function prep(src, sx, sy, sw, sh, targetW = 1100) {
   const scale = targetW / sw, c = document.createElement("canvas");
@@ -1256,8 +1337,10 @@ function prep(src, sx, sy, sw, sh, targetW = 1100) {
   g.putImageData(d, 0, 0); return c;
 }
 async function captureFrom(kind, file) {
-  if (sc.busy) return false; sc.busy = true;
+  if (sc.busy) return false; sc.busy = true; scanning = true; ocrProg[0] = ocrProg[1] = 0;
+  let ok = false;
   try {
+    scanProg(0.04, "Capturing…");
     let src, cx, cy, cw, ch;
     if (kind === "video") {
       const vid = $("#vid"), r = vid && frameRect(vid); if (!r) { scStatus("The camera isn't ready yet."); return false; }
@@ -1269,16 +1352,22 @@ async function captureFrom(kind, file) {
       const iw = src.width, ih = src.height; ch = Math.min(ih, iw * 88 / 63) * 0.96; cw = ch * 63 / 88; cx = (iw - cw) / 2; cy = (ih - ch) / 2;
     }
     scStatus("Reading the card…");
-    const w = await getWorker();
-    const nameImg = prep(src, cx + cw * 0.03, cy + ch * 0.025, cw * 0.80, ch * 0.085);
-    const infoImg = prep(src, cx + cw * 0.025, cy + ch * 0.885, cw * 0.48, ch * 0.095, 900);
-    await w.setParameters({ tessedit_pageseg_mode: "7" });
-    const nameTxt = (await w.recognize(nameImg)).data.text || "";
-    await w.setParameters({ tessedit_pageseg_mode: "6" });
-    const infoTxt = (await w.recognize(infoImg)).data.text || "";
-    return await identify(nameTxt, infoTxt);
+    const nameImg = prep(src, cx + cw * 0.03, cy + ch * 0.022, cw * 0.80, ch * 0.09, 760);
+    const infoImg = prep(src, cx + cw * 0.025, cy + ch * 0.885, cw * 0.48, ch * 0.095, 640);
+    scanProg(0.12, "Reading the card…");
+    const [wn, wi] = await getWorkers();
+    scanProg(0.18, "Reading the card…");
+    const [nr, ir] = await Promise.all([wn.recognize(nameImg), wi.recognize(infoImg)]);
+    ok = await identify(nr.data.text || "", ir.data.text || "");
+    return ok;
   } catch (e) { scStatus("Scan failed: " + (e.message || e)); return false; }
-  finally { sc.busy = false; }
+  finally {
+    sc.busy = false; scanning = false;
+    if (sc.match) scanProg(1, "Found " + sc.match.card.name, "ok");
+    else if (sc.candidates.length) scanProg(1, "Pick the right card below", "ok");
+    else if (ok) scanProg(1, "Added", "ok");
+    else scanProg(1, "Couldn't read that card", "fail");
+  }
 }
 function cleanName(t) {
   const lines = t.split(/\n/).map(l => l.replace(/[^A-Za-z',\- ]/g, " ").replace(/\s+/g, " ").trim()).filter(Boolean);
@@ -1295,20 +1384,36 @@ function parseInfo(t) {
 }
 async function identify(nameTxt, infoTxt) {
   const name = cleanName(nameTxt), info = parseInfo(infoTxt);
-  let byName = null, byCode = null;
-  if (name.length >= 3) { try { byName = await sf("/cards/named?fuzzy=" + encodeURIComponent(name)); } catch (e) {} }
-  if (info.set && info.num) { try { byCode = await sf(`/cards/${info.set}/${encodeURIComponent(info.num)}`); } catch (e) {} }
-  if (byName && byCode && byCode.oracle_id === byName.oracle_id) { setMatch(byCode, true); return true; }
-  if (byName) { setMatch(byName, false); return true; }
-  if (byCode) { setMatch(byCode, false); return true; }
-  if (name.length >= 3) {
-    await loadNames().catch(() => {});
-    let cands = suggest(name, 6);
-    if (!cands || !cands.length) cands = suggest(name.split(" ").slice(0, 2).join(" "), 6);
-    if (cands && cands.length) { sc.match = null; sc.candidates = cands; drawMatch(); scStatus(`Read “${name}”. Is it one of these?`); return true; }
+  scanProg(0.8, "Finding the card…");
+  // look up the printing from the set code + number while the name is being matched
+  const codeP = info.set && info.num ? sf(`/cards/${info.set}/${encodeURIComponent(info.num)}`).catch(() => null) : Promise.resolve(null);
+  if (!NAMES) await Promise.race([loadNames().catch(() => {}), sleep(1500)]);
+  let cands = name.length >= 3 ? nameMatches(name) : [];
+  const byCode = await codeP;
+  scanProg(0.9, "Checking the printing…");
+  const sameName = (c, n) => c && stripName(c.name.split(" // ")[0]) === stripName(n.split(" // ")[0]);
+  // 1. set code + number agree with something close to the name we read: exact printing
+  if (byCode && (cands || []).some(c => c.score >= 0.55 && sameName(byCode, c.name))) { setMatch(byCode, true); return true; }
+  if (byCode && !name && info.num) { setMatch(byCode, false); return true; }
+  // 2. a confident name match
+  if (cands === null && name.length >= 3) {                         // name list not loaded yet: ask Scryfall
+    try { const c = await sf("/cards/named?fuzzy=" + encodeURIComponent(name)); setMatch(c, sameName(byCode, c.name)); return true; } catch (e) { cands = []; }
   }
+  const top = cands[0], second = cands[1];
+  const confident = top && top.score >= 0.72 && (!second || top.score - second.score >= 0.08 || top.score >= 0.92);
+  if (confident) {
+    let card = null;
+    if (info.set) card = await sf(`/cards/named?exact=${encodeURIComponent(top.name)}&set=${info.set}`).catch(() => null);
+    if (!card) card = await sf(`/cards/named?exact=${encodeURIComponent(top.name)}`).catch(() => null);
+    if (card) { setMatch(card, false); return true; }
+  }
+  // 3. close calls: let the person pick
+  let picks = (cands || []).filter(c => c.score >= 0.5).map(c => c.name);
+  if (!picks.length && name.length >= 4) picks = (suggest(name, 5) || []).slice();   // only part of the name was read
+  if (byCode && !picks.includes(byCode.name)) picks.unshift(byCode.name);
+  if (picks.length) { sc.match = null; sc.candidates = picks.slice(0, 5); drawMatch(); scStatus(name ? `Read “${name}”. Which card is it?` : "Which card is it?"); return true; }
   sc.match = null; sc.candidates = []; drawMatch();
-  scStatus(name ? `Read “${name}” but couldn't find it. Hold steady with good light, or type the name below.` : "Couldn't read the name. Fill the frame, add light, and try again.");
+  scStatus(name ? `Read “${name}” but couldn't match it. Hold steady with good light, or type the name below.` : "Couldn't read the name. Fill the frame, add light, and try again.");
   return false;
 }
 function setMatch(card, exact, typed) {
