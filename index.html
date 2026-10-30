@@ -36,14 +36,14 @@ button{cursor:pointer}
 header.top{position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid var(--line);
   padding:calc(env(safe-area-inset-top,0px) + 10px) max(16px,env(safe-area-inset-right,0px)) 10px max(16px,env(safe-area-inset-left,0px));
   display:flex;align-items:baseline;justify-content:space-between;gap:12px}
-header.top h1{margin:0;font:700 22px/1.1 var(--f-display);letter-spacing:.02em}
-header.top .sub{font-size:13px;color:var(--muted)}
+header.top h1{margin:0;font:700 22px/1.1 var(--f-display);letter-spacing:.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+header.top .sub{font-size:13px;color:var(--muted);white-space:nowrap}
 main{padding:14px max(16px,env(safe-area-inset-right,0px)) calc(var(--nav-h) + env(safe-area-inset-bottom,0px) + 24px) max(16px,env(safe-area-inset-left,0px));max-width:900px;margin:0 auto}
 
 nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--surface);border-top:1px solid var(--line);
-  display:grid;grid-template-columns:repeat(4,1fr);padding:0 env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
+  display:grid;grid-template-columns:repeat(5,1fr);padding:0 env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
 nav.tabs button{background:none;border:0;height:var(--nav-h);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
-  font:600 12px var(--f-display);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+  font:600 11px var(--f-display);letter-spacing:.05em;text-transform:uppercase;color:var(--muted);min-width:0}
 nav.tabs button svg{width:24px;height:24px}
 nav.tabs button[aria-current="page"]{color:var(--accent)}
 
@@ -54,51 +54,54 @@ nav.tabs button[aria-current="page"]{color:var(--accent)}
 .label{font:600 12px var(--f-display);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .muted{color:var(--muted)}
 .small{font-size:13px}
-input[type=text],input[type=search],select,textarea{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-height:44px;width:100%}
+input[type=text],input[type=search],input[type=number],select,textarea{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-height:44px;width:100%}
 textarea{min-height:140px;resize:vertical}
-select{width:auto}
-.btn{border:1px solid var(--line);background:var(--surface);border-radius:10px;min-height:44px;padding:0 14px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}
+select{width:auto;max-width:100%}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:10px;min-height:44px;padding:0 14px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;text-decoration:none}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .btn.danger{color:var(--danger)}
 .btn.ghost{background:none;border-color:transparent}
 .btn.sm{min-height:34px;padding:0 10px;font-size:14px;border-radius:8px}
 .btn:disabled{opacity:.5;cursor:default}
-.chip{display:inline-flex;align-items:center;gap:4px;font:600 11px var(--f-display);letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.chip{display:inline-flex;align-items:center;gap:4px;font:600 11px var(--f-display);letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:999px;border:1px solid var(--line);color:var(--muted);white-space:nowrap;background:none}
 .chip.foil{border-color:var(--gold);color:var(--gold)}
 .chip.warn{border-color:var(--danger);color:var(--danger)}
+.chip.ok{border-color:var(--ok);color:var(--ok)}
+.chip.acc{border-color:var(--accent);color:var(--accent)}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
 .chips button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 12px;font-size:14px}
+.chips button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.scrollx{overflow-x:auto;flex-wrap:nowrap;padding-bottom:2px}
+.scrollx button{flex:0 0 auto}
 
 .pip{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;font:700 10px/1 var(--f-display);font-style:normal;background:var(--mN);color:#111;margin-right:1px;vertical-align:-3px}
 .pip.pW{background:var(--mW)}.pip.pU{background:var(--mU);color:#fff}.pip.pB{background:var(--mB);color:#fff}
 .pip.pR{background:var(--mR);color:#fff}.pip.pG{background:var(--mG);color:#fff}.pip.pC{background:var(--mC)}
 .pip.pH{width:auto;padding:0 4px;border-radius:9px}
 
-/* summary strip */
 .summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden}
-.summary div{background:var(--surface);padding:10px 12px}
-.summary b{display:block;font:700 22px/1.1 var(--f-display)}
-.summary b.gold{color:var(--gold)}
+.summary div{background:var(--surface);padding:10px 12px;min-width:0}
+.summary b{display:block;font:700 22px/1.1 var(--f-display);overflow:hidden;text-overflow:ellipsis}
+.gold{color:var(--gold)}
+.up{color:var(--ok)} .down{color:var(--danger)}
 
-/* lists */
 .list{display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .item{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px 10px;border-top:1px solid var(--line)}
 .item:first-child{border-top:0}
-.item img,.thumb{width:44px;height:61px;object-fit:cover;border-radius:4px;background:var(--sunk);display:block}
+.item img{width:44px;height:61px;object-fit:cover;border-radius:4px;background:var(--sunk);display:block}
 .item .name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .item .meta{font-size:13px;color:var(--muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .item .right{text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.item.flagged{box-shadow:inset 3px 0 0 var(--danger)}
 .tap{background:none;border:0;padding:0;text-align:left;width:100%;min-width:0}
 .stepper{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:8px;overflow:hidden}
 .stepper button{border:0;background:var(--sunk);width:30px;height:30px;font-weight:700}
 .stepper span{min-width:28px;text-align:center;font-weight:600}
 .price{font-weight:600}
-.price.gold{color:var(--gold)}
 .group-h{padding:8px 10px;background:var(--sunk);font:600 12px var(--f-display);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);display:flex;justify-content:space-between}
 
-/* search grid */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px}
-.grid button{border:0;padding:0;background:none;border-radius:6px;overflow:hidden;aspect-ratio:63/88;background:var(--sunk);position:relative}
+.grid button{border:0;padding:0;border-radius:6px;overflow:hidden;aspect-ratio:63/88;background:var(--sunk);position:relative}
 .grid img{width:100%;height:100%;object-fit:cover;display:block}
 .grid .fallback{position:absolute;inset:0;display:grid;place-items:center;padding:6px;font-size:12px;text-align:center}
 .grid .pr{position:absolute;right:4px;bottom:4px;background:rgba(10,15,20,.78);color:#fff;font:600 11px var(--f-display);padding:1px 5px;border-radius:4px}
@@ -107,14 +110,13 @@ select{width:auto}
 .empty h2{margin:0;font:700 20px var(--f-display)}
 .empty p{margin:0;color:var(--muted);max-width:34ch}
 
-/* scanner */
-.cam{position:relative;background:#000;border-radius:14px;overflow:hidden;height:min(62vh,560px)}
+.cam{position:relative;background:#000;border-radius:14px;overflow:hidden;height:min(58vh,540px)}
 .cam video{width:100%;height:100%;object-fit:cover;display:block}
 .cam .frame{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border:2px solid rgba(255,255,255,.9);border-radius:12px;box-shadow:0 0 0 2000px rgba(0,0,0,.38)}
 .cam .band{position:absolute;left:3%;right:3%;border:1.5px dashed #ffd76a;border-radius:4px}
 .cam .band.name{top:3%;height:7.5%;right:20%}
 .cam .band.info{bottom:2.5%;height:8%;right:52%}
-.cam .hint{position:absolute;left:0;right:0;top:10px;text-align:center;color:#fff;font-size:13px;text-shadow:0 1px 3px #000}
+.cam .hint{position:absolute;left:0;right:0;top:10px;text-align:center;color:#fff;font-size:13px;text-shadow:0 1px 3px #000;padding:0 12px}
 .cam .ctrl{position:absolute;left:0;right:0;bottom:12px;display:flex;justify-content:center;align-items:center;gap:22px}
 .shutter{width:70px;height:70px;border-radius:50%;border:4px solid #fff;background:rgba(255,255,255,.25)}
 .shutter:active{background:rgba(255,255,255,.6)}
@@ -129,7 +131,6 @@ select{width:auto}
 .toggle{display:flex;align-items:center;gap:8px;font-size:14px}
 .toggle input{width:20px;height:20px;accent-color:var(--accent)}
 
-/* sheet */
 .scrim{position:fixed;inset:0;background:rgba(5,10,15,.55);z-index:40}
 .sheet{position:fixed;left:0;right:0;bottom:0;z-index:41;background:var(--bg);border-radius:16px 16px 0 0;max-height:92vh;overflow:auto;
   padding:8px max(16px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));max-width:720px;margin:0 auto}
@@ -138,16 +139,19 @@ select{width:auto}
 .big{width:100%;max-width:300px;border-radius:12px;display:block;margin:0 auto;aspect-ratio:63/88;object-fit:cover;background:var(--sunk)}
 .oracle{white-space:pre-wrap;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:15px}
 .prices{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
-.prices div{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+.prices div{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 8px;min-width:0}
 .prices b{display:block;font:700 16px var(--f-display)}
-.card-box{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px}
+.box{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.box.alert{border-color:var(--gold)}
+.box.bad{border-color:var(--danger)}
 .prints{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}
 .prints button{flex:0 0 84px;border:2px solid transparent;border-radius:6px;padding:0;background:none}
 .prints button[aria-pressed="true"]{border-color:var(--accent)}
 .prints img{width:100%;border-radius:4px;display:block}
 .prints small{display:block;font-size:11px;color:var(--muted)}
+.kv{display:flex;justify-content:space-between;gap:10px;align-items:center;font-size:14px}
+.kv select{min-height:34px;padding:4px 8px;font-size:14px}
 
-/* deck */
 .deck-card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;justify-content:space-between;gap:12px;align-items:center;text-align:left;width:100%}
 .deck-card h3{margin:0;font:700 18px var(--f-display)}
 .curve{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;align-items:end;height:110px;padding-top:14px}
@@ -156,14 +160,25 @@ select{width:auto}
 .curve-x{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;font-size:11px;color:var(--muted);text-align:center}
 .hand{display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:6px}
 .hand img{width:100%;border-radius:5px;display:block}
+.issues{margin:0;padding-left:18px;font-size:14px;display:flex;flex-direction:column;gap:3px}
+
 .ac{position:relative}
-.ac ul{position:absolute;left:0;right:0;top:100%;z-index:15;list-style:none;margin:4px 0 0;padding:4px;background:var(--surface);border:1px solid var(--line);border-radius:10px;max-height:260px;overflow:auto;box-shadow:0 8px 24px rgba(0,0,0,.18)}
-.ac li button{width:100%;text-align:left;background:none;border:0;padding:10px;border-radius:6px}
-.ac li button:hover{background:var(--sunk)}
+.ac ul{position:absolute;left:0;right:0;top:100%;z-index:25;list-style:none;margin:4px 0 0;padding:4px;background:var(--surface);border:1px solid var(--line);border-radius:10px;max-height:300px;overflow:auto;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+.ac li button{width:100%;text-align:left;background:none;border:0;padding:10px;border-radius:6px;display:flex;justify-content:space-between;gap:8px}
+.ac li button:hover,.ac li button.hl{background:var(--sunk)}
+.ac li b{font-weight:700}
+
+.spark{display:block;width:100%;height:64px}
+.spark .ln{fill:none;stroke:var(--accent);stroke-width:2;vector-effect:non-scaling-stroke}
+.spark .ar{fill:var(--accent);opacity:.14}
+.spark .gd{stroke:var(--line);stroke-width:1;vector-effect:non-scaling-stroke}
+
+.scale{height:12px;border-radius:6px;overflow:hidden;display:flex;background:var(--sunk)}
+.scale .g{background:var(--danger)} .scale .r{background:var(--ok)}
 
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,0px) + 14px);z-index:60;background:var(--ink);color:var(--bg);
   padding:10px 14px;border-radius:10px;font-weight:600;font-size:14px;display:flex;gap:12px;align-items:center;max-width:calc(100% - 32px)}
-.toast button{background:none;border:0;color:var(--accent);font-weight:700;filter:brightness(1.4)}
+.toast button{background:none;border:0;color:var(--bg);font-weight:700;text-decoration:underline}
 .menu{display:flex;flex-direction:column;gap:8px}
 .menu .btn{justify-content:flex-start}
 h2.sec{margin:6px 0 0;font:700 18px var(--f-display)}
@@ -182,6 +197,7 @@ h2.sec{margin:6px 0 0;font:700 18px var(--f-display)}
   <button data-tab="scan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><rect x="8.5" y="7" width="7" height="10" rx="1"/></svg>Scan</button>
   <button data-tab="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></svg>Search</button>
   <button data-tab="decks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="9" height="13" rx="1.5" transform="rotate(-8 7 12)"/><rect x="11" y="5" width="9" height="13" rx="1.5" transform="rotate(8 15 11)"/></svg>Decks</button>
+  <button data-tab="trade"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg>Trade</button>
 </nav>
 
 <div id="sheetRoot"></div>
@@ -196,13 +212,36 @@ const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const money = n => (n == null || isNaN(n)) ? "—" : "$" + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const signed = n => (n > 0 ? "+" : n < 0 ? "−" : "") + money(Math.abs(n));
 const uid = () => Math.random().toString(36).slice(2, 10);
+const today = () => Math.floor(Date.now() / 864e5);
+const dayStr = d => new Date(d * 864e5 + 12 * 36e5).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+const norm = s => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
-/* ---------- storage ---------- */
+/* ---------- storage & migration ---------- */
 const KEY = "deckhand.v1";
-let S = { coll: {}, decks: {}, meta: {} };
-try { const t = localStorage.getItem(KEY); if (t) S = Object.assign(S, JSON.parse(t)); } catch (e) {}
+let S = {};
+try { const t = localStorage.getItem(KEY); if (t) S = JSON.parse(t); } catch (e) {}
+function migrate() {
+  S.coll = S.coll || {}; S.decks = S.decks || {}; S.meta = S.meta || {};
+  if (!S.binders || !Object.keys(S.binders).length) S.binders = {
+    main: { id: "main", name: "Collection" }, trade: { id: "trade", name: "Trade binder" }, wish: { id: "wish", name: "Wishlist", wish: true } };
+  S.alerts = S.alerts || {}; S.ph = S.ph || {}; S.hist = S.hist || []; S.trade = S.trade || { give: [], get: [] };
+  const nc = {};
+  for (const k in S.coll) {
+    const e = S.coll[k]; if (!e || !e.id) continue;
+    if (!e.binder || !S.binders[e.binder]) e.binder = "main";
+    const nk = ckey(e.id, e.finish, e.binder);
+    if (nc[nk]) nc[nk].qty += e.qty; else nc[nk] = e;
+  }
+  S.coll = nc;
+  for (const d of Object.values(S.decks)) { d.format = d.format || "casual"; d.cmdr = (d.cmdr || []).filter(k => d.cards[k]); }
+  S.v = 2;
+}
+const ckey = (id, finish, binder) => id + "|" + finish + "|" + binder;
+const pkey = (id, finish) => id + "|" + finish;
+migrate();
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(S)); }
   catch (e) { toast("Couldn't save: phone storage is full or blocked. Export a backup from Collection."); }
@@ -228,16 +267,30 @@ function sf(path, body) {
   return p;
 }
 const imgOf = (c, size = "small") => (c.image_uris && c.image_uris[size]) || (c.card_faces && c.card_faces[0] && c.card_faces[0].image_uris && c.card_faces[0].image_uris[size]) || "";
+const FORMATS = { casual: "Casual", commander: "Commander", standard: "Standard", pioneer: "Pioneer", modern: "Modern", legacy: "Legacy", vintage: "Vintage", pauper: "Pauper" };
+const WORDNUM = { two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
 function slim(c) {
   const f = c.card_faces || [];
+  const text = [c.oracle_text || "", ...f.map(x => x.oracle_text || "")].join("\n");
+  const type = c.type_line || (f[0] && f[0].type_line) || "";
+  const front = type.split("//")[0];
+  const leg = {};
+  if (c.legalities) for (const k in FORMATS) if (k !== "casual") leg[k] = (c.legalities[k] || "not_legal")[0];
+  let cap = null;
+  const m = text.match(/deck can have (any number|up to (\w+)) (?:of )?cards named/i);
+  if (m) cap = m[2] ? (WORDNUM[m[2].toLowerCase()] || parseInt(m[2]) || 99) : 999;
   return {
     id: c.id, oid: c.oracle_id || (f[0] && f[0].oracle_id) || "", name: c.name, set: c.set, setName: c.set_name,
-    num: c.collector_number, rarity: c.rarity, type: c.type_line || (f[0] && f[0].type_line) || "",
+    num: c.collector_number, rarity: c.rarity, type,
     cmc: c.cmc || 0, mana: c.mana_cost != null ? c.mana_cost : f.map(x => x.mana_cost).filter(Boolean).join(" // "),
-    colors: c.colors || (f[0] && f[0].colors) || [], img: imgOf(c, "small"), imgN: imgOf(c, "normal"),
-    prices: c.prices || {}, finishes: c.finishes || ["nonfoil"], uri: c.scryfall_uri || ""
+    colors: c.colors || (f[0] && f[0].colors) || [], ci: c.color_identity || [], img: imgOf(c, "small"), imgN: imgOf(c, "normal"),
+    prices: c.prices || {}, finishes: c.finishes || ["nonfoil"], uri: c.scryfall_uri || "",
+    leg: c.legalities ? leg : undefined, cap, basic: /\bBasic\b/.test(front),
+    canCmdr: (/Legendary/.test(front) && /Creature/.test(front)) || /can be your commander/i.test(text),
+    partner: /\bPartner\b|Friends forever|Choose a Background|Doctor's companion/i.test(text) || /Background/.test(front)
   };
 }
+const isSlim = c => c && c.img !== undefined && c.oid !== undefined;
 const PKEY = { nonfoil: "usd", foil: "usd_foil", etched: "usd_etched" };
 function priceOf(card, finish = "nonfoil") {
   const p = card.prices || {};
@@ -251,6 +304,7 @@ function pips(cost) {
     return `<i class="pip p${cls}" title="${s}">${s.replace("/P", "ᵖ")}</i>`;
   });
 }
+const ciPips = ci => ci && ci.length ? ci.map(c => `<i class="pip p${c}">${c}</i>`).join("") : `<i class="pip pC">C</i>`;
 async function cardsByIdentifiers(ids, onProgress) {
   const found = [], missing = [];
   for (let i = 0; i < ids.length; i += 75) {
@@ -262,23 +316,172 @@ async function cardsByIdentifiers(ids, onProgress) {
   return { found, missing };
 }
 
+/* ---------- card name suggestions (offline list) ---------- */
+const NAMES_KEY = "deckhand.names";
+let NAMES = null, NAMES_N = null, namesP = null;
+function loadNames() {
+  if (NAMES) return Promise.resolve(NAMES);
+  if (namesP) return namesP;
+  namesP = (async () => {
+    let cached = null;
+    try { cached = JSON.parse(localStorage.getItem(NAMES_KEY) || "null"); } catch (e) {}
+    if (cached && cached.names && cached.names.length) setNames(cached.names);
+    if (!cached || Date.now() - cached.at > 7 * 864e5) {
+      try {
+        const r = await sf("/catalog/card-names");
+        if (r.data && r.data.length) { setNames(r.data); try { localStorage.setItem(NAMES_KEY, JSON.stringify({ at: Date.now(), names: r.data })); } catch (e) {} }
+      } catch (e) { if (!NAMES) { namesP = null; throw e; } }
+    }
+    return NAMES;
+  })();
+  return namesP;
+}
+function setNames(list) { NAMES = list; NAMES_N = list.map(norm); }
+function suggest(q, n = 8) {
+  if (!NAMES) return null;
+  const nq = norm(q.trim()); if (nq.length < 2) return [];
+  const toks = nq.split(/\s+/).filter(Boolean);
+  const a = [], b = [], c = [];
+  for (let i = 0; i < NAMES_N.length; i++) {
+    const s = NAMES_N[i];
+    if (s.startsWith(nq)) { a.push(i); if (a.length >= n) break; continue; }
+    if (b.length < n) {
+      const words = s.split(/[\s,\-/]+/);
+      if (toks.every(t => words.some(w => w.startsWith(t)))) { b.push(i); continue; }
+    }
+    if (c.length < n && s.includes(nq)) c.push(i);
+  }
+  const sortLen = arr => arr.sort((x, y) => NAMES[x].length - NAMES[y].length);
+  return [...sortLen(a), ...b, ...c].slice(0, n).map(i => NAMES[i]);
+}
+function hilite(name, q) {
+  const nn = norm(name), toks = norm(q.trim()).split(/\s+/).filter(Boolean);
+  const mark = new Array(name.length).fill(false);
+  for (const t of toks) { let i = nn.indexOf(t); if (i >= 0) for (let k = i; k < i + t.length; k++) mark[k] = true; }
+  let out = "", on = false;
+  for (let i = 0; i < name.length; i++) { if (mark[i] !== on) { out += mark[i] ? "<b>" : "</b>"; on = mark[i]; } out += esc(name[i]); }
+  return out + (on ? "</b>" : "");
+}
+function attachAutocomplete(inp, ul, onPick) {
+  let items = [], hl = -1;
+  const show = (names, q) => {
+    items = names; hl = -1;
+    ul.innerHTML = names.map((n, i) => { const own = ownedByName(n); return `<li><button type="button" data-i="${i}"><span>${hilite(n, q)}</span>${own ? `<span class="chip ok">own ${own}</span>` : ""}</button></li>`; }).join("");
+    ul.hidden = !names.length;
+  };
+  const remote = debounce(async q => {
+    try { const r = await sf("/cards/autocomplete?q=" + encodeURIComponent(q)); if (inp.value.trim() === q) show((r.data || []).slice(0, 8), q); } catch (e) {}
+  }, 220);
+  const look = () => {
+    const q = inp.value.trim();
+    if (q.length < 2 || /[:<>=!"]/.test(q)) { ul.hidden = true; return; }
+    const local = suggest(q);
+    if (local) show(local, q); else remote(q);
+  };
+  inp.addEventListener("input", look);
+  inp.addEventListener("focus", () => { loadNames().catch(() => {}); if (inp.value.trim().length >= 2) look(); });
+  inp.addEventListener("blur", () => setTimeout(() => ul.hidden = true, 250));
+  inp.addEventListener("keydown", e => {
+    if (ul.hidden || !items.length) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault(); hl = (hl + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      ul.querySelectorAll("button").forEach((b, i) => b.classList.toggle("hl", i === hl));
+    } else if (e.key === "Enter" && hl >= 0) { e.preventDefault(); ul.hidden = true; onPick(items[hl]); }
+    else if (e.key === "Escape") ul.hidden = true;
+  });
+  ul.addEventListener("pointerdown", e => e.preventDefault());
+  ul.onclick = e => { const b = e.target.closest("button"); if (b) { ul.hidden = true; onPick(items[+b.dataset.i]); } };
+}
+
 /* ---------- collection helpers ---------- */
-const ckey = (id, finish) => id + "|" + finish;
-function addToColl(card, finish = "nonfoil", qty = 1) {
-  const s = card.oid !== undefined && card.img !== undefined ? card : slim(card);
+const isWish = bid => !!(S.binders[bid] && S.binders[bid].wish);
+function defaultBinder() { return S.meta.binder && S.binders[S.meta.binder] ? S.meta.binder : "main"; }
+function addToColl(card, finish = "nonfoil", qty = 1, binder) {
+  const s = isSlim(card) ? card : slim(card);
+  binder = binder && S.binders[binder] ? binder : defaultBinder();
   if (!s.finishes.includes(finish)) finish = s.finishes[0] || "nonfoil";
-  const k = ckey(s.id, finish);
+  const k = ckey(s.id, finish, binder);
   const cur = S.coll[k];
-  if (cur) { cur.qty += qty; Object.assign(cur, { prices: s.prices }); }
-  else S.coll[k] = Object.assign({}, s, { finish, qty, added: Date.now() });
-  if (S.coll[k].qty <= 0) delete S.coll[k];
+  if (cur) { cur.qty += qty; cur.prices = s.prices; }
+  else if (qty > 0) S.coll[k] = Object.assign({}, s, { finish, qty, binder, added: Date.now() });
+  if (S.coll[k] && S.coll[k].qty <= 0) delete S.coll[k];
   save(); return k;
 }
-function ownedByName(name) { let n = 0; for (const k in S.coll) if (S.coll[k].name === name) n += S.coll[k].qty; return n; }
-function collTotals() {
+function moveEntry(k, b) {
+  const e = S.coll[k]; if (!e || e.binder === b) return;
+  delete S.coll[k]; e.binder = b;
+  const nk = ckey(e.id, e.finish, b);
+  if (S.coll[nk]) S.coll[nk].qty += e.qty; else S.coll[nk] = e;
+  save();
+}
+function ownedByName(name) { let n = 0; for (const k in S.coll) { const e = S.coll[k]; if (e.name === name && !isWish(e.binder)) n += e.qty; } return n; }
+function collTotals(filter) {
   let cards = 0, value = 0; const uniq = new Set();
-  for (const k in S.coll) { const e = S.coll[k]; cards += e.qty; uniq.add(e.oid || e.name); value += (priceOf(e, e.finish) || 0) * e.qty; }
+  for (const k in S.coll) {
+    const e = S.coll[k];
+    if (filter === "all" ? isWish(e.binder) : e.binder !== filter) continue;
+    cards += e.qty; uniq.add(e.oid || e.name); value += (priceOf(e, e.finish) || 0) * e.qty;
+  }
   return { cards, uniq: uniq.size, value };
+}
+function binderByName(name) {
+  name = (name || "").trim(); if (!name) return defaultBinder();
+  const hit = Object.values(S.binders).find(b => b.name.toLowerCase() === name.toLowerCase());
+  if (hit) return hit.id;
+  const id = uid(); S.binders[id] = { id, name, wish: /wish|want/i.test(name) }; return id;
+}
+const binderOptions = sel => Object.values(S.binders).map(b => `<option value="${b.id}" ${b.id === sel ? "selected" : ""}>${esc(b.name)}</option>`).join("");
+
+/* ---------- prices: refresh, history, alerts ---------- */
+let refreshing = false, refreshMsg = "";
+function recordPH(k, p) {
+  if (p == null) return;
+  const arr = S.ph[k] || (S.ph[k] = []), d = today(), last = arr[arr.length - 1];
+  if (last && last[0] === d) { last[1] = p; return; }
+  if (last && last[1] === p) return;
+  arr.push([d, p]); if (arr.length > 60) arr.splice(0, arr.length - 60);
+}
+async function refreshPrices(quiet) {
+  if (refreshing) return; refreshing = true; refreshMsg = "Updating prices…"; updRefreshBtn();
+  try {
+    const ids = new Set();
+    Object.values(S.coll).forEach(e => ids.add(e.id));
+    Object.values(S.decks).forEach(d => Object.values(d.cards).forEach(c => ids.add(c.id)));
+    Object.keys(S.alerts).forEach(k => ids.add(k.split("|")[0]));
+    S.trade.get.forEach(x => ids.add(x.card.id));
+    if (!ids.size) return;
+    const { found } = await cardsByIdentifiers([...ids].map(id => ({ id })), (d, n) => { refreshMsg = `Updating ${d}/${n}…`; updRefreshBtn(); });
+    const map = {}; for (const c of found) map[c.id] = slim(c);
+    const keepE = ["finish", "qty", "binder", "added"];
+    for (const k in S.coll) { const e = S.coll[k], s = map[e.id]; if (s) { const keep = {}; keepE.forEach(f => keep[f] = e[f]); Object.assign(e, s, keep); } }
+    for (const d of Object.values(S.decks)) for (const k in d.cards) { const c = d.cards[k], s = map[c.id]; if (s) { const keep = { qty: c.qty, side: c.side }; Object.assign(c, s, keep); } }
+    for (const x of S.trade.get) if (map[x.card.id]) x.card = map[x.card.id];
+    const live = new Set();
+    for (const e of Object.values(S.coll)) { const k = pkey(e.id, e.finish); live.add(k); recordPH(k, priceOf(e, e.finish)); }
+    let hits = 0;
+    for (const k in S.alerts) {
+      const a = S.alerts[k], [id, fin] = k.split("|"), s = map[id]; live.add(k);
+      if (!s) continue;
+      a.prices = s.prices; a.img = s.img; const p = priceOf(s, fin); recordPH(k, p);
+      if (p != null && !a.hitAt && ((a.below != null && p <= a.below) || (a.above != null && p >= a.above))) { a.hitAt = Date.now(); a.hitPrice = p; a.seen = false; hits++; }
+    }
+    for (const k in S.ph) if (!live.has(k)) delete S.ph[k];
+    const v = collTotals("all").value, d = today(), last = S.hist[S.hist.length - 1];
+    if (last && last.d === d) last.v = v; else S.hist.push({ d, v });
+    if (S.hist.length > 365) S.hist.splice(0, S.hist.length - 365);
+    S.meta.pricedAt = Date.now(); save();
+    toast(hits ? `Prices updated · ${hits} price alert${hits > 1 ? "s" : ""}` : "Prices updated");
+  } catch (e) { if (!quiet) toast("Couldn't update prices: " + e.message); }
+  finally { refreshing = false; if (tab === "coll") renderColl(); else updRefreshBtn(); }
+}
+function updRefreshBtn() { const b = $("#cRefresh"); if (b) { b.disabled = refreshing; b.textContent = refreshing ? refreshMsg : "Update prices"; } }
+function spark(vals) {
+  if (vals.length < 2) return "";
+  const W = 300, H = 64, min = Math.min(...vals), max = Math.max(...vals), span = max - min || 1;
+  const pts = vals.map((v, i) => [i / (vals.length - 1) * W, H - 6 - (v - min) / span * (H - 12)]);
+  const d = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+    <line class="gd" x1="0" x2="${W}" y1="${H - 6}" y2="${H - 6}"/><path class="ar" d="${d} L${W} ${H} L0 ${H} Z"/><path class="ln" d="${d}"/></svg>`;
 }
 
 /* ---------- toast ---------- */
@@ -305,16 +508,19 @@ function render() {
   if (tab === "coll") renderColl();
   else if (tab === "scan") renderScan();
   else if (tab === "search") renderSearch();
+  else if (tab === "trade") renderTrade();
   else if (tab === "decks") deckOpen && S.decks[deckOpen] ? renderDeck(S.decks[deckOpen]) : renderDecks();
 }
 
 /* ================= COLLECTION ================= */
-const cv = { q: "", sort: "value" };
+const cv = { q: "", sort: "value", binder: "all" };
 function renderColl() {
-  const t = collTotals();
+  if (cv.binder !== "all" && !S.binders[cv.binder]) cv.binder = "all";
+  const wish = cv.binder !== "all" && isWish(cv.binder);
+  const t = collTotals(cv.binder);
   setHead("Collection", S.meta.pricedAt ? "Prices " + new Date(S.meta.pricedAt).toLocaleDateString() : "");
   const v = $("#view");
-  if (!Object.keys(S.coll).length) {
+  if (!Object.keys(S.coll).length && !Object.keys(S.alerts).length) {
     v.innerHTML = `<div class="empty"><h2>Your binder is empty</h2>
       <p>Scan cards with your camera, add them from Search, or bring over your ManaBox collection.</p>
       <div class="row wrap" style="justify-content:center">
@@ -324,37 +530,68 @@ function renderColl() {
     $("#eScan").onclick = () => go("scan"); $("#eSearch").onclick = () => go("search"); $("#eImp").onclick = () => pickFile(".csv,text/csv", importCSV);
     return;
   }
+  const counts = {}; for (const e of Object.values(S.coll)) counts[e.binder] = (counts[e.binder] || 0) + e.qty;
+  const alertHits = Object.entries(S.alerts).filter(([, a]) => a.hitAt && !a.seen);
+  const histVals = S.hist.map(h => h.v);
   v.innerHTML = `<div class="stack">
-    <div class="summary"><div><span class="label">Cards</span><b class="num">${t.cards.toLocaleString()}</b></div>
+    <div class="chips scrollx" id="bChips"><button data-b="all" aria-pressed="${cv.binder === "all"}">All owned</button>
+      ${Object.values(S.binders).map(b => `<button data-b="${b.id}" aria-pressed="${cv.binder === b.id}">${esc(b.name)} <span class="num">${counts[b.id] || 0}</span></button>`).join("")}
+      <button data-b="__manage" aria-label="Manage binders">＋ Binders</button></div>
+    ${alertHits.length ? `<div class="box alert"><span class="label gold">Price alerts</span>${alertHits.map(([k, a]) => `
+      <div class="kv"><span class="grow">${esc(a.name)} is now <b class="num">${money(a.hitPrice)}</b> <span class="muted">(${a.below != null && a.hitPrice <= a.below ? "below" : "above"} your ${money(a.below != null && a.hitPrice <= a.below ? a.below : a.above)} target)</span></span>
+      <button class="btn sm" data-alert="${esc(k)}">View</button><button class="btn sm ghost" data-seen="${esc(k)}">OK</button></div>`).join("")}</div>` : ""}
+    <div class="summary"><div><span class="label">${wish ? "Wanted" : "Cards"}</span><b class="num">${t.cards.toLocaleString()}</b></div>
       <div><span class="label">Unique</span><b class="num">${t.uniq.toLocaleString()}</b></div>
-      <div><span class="label">Value</span><b class="num gold">${money(t.value)}</b></div></div>
+      <div><span class="label">${wish ? "Cost to buy" : "Value"}</span><b class="num gold">${money(t.value)}</b></div></div>
+    ${cv.binder === "all" ? (histVals.length >= 2 ? `<div class="box"><div class="kv"><span class="label">Collection value</span>
+        <span class="num small ${histVals.at(-1) >= histVals[0] ? "up" : "down"}">${signed(histVals.at(-1) - histVals[0])} since ${dayStr(S.hist[0].d)}</span></div>${spark(histVals)}</div>`
+      : `<p class="small muted" style="margin:0">Your value chart starts after prices update on two different days. Deckhand updates them automatically once a day when you open it.</p>`) : ""}
+    ${cv.binder === "all" ? moversHTML() : ""}
     <div class="row"><input type="search" id="cq" class="grow" placeholder="Filter by name, set or type" value="${esc(cv.q)}">
-      <select id="cs" aria-label="Sort"><option value="value">Value</option><option value="name">Name</option><option value="set">Set</option><option value="recent">Recent</option></select></div>
+      <select id="cs" aria-label="Sort"><option value="value">Value</option><option value="change">Price change</option><option value="name">Name</option><option value="set">Set</option><option value="recent">Recent</option></select></div>
     <div class="row wrap"><button class="btn sm" id="cRefresh">Update prices</button><button class="btn sm" id="cMore">Import / export</button></div>
     <div id="clist"></div></div>`;
-  $("#cs").value = cv.sort;
+  $("#cs").value = cv.sort; updRefreshBtn();
   $("#cq").oninput = debounce(e => { cv.q = e.target.value; drawCollList(); }, 150);
   $("#cs").onchange = e => { cv.sort = e.target.value; drawCollList(); };
-  $("#cRefresh").onclick = refreshPrices;
+  $("#cRefresh").onclick = () => refreshPrices(false);
   $("#cMore").onclick = ioSheet;
+  $("#bChips").onclick = e => { const b = e.target.closest("button"); if (!b) return; if (b.dataset.b === "__manage") binderSheet(); else { cv.binder = b.dataset.b; renderColl(); } };
+  v.querySelectorAll("[data-seen]").forEach(b => b.onclick = () => { S.alerts[b.dataset.seen].seen = true; save(); renderColl(); });
+  v.querySelectorAll("[data-alert]").forEach(b => b.onclick = async () => { const [id, fin] = b.dataset.alert.split("|"); try { openCard(await sf("/cards/" + id), fin); } catch (e) { toast(e.message); } });
+  v.querySelectorAll("[data-mover]").forEach(b => b.onclick = () => { const e = S.coll[b.dataset.mover]; if (e) openCard(e, e.finish, e.binder); });
   drawCollList();
+}
+function phChange(e) { const a = S.ph[pkey(e.id, e.finish)]; if (!a || a.length < 2) return null; return { d: a.at(-1)[1] - a.at(-2)[1], since: a.at(-2)[0] }; }
+function moversHTML() {
+  const rows = Object.entries(S.coll).filter(([, e]) => !isWish(e.binder)).map(([k, e]) => { const c = phChange(e); return c && c.d ? { k, e, d: c.d, tot: c.d * e.qty } : null; }).filter(Boolean);
+  if (!rows.length) return "";
+  const up = rows.filter(r => r.d > 0).sort((a, b) => b.tot - a.tot).slice(0, 4), dn = rows.filter(r => r.d < 0).sort((a, b) => a.tot - b.tot).slice(0, 4);
+  const line = r => `<button class="tap kv" data-mover="${esc(r.k)}"><span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.e.name)}</span>
+    <span class="num small muted">${money(priceOf(r.e, r.e.finish))}</span><span class="num small ${r.d > 0 ? "up" : "down"}" style="min-width:64px;text-align:right">${signed(r.d)}</span></button>`;
+  return `<div class="box"><span class="label">Biggest price changes</span>${up.map(line).join("")}${dn.map(line).join("")}</div>`;
 }
 function drawCollList() {
   const q = cv.q.trim().toLowerCase();
-  let rows = Object.entries(S.coll).filter(([k, e]) => !q || (e.name + " " + e.set + " " + e.setName + " " + e.type).toLowerCase().includes(q));
+  let rows = Object.entries(S.coll).filter(([k, e]) =>
+    (cv.binder === "all" ? !isWish(e.binder) : e.binder === cv.binder) &&
+    (!q || (e.name + " " + e.set + " " + e.setName + " " + e.type).toLowerCase().includes(q)));
   const val = e => (priceOf(e, e.finish) || 0) * e.qty;
-  const cmp = { value: (a, b) => val(b[1]) - val(a[1]), name: (a, b) => a[1].name.localeCompare(b[1].name),
+  const chg = e => { const c = phChange(e); return c ? c.d * e.qty : 0; };
+  const cmp = { value: (a, b) => val(b[1]) - val(a[1]), change: (a, b) => Math.abs(chg(b[1])) - Math.abs(chg(a[1])), name: (a, b) => a[1].name.localeCompare(b[1].name),
     set: (a, b) => a[1].set.localeCompare(b[1].set) || (parseInt(a[1].num) || 0) - (parseInt(b[1].num) || 0), recent: (a, b) => b[1].added - a[1].added }[cv.sort];
   rows.sort(cmp);
   const shown = rows.slice(0, 400);
   const el = $("#clist");
-  if (!rows.length) { el.innerHTML = `<p class="muted">No cards match “${esc(cv.q)}”.</p>`; return; }
-  el.innerHTML = `<div class="list">${shown.map(([k, e]) => `
+  if (!rows.length) { el.innerHTML = `<p class="muted">${q ? `No cards match “${esc(cv.q)}”.` : "Nothing in this binder yet. Add cards from Search or Scan and pick this binder."}</p>`; return; }
+  el.innerHTML = `<div class="list">${shown.map(([k, e]) => { const c = phChange(e); return `
     <div class="item"><img loading="lazy" src="${esc(e.img)}" alt="">
       <button class="tap" data-open="${esc(k)}"><div class="name">${esc(e.name)}</div>
-        <div class="meta"><span>${esc(e.set.toUpperCase())} #${esc(e.num)}</span>${e.finish !== "nonfoil" ? `<span class="chip foil">${e.finish}</span>` : ""}<span class="num">${money(priceOf(e, e.finish))} ea</span></div></button>
+        <div class="meta"><span>${esc(e.set.toUpperCase())} #${esc(e.num)}</span>${e.finish !== "nonfoil" ? `<span class="chip foil">${e.finish}</span>` : ""}
+          ${cv.binder === "all" && e.binder !== "main" ? `<span class="chip">${esc(S.binders[e.binder].name)}</span>` : ""}
+          <span class="num">${money(priceOf(e, e.finish))} ea</span>${c && c.d ? `<span class="num ${c.d > 0 ? "up" : "down"}">${signed(c.d)}</span>` : ""}</div></button>
       <div class="right"><span class="price gold num">${money(val(e))}</span>
-        <span class="stepper"><button data-dec="${esc(k)}" aria-label="Remove one">−</button><span class="num">${e.qty}</span><button data-inc="${esc(k)}" aria-label="Add one">+</button></span></div></div>`).join("")}</div>
+        <span class="stepper"><button data-dec="${esc(k)}" aria-label="Remove one">−</button><span class="num">${e.qty}</span><button data-inc="${esc(k)}" aria-label="Add one">+</button></span></div></div>`; }).join("")}</div>
     ${rows.length > shown.length ? `<p class="small muted">Showing the top 400 of ${rows.length}. Use the filter to find others.</p>` : ""}`;
   el.onclick = ev => {
     const b = ev.target.closest("button"); if (!b) return;
@@ -363,20 +600,32 @@ function drawCollList() {
       const k = b.dataset.dec, e = S.coll[k];
       if (e.qty > 1) { e.qty--; save(); renderColl(); }
       else { const back = Object.assign({}, e); delete S.coll[k]; save(); renderColl(); toast("Removed " + e.name, { label: "Undo", fn: () => { S.coll[k] = back; save(); renderColl(); } }); }
-    } else if (b.dataset.open) openCard(S.coll[b.dataset.open], S.coll[b.dataset.open].finish);
+    } else if (b.dataset.open) { const e = S.coll[b.dataset.open]; openCard(e, e.finish, e.binder); }
   };
 }
-async function refreshPrices() {
-  const entries = Object.values(S.coll); if (!entries.length) return;
-  const ids = [...new Set(entries.map(e => e.id))].map(id => ({ id }));
-  const btn = $("#cRefresh"); btn.disabled = true;
-  try {
-    const { found } = await cardsByIdentifiers(ids, (d, n) => btn.textContent = `Updating ${d}/${n}…`);
-    const map = Object.fromEntries(found.map(c => [c.id, c]));
-    for (const k in S.coll) { const c = map[S.coll[k].id]; if (c) { const s = slim(c); S.coll[k].prices = s.prices; S.coll[k].img = s.img || S.coll[k].img; S.coll[k].imgN = s.imgN || S.coll[k].imgN; } }
-    for (const d of Object.values(S.decks)) for (const k in d.cards) { const c = map[d.cards[k].id]; if (c) d.cards[k].prices = c.prices; }
-    S.meta.pricedAt = Date.now(); save(); toast("Prices updated"); renderColl();
-  } catch (e) { toast("Couldn't update prices: " + e.message); btn.disabled = false; btn.textContent = "Update prices"; }
+function binderSheet() {
+  const draw = () => {
+    $("#bBody").innerHTML = `<h2>Binders and lists</h2>
+      <p class="small muted">Binders marked as a wishlist hold cards you want. They don't count as owned or toward your collection value.</p>
+      <form class="row" id="bNew"><input type="text" id="bNewName" class="grow" placeholder="New binder, e.g. Bulk rares" maxlength="40"><button class="btn primary">Add</button></form>
+      <div class="stack" style="margin-top:12px">${Object.values(S.binders).map(b => `<div class="box">
+        <div class="row"><input type="text" id="bn-${b.id}" class="grow" value="${esc(b.name)}" maxlength="40"><button class="btn sm" data-ren="${b.id}">Rename</button></div>
+        <div class="row wrap"><label class="toggle grow"><input type="checkbox" data-wish="${b.id}" ${b.wish ? "checked" : ""}> Wishlist</label>
+          ${b.id !== "main" ? `<button class="btn sm danger" data-del="${b.id}">Delete</button>` : `<span class="small muted">Main binder</span>`}</div>
+        <div class="row" id="bc-${b.id}" hidden><span class="grow small">Delete “${esc(b.name)}”? Its cards move to ${esc(S.binders.main.name)}.</span><button class="btn sm danger" data-yes="${b.id}">Delete</button><button class="btn sm" data-no="${b.id}">Keep</button></div>
+      </div>`).join("")}</div>`;
+    $("#bNew").onsubmit = e => { e.preventDefault(); const n = $("#bNewName").value.trim(); if (!n) return; const id = uid(); S.binders[id] = { id, name: n, wish: /wish|want/i.test(n) }; save(); draw(); };
+    const root = $("#bBody");
+    root.querySelectorAll("[data-ren]").forEach(b => b.onclick = () => { const v = $("#bn-" + b.dataset.ren).value.trim(); if (v) { S.binders[b.dataset.ren].name = v; save(); toast("Renamed"); } });
+    root.querySelectorAll("[data-wish]").forEach(c => c.onchange = () => { S.binders[c.dataset.wish].wish = c.checked; save(); });
+    root.querySelectorAll("[data-del]").forEach(b => b.onclick = () => { $("#bc-" + b.dataset.del).hidden = false; });
+    root.querySelectorAll("[data-no]").forEach(b => b.onclick = () => { $("#bc-" + b.dataset.no).hidden = true; });
+    root.querySelectorAll("[data-yes]").forEach(b => b.onclick = () => {
+      const id = b.dataset.yes; for (const k of Object.keys(S.coll)) if (S.coll[k] && S.coll[k].binder === id) moveEntry(k, "main");
+      delete S.binders[id]; if (S.meta.binder === id) S.meta.binder = "main"; save(); draw(); toast("Binder deleted");
+    });
+  };
+  openSheet(`<div id="bBody"></div>`, () => render()); draw();
 }
 
 /* ---------- import / export ---------- */
@@ -389,23 +638,23 @@ function ioSheet() {
   openSheet(`<h2>Import and export</h2>
     <p class="muted small">Your collection lives on this phone only. Export a backup now and then so you never lose it.</p>
     <div class="menu">
-      <button class="btn" id="ioBack">Export full backup (collection + decks)</button>
+      <button class="btn" id="ioBack">Export full backup (everything)</button>
       <button class="btn" id="ioRest">Restore from a backup file</button>
       <button class="btn" id="ioCsv">Export collection as CSV</button>
       <button class="btn" id="ioImp">Import ManaBox or other CSV</button>
     </div>
-    <p class="small muted">ManaBox export: open your collection or binder, tap ⋮ → Export → CSV. Deckhand reads the Scryfall ID, set, collector number, foil and quantity columns.</p>
+    <p class="small muted">ManaBox export: open your collection, tap ⋮ → Export → CSV. Deckhand reads the Scryfall ID, set, collector number, foil, quantity and binder name columns, and recreates your ManaBox binders.</p>
     <div id="ioMsg" class="status"></div>`);
   const stamp = new Date().toISOString().slice(0, 10);
   $("#ioBack").onclick = () => download(`deckhand-backup-${stamp}.json`, JSON.stringify(S), "application/json");
   $("#ioRest").onclick = () => pickFile(".json,application/json", async f => {
-    try { const d = JSON.parse(await f.text()); if (!d.coll || !d.decks) throw 0; S = Object.assign({ coll: {}, decks: {}, meta: {} }, d); save(); closeSheet(); render(); toast("Backup restored"); }
+    try { const d = JSON.parse(await f.text()); if (!d.coll || !d.decks) throw 0; S = d; migrate(); save(); closeSheet(); render(); toast("Backup restored"); }
     catch (e) { $("#ioMsg").textContent = "That file isn't a Deckhand backup."; }
   });
   $("#ioCsv").onclick = () => {
-    const head = "Name,Set code,Set name,Collector number,Foil,Rarity,Quantity,Scryfall ID,Price USD";
+    const head = "Name,Set code,Set name,Collector number,Foil,Rarity,Quantity,Binder Name,Scryfall ID,Price USD";
     const q = s => `"${String(s ?? "").replace(/"/g, '""')}"`;
-    const lines = Object.values(S.coll).map(e => [q(e.name), q(e.set), q(e.setName), q(e.num), e.finish === "nonfoil" ? "normal" : e.finish, e.rarity, e.qty, e.id, priceOf(e, e.finish) ?? ""].join(","));
+    const lines = Object.values(S.coll).map(e => [q(e.name), q(e.set), q(e.setName), q(e.num), e.finish === "nonfoil" ? "normal" : e.finish, e.rarity, e.qty, q(S.binders[e.binder].name), e.id, priceOf(e, e.finish) ?? ""].join(","));
     download(`deckhand-collection-${stamp}.csv`, [head, ...lines].join("\n"), "text/csv");
   };
   $("#ioImp").onclick = () => pickFile(".csv,text/csv", importCSV);
@@ -425,12 +674,16 @@ function parseCSV(text) {
   if (f || row.length) { row.push(f); rows.push(row); }
   return rows.filter(r => r.some(x => x.trim()));
 }
+const matchIdent = (data, ident) => data.find(c => ident.id ? c.id === ident.id
+  : ident.collector_number ? (c.set === ident.set && c.collector_number === ident.collector_number)
+  : c.name.toLowerCase() === ident.name.toLowerCase() || c.name.toLowerCase().startsWith(ident.name.toLowerCase() + " //"));
 async function importCSV(file) {
   const rows = parseCSV(await file.text());
   if (rows.length < 2) { toast("That CSV looks empty."); return; }
   const h = rows[0].map(x => x.trim().toLowerCase());
   const col = re => h.findIndex(x => re.test(x));
-  const iId = col(/scryfall/), iQty = col(/^(quantity|qty|count)$/), iFoil = col(/foil|finish|printing/), iSet = col(/^(set code|set|edition code)$/), iNum = col(/collector/), iName = col(/^(name|card name|card)$/);
+  const iId = col(/scryfall/), iQty = col(/^(quantity|qty|count)$/), iFoil = col(/foil|finish|printing/), iSet = col(/^(set code|set|edition code)$/),
+    iNum = col(/collector/), iName = col(/^(name|card name|card)$/), iBinder = col(/^(binder name|binder|list name|folder)$/), iBType = col(/^binder type$/);
   if (iId < 0 && iName < 0) { toast("Couldn't find a Name or Scryfall ID column in that CSV."); return; }
   const want = rows.slice(1).map(r => {
     const fv = iFoil >= 0 ? (r[iFoil] || "").toLowerCase() : "";
@@ -440,7 +693,8 @@ async function importCSV(file) {
     if (iId >= 0 && /^[0-9a-f-]{36}$/i.test((r[iId] || "").trim())) ident = { id: r[iId].trim() };
     else if (iSet >= 0 && iNum >= 0 && r[iSet] && r[iNum]) ident = { set: r[iSet].trim().toLowerCase(), collector_number: r[iNum].trim() };
     else if (iName >= 0 && r[iName]) ident = { name: r[iName].trim() };
-    return ident ? { ident, finish, qty } : null;
+    const bname = iBinder >= 0 ? r[iBinder] : "", btype = iBType >= 0 ? (r[iBType] || "").toLowerCase() : "";
+    return ident ? { ident, finish, qty, bname, wishType: btype === "list" && /wish|want/i.test(bname) } : null;
   }).filter(Boolean);
   toast(`Importing ${want.length} rows…`);
   try {
@@ -448,14 +702,13 @@ async function importCSV(file) {
     for (let i = 0; i < want.length; i += 75) {
       const chunk = want.slice(i, i + 75);
       const r = await sf("/cards/collection", { identifiers: chunk.map(w => w.ident) });
-      const data = r.data || [];
-      const match = w => data.find(c => w.ident.id ? c.id === w.ident.id : w.ident.collector_number ? (c.set === w.ident.set && c.collector_number === w.ident.collector_number) : c.name.toLowerCase() === w.ident.name.toLowerCase() || c.name.toLowerCase().startsWith(w.ident.name.toLowerCase() + " //"));
-      for (const w of chunk) { const c = match(w); if (c) found.push([c, w]); else missing.push(w); }
+      for (const w of chunk) { const c = matchIdent(r.data || [], w.ident); if (c) found.push([c, w]); else missing.push(w); }
       toast(`Importing… ${Math.min(i + 75, want.length)}/${want.length}`);
     }
-    for (const [c, w] of found) addToColl(slim(c), w.finish, w.qty);
-    S.meta.pricedAt = Date.now(); save(); closeSheet(); go("coll");
+    for (const [c, w] of found) { const b = w.bname ? binderByName(w.bname) : defaultBinder(); if (w.wishType) S.binders[b].wish = true; addToColl(slim(c), w.finish, w.qty, b); }
+    save(); closeSheet(); go("coll");
     toast(`Imported ${found.reduce((a, [, w]) => a + w.qty, 0)} cards` + (missing.length ? `, ${missing.length} rows not found` : ""));
+    refreshPrices(true);
   } catch (e) { toast("Import stopped: " + e.message); }
 }
 
@@ -464,13 +717,13 @@ const sv = { q: "", prints: false, results: [], next: null, total: 0, busy: fals
 function renderSearch() {
   setHead("Search", sv.total ? sv.total.toLocaleString() + " results" : "");
   $("#view").innerHTML = `<div class="stack">
-    <form id="sf" class="row"><div class="ac grow"><input type="search" id="sq" placeholder="Card name or Scryfall search" autocomplete="off" value="${esc(sv.q)}"><ul id="sac" hidden></ul></div><button class="btn primary">Search</button></form>
+    <form id="sf" class="row"><div class="ac grow"><input type="search" id="sq" placeholder="Start typing a card name" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(sv.q)}"><ul id="sac" hidden></ul></div><button class="btn primary">Search</button></form>
     <label class="toggle"><input type="checkbox" id="sp" ${sv.prints ? "checked" : ""}> Show every printing</label>
     <div class="chips" id="sx">
       <button data-q="t:legendary t:creature id<=WU">Legends in Azorius colors</button>
       <button data-q="o:&quot;draw a card&quot; c:u cmc<=2">Cheap blue card draw</button>
       <button data-q="is:commander usd<5">Commanders under $5</button>
-      <button data-q="e:fdn r:mythic">Foundations mythics</button>
+      <button data-q="f:standard r:mythic">Standard mythics</button>
     </div>
     <div id="sres"></div></div>`;
   const inp = $("#sq");
@@ -479,22 +732,6 @@ function renderSearch() {
   $("#sx").onclick = e => { const b = e.target.closest("button"); if (b) { inp.value = b.dataset.q; runSearch(b.dataset.q); } };
   attachAutocomplete(inp, $("#sac"), name => { inp.value = `!"${name}"`; runSearch(inp.value); });
   drawResults();
-}
-function attachAutocomplete(inp, ul, onPick) {
-  const look = debounce(async () => {
-    const q = inp.value.trim();
-    if (q.length < 2 || /[:<>=!"]/.test(q)) { ul.hidden = true; return; }
-    try {
-      const r = await sf("/cards/autocomplete?q=" + encodeURIComponent(q));
-      if (inp.value.trim() !== q) return;
-      const names = (r.data || []).slice(0, 8);
-      ul.innerHTML = names.map(n => `<li><button type="button" data-n="${esc(n)}">${esc(n)}</button></li>`).join("");
-      ul.hidden = !names.length;
-    } catch (e) { ul.hidden = true; }
-  }, 220);
-  inp.addEventListener("input", look);
-  inp.addEventListener("blur", () => setTimeout(() => ul.hidden = true, 200));
-  ul.onclick = e => { const b = e.target.closest("button"); if (b) { ul.hidden = true; onPick(b.dataset.n); } };
 }
 async function runSearch(q) {
   q = q.trim(); if (!q) return;
@@ -509,7 +746,7 @@ function drawResults() {
   const el = $("#sres"); if (!el) return;
   if (sv.busy && !sv.results.length) { el.innerHTML = `<p class="muted">Searching…</p>`; return; }
   if (sv.err) { el.innerHTML = `<p class="muted">${esc(sv.err)}</p>`; return; }
-  if (!sv.results.length) { el.innerHTML = `<p class="small muted">Type a name, or use Scryfall syntax like <b>t:dragon c:r</b> or <b>o:flying pow>=4</b>. Tap a card to see prices and add it.</p>`; return; }
+  if (!sv.results.length) { el.innerHTML = `<p class="small muted">Start typing and pick a name from the suggestions, or use Scryfall syntax like <b>t:dragon c:r</b> or <b>o:flying pow>=4</b>. Tap a card to see prices and add it.</p>`; return; }
   el.innerHTML = `<div class="grid">${sv.results.map((c, i) => `<button data-i="${i}" aria-label="${esc(c.name)}">
       ${imgOf(c) ? `<img loading="lazy" src="${esc(imgOf(c, "normal"))}" alt="">` : `<span class="fallback">${esc(c.name)}</span>`}
       ${priceOf(c) != null ? `<span class="pr num">${money(priceOf(c))}</span>` : ""}</button>`).join("")}</div>
@@ -522,66 +759,94 @@ function drawResults() {
   };
 }
 
-/* ================= CARD SHEET ================= */
+/* ================= SHEETS ================= */
+let sheetOnClose;
 function openSheet(html, onClose) {
   $("#sheetRoot").innerHTML = `<div class="scrim" id="scrim"></div><div class="sheet" role="dialog" aria-modal="true"><div class="grab"></div>${html}
     <p style="margin-top:16px"><button class="btn" id="sheetClose" style="width:100%">Close</button></p></div>`;
   $("#scrim").onclick = closeSheet; $("#sheetClose").onclick = closeSheet;
   document.body.style.overflow = "hidden"; sheetOnClose = onClose;
 }
-let sheetOnClose;
 function closeSheet() { $("#sheetRoot").innerHTML = ""; document.body.style.overflow = ""; const f = sheetOnClose; sheetOnClose = null; f && f(); }
 
-function openCard(card, finish) {
-  let s = card.img !== undefined && card.oid !== undefined ? card : slim(card);
+function openCard(card, finish, binder) {
+  let s = isSlim(card) ? card : slim(card);
   let full = card.oracle_text !== undefined || card.card_faces ? card : null;
-  let fin = finish || s.finishes[0] || "nonfoil";
+  let fin = finish && s.finishes.includes(finish) ? finish : s.finishes[0] || "nonfoil";
+  let bsel = binder && S.binders[binder] ? binder : (cv.binder !== "all" && S.binders[cv.binder] ? cv.binder : defaultBinder());
   const draw = () => {
-    const owned = Object.values(S.coll).filter(e => e.name === s.name);
+    const owned = Object.entries(S.coll).filter(([, e]) => e.name === s.name);
     const decks = Object.values(S.decks);
     const faces = full && full.card_faces && !full.image_uris ? full.card_faces : null;
     const text = full ? (full.card_faces ? full.card_faces.map(f => `${f.name}  ${f.mana_cost || ""}\n${f.type_line || ""}\n${f.oracle_text || ""}`).join("\n\n") : `${full.type_line || ""}\n${full.oracle_text || ""}`) : s.type;
-    const p = s.prices || {};
+    const p = s.prices || {}, ak = pkey(s.id, fin), al = S.alerts[ak], hist = S.ph[ak] || [];
+    const legal = s.leg ? Object.keys(FORMATS).filter(f => f !== "casual").map(f => `<span class="chip ${s.leg[f] === "l" ? "ok" : s.leg[f] === "r" ? "acc" : s.leg[f] === "b" ? "warn" : ""}">${FORMATS[f]}${s.leg[f] === "b" ? " banned" : s.leg[f] === "r" ? " restricted" : s.leg[f] === "n" ? " ✕" : ""}</span>`).join("") : "";
     $("#sheetBody").innerHTML = `
       <img class="big" id="bigImg" src="${esc(s.imgN || s.img)}" alt="${esc(s.name)}">
       ${faces ? `<p class="small muted" style="text-align:center;margin:4px 0 0">Tap the card to flip it</p>` : ""}
       <div class="row" style="justify-content:space-between;align-items:flex-start;margin-top:12px"><h2>${esc(s.name)}</h2><span>${pips(s.mana)}</span></div>
       <div class="muted small">${esc(s.setName)} · ${esc(s.set.toUpperCase())} #${esc(s.num)} · ${esc(s.rarity)}</div>
       <div class="oracle" style="margin-top:10px">${esc(text)}</div>
+      ${legal ? `<div class="chips" style="margin-top:8px">${legal}</div>` : ""}
       <div class="prices" style="margin-top:10px">
         <div><span class="label">Normal</span><b class="num">${money(p.usd)}</b></div><div><span class="label">Foil</span><b class="num">${money(p.usd_foil)}</b></div>
         <div><span class="label">Etched</span><b class="num">${money(p.usd_etched)}</b></div><div><span class="label">EUR</span><b class="num">${p.eur ? "€" + p.eur : "—"}</b></div></div>
-      <div class="card-box" style="margin-top:12px">
-        <div class="row" style="justify-content:space-between"><span class="label">In your collection</span><span class="num">${owned.reduce((a, e) => a + e.qty, 0)} total</span></div>
-        ${owned.length ? `<div class="small muted">${owned.map(e => `${e.qty}× ${esc(e.set.toUpperCase())} #${esc(e.num)}${e.finish !== "nonfoil" ? " " + e.finish : ""}`).join(" · ")}</div>` : ""}
+      ${hist.length >= 2 ? `<div class="box" style="margin-top:10px"><div class="kv"><span class="label">Your price history</span><span class="small muted num">${dayStr(hist[0][0])} → ${dayStr(hist.at(-1)[0])}</span></div>
+        ${spark(hist.map(x => x[1]))}<div class="kv small num"><span>${money(hist[0][1])}</span><span class="${hist.at(-1)[1] >= hist[0][1] ? "up" : "down"}">${signed(hist.at(-1)[1] - hist[0][1])}</span><span>${money(hist.at(-1)[1])}</span></div></div>` : ""}
+      <div class="box" style="margin-top:12px">
+        <div class="row" style="justify-content:space-between"><span class="label">In your collection</span><span class="num">${ownedByName(s.name)} owned</span></div>
+        ${owned.map(([k, e]) => `<div class="kv"><span class="grow">${e.qty}× ${esc(e.set.toUpperCase())} #${esc(e.num)}${e.finish !== "nonfoil" ? " " + e.finish : ""}</span>
+          <select data-move="${esc(k)}" aria-label="Move to binder">${binderOptions(e.binder)}</select></div>`).join("")}
         <div class="row wrap">
           ${s.finishes.length > 1 ? `<span class="seg" id="finSeg">${s.finishes.map(f => `<button data-f="${f}" aria-pressed="${f === fin}">${f === "nonfoil" ? "Normal" : f[0].toUpperCase() + f.slice(1)}</button>`).join("")}</span>` : `<span class="chip">${s.finishes[0] === "nonfoil" ? "Normal only" : s.finishes[0] + " only"}</span>`}
-          <span class="grow"></span>
-          <button class="btn sm" id="cMinus" ${S.coll[ckey(s.id, fin)] ? "" : "disabled"}>−1</button>
-          <button class="btn sm primary" id="cPlus">Add 1</button><button class="btn sm" id="cPlus4">+4</button>
-        </div>
+          <select id="bSel" aria-label="Binder">${binderOptions(bsel)}</select></div>
+        <div class="row wrap"><span class="grow"></span>
+          <button class="btn sm" id="cMinus" ${S.coll[ckey(s.id, fin, bsel)] ? "" : "disabled"}>−1</button>
+          <button class="btn sm primary" id="cPlus">Add 1</button><button class="btn sm" id="cPlus4">+4</button></div>
       </div>
-      <div class="card-box" style="margin-top:10px">
+      <div class="box ${al && al.hitAt ? "alert" : ""}" style="margin-top:10px">
+        <span class="label">Price alert ${fin !== "nonfoil" ? "(" + fin + ")" : ""}</span>
+        ${al && al.hitAt ? `<span class="small gold">Hit ${money(al.hitPrice)} on ${new Date(al.hitAt).toLocaleDateString()}. Save again to keep watching.</span>` : ""}
+        <div class="row"><label class="grow small">Tell me if it drops to<input type="number" id="aBelow" inputmode="decimal" step="0.01" min="0" placeholder="$" value="${al && al.below != null ? al.below : ""}"></label>
+          <label class="grow small">or rises to<input type="number" id="aAbove" inputmode="decimal" step="0.01" min="0" placeholder="$" value="${al && al.above != null ? al.above : ""}"></label></div>
+        <div class="row"><button class="btn sm" id="aSave">${al ? "Update alert" : "Set alert"}</button>${al ? `<button class="btn sm ghost" id="aClear">Remove</button>` : ""}
+          <span class="small muted grow">Checked when prices update (daily).</span></div>
+      </div>
+      <div class="box" style="margin-top:10px">
         <span class="label">Add to a deck</span>
         ${decks.length ? `<div class="row wrap"><select id="dSel" class="grow">${decks.map(d => `<option value="${d.id}" ${d.id === deckOpen ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select>
           <button class="btn sm" id="dMain">Main</button><button class="btn sm" id="dSide">Side</button></div>` : `<p class="small muted" style="margin:0">Create a deck in the Decks tab first.</p>`}
       </div>
-      <div class="row wrap" style="margin-top:10px"><button class="btn sm" id="cPrints">Other printings</button>
+      <div class="row wrap" style="margin-top:10px"><button class="btn sm" id="cTrade">Add to trade</button><button class="btn sm" id="cPrints">Other printings</button>
         ${s.uri ? `<a class="btn sm ghost" href="${esc(s.uri)}" target="_blank" rel="noopener">Open on Scryfall</a>` : ""}</div>
       <div id="printBox"></div>`;
     if (faces) { let fi = 0; $("#bigImg").onclick = () => { fi = (fi + 1) % faces.length; $("#bigImg").src = faces[fi].image_uris.normal; }; }
     const fs = $("#finSeg"); if (fs) fs.onclick = e => { const b = e.target.closest("button"); if (b) { fin = b.dataset.f; draw(); } };
-    const bump = n => { addToColl(s, fin, n); draw(); toast(`${n > 0 ? "Added" : "Removed"} ${Math.abs(n)} ${s.name}${fin !== "nonfoil" ? " (" + fin + ")" : ""}`); };
+    $("#bSel").onchange = e => { bsel = e.target.value; S.meta.binder = bsel; save(); draw(); };
+    $("#sheetBody").querySelectorAll("[data-move]").forEach(sel => sel.onchange = () => { moveEntry(sel.dataset.move, sel.value); toast("Moved to " + S.binders[sel.value].name); draw(); });
+    const bump = n => { addToColl(s, fin, n, bsel); draw(); toast(`${n > 0 ? "Added" : "Removed"} ${Math.abs(n)} ${s.name} ${n > 0 ? "to" : "from"} ${S.binders[bsel].name}`); };
     $("#cPlus").onclick = () => bump(1); $("#cPlus4").onclick = () => bump(4); $("#cMinus").onclick = () => bump(-1);
+    $("#aSave").onclick = () => {
+      const b = parseFloat($("#aBelow").value), a = parseFloat($("#aAbove").value);
+      if (isNaN(b) && isNaN(a)) { toast("Enter a price to watch for"); return; }
+      S.alerts[ak] = { name: s.name, img: s.img, prices: s.prices, below: isNaN(b) ? null : b, above: isNaN(a) ? null : a };
+      save(); draw(); toast("Alert saved");
+    };
+    const ac = $("#aClear"); if (ac) ac.onclick = () => { delete S.alerts[ak]; save(); draw(); toast("Alert removed"); };
     if (decks.length) {
       const add = side => { const d = S.decks[$("#dSel").value]; addToDeck(d, s, 1, side); toast(`Added to ${d.name}${side ? " sideboard" : ""}`); };
       $("#dMain").onclick = () => add(false); $("#dSide").onclick = () => add(true);
     }
+    $("#cTrade").onclick = () => {
+      const own = Object.entries(S.coll).find(([, e]) => e.id === s.id && e.finish === fin && !isWish(e.binder));
+      if (own) tradeAddGive(own[0]); else tradeAddGet(s, fin);
+      toast(own ? "Added to what you give" : "Added to what you get", { label: "Open trade", fn: () => { closeSheet(); go("trade"); } });
+    };
     $("#cPrints").onclick = () => showPrints(s, picked => { s = slim(picked); full = picked; fin = s.finishes.includes(fin) ? fin : s.finishes[0]; draw(); });
   };
   openSheet(`<div id="sheetBody"></div>`, () => render());
   draw();
-  if (!full) sf("/cards/" + s.id).then(c => { full = c; s = slim(c); if ($("#sheetBody")) draw(); }).catch(() => {});
+  if (!full || !s.leg) sf("/cards/" + s.id).then(c => { full = c; s = slim(c); if ($("#sheetBody")) draw(); }).catch(() => {});
 }
 async function showPrints(s, onPick) {
   const box = $("#printBox"); box.innerHTML = `<p class="small muted">Loading printings…</p>`;
@@ -609,20 +874,22 @@ function renderScan() {
         <button class="round" id="photo" aria-label="Use a photo instead"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="12" cy="12" r="3.5"/></svg></button></div></div>
     <div class="row wrap" style="justify-content:space-between">
       <span class="seg" id="scFin"><button data-f="nonfoil" aria-pressed="${sc.finish === "nonfoil"}">Normal</button><button data-f="foil" aria-pressed="${sc.finish === "foil"}">Foil</button></span>
+      <select id="scBinder" aria-label="Add scanned cards to">${binderOptions(defaultBinder())}</select>
       <label class="toggle"><input type="checkbox" id="auto" ${sc.autoAdd ? "checked" : ""}> Add automatically</label></div>
     <div class="status" id="scStatus" aria-live="polite"></div>
     <div id="scMatch"></div>
-    <div class="ac"><input type="search" id="scType" placeholder="Not recognized? Type the name" autocomplete="off"><ul id="scAc" hidden></ul></div>
-    ${sc.session.length ? `<h2 class="sec">Added this session</h2><div class="list">${sc.session.slice().reverse().map((x, i) => `<div class="item"><img src="${esc(x.card.img)}" alt=""><div class="grow"><div class="name">${esc(x.card.name)}</div><div class="meta">${esc(x.card.set.toUpperCase())} #${esc(x.card.num)} ${x.finish !== "nonfoil" ? `<span class="chip foil">${x.finish}</span>` : ""}</div></div><div class="right"><span class="num">${x.qty}× ${money(priceOf(x.card, x.finish))}</span><button class="btn sm ghost" data-undo="${sc.session.length - 1 - i}">Undo</button></div></div>`).join("")}</div>` : ""}
+    <div class="ac"><input type="search" id="scType" placeholder="Not recognized? Start typing the name" autocomplete="off" autocapitalize="off" spellcheck="false"><ul id="scAc" hidden></ul></div>
+    ${sc.session.length ? `<h2 class="sec">Added this session</h2><div class="list">${sc.session.slice().reverse().map((x, i) => `<div class="item"><img src="${esc(x.card.img)}" alt=""><div style="min-width:0"><div class="name">${esc(x.card.name)}</div><div class="meta">${esc(x.card.set.toUpperCase())} #${esc(x.card.num)} ${x.finish !== "nonfoil" ? `<span class="chip foil">${x.finish}</span>` : ""}<span class="chip">${esc((S.binders[x.binder] || S.binders.main).name)}</span></div></div><div class="right"><span class="num">${x.qty}× ${money(priceOf(x.card, x.finish))}</span><button class="btn sm ghost" data-undo="${sc.session.length - 1 - i}">Undo</button></div></div>`).join("")}</div>` : ""}
   </div>`;
   layoutFrame(); window.onresize = layoutFrame;
   $("#shoot").onclick = () => captureFrom("video");
   $("#photo").onclick = () => { const f = $("#fileIn"); f.accept = "image/*"; f.setAttribute("capture", "environment"); f.value = ""; f.onchange = () => { f.removeAttribute("capture"); f.files[0] && captureFrom("file", f.files[0]); }; f.click(); };
   $("#scFin").onclick = e => { const b = e.target.closest("button"); if (b) { sc.finish = b.dataset.f; $("#scFin").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); if (sc.match) drawMatch(); } };
+  $("#scBinder").onchange = e => { S.meta.binder = e.target.value; save(); };
   $("#auto").onchange = e => sc.autoAdd = e.target.checked;
   $("#torch").onclick = toggleTorch;
   attachAutocomplete($("#scType"), $("#scAc"), async name => { $("#scType").value = ""; try { setMatch(await sf("/cards/named?exact=" + encodeURIComponent(name)), false); } catch (e) { scStatus(e.message); } });
-  $("#view").querySelectorAll("[data-undo]").forEach(b => b.onclick = () => { const x = sc.session.splice(+b.dataset.undo, 1)[0]; addToColl(x.card, x.finish, -x.qty); renderScan(); toast("Removed " + x.card.name); });
+  $("#view").querySelectorAll("[data-undo]").forEach(b => b.onclick = () => { const x = sc.session.splice(+b.dataset.undo, 1)[0]; addToColl(x.card, x.finish, -x.qty, x.binder); renderScan(); toast("Removed " + x.card.name); });
   drawMatch(); startCamera();
 }
 function scStatus(t) { const el = $("#scStatus"); if (el) el.textContent = t; }
@@ -637,6 +904,7 @@ async function startCamera() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { scStatus("Camera isn't available here. Use the photo button instead. The page must be opened over https."); return; }
   try {
     if (!stream) stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+    if (tab !== "scan") { stopCamera(); return; }
     vid.srcObject = stream; await vid.play().catch(() => {});
     const track = stream.getVideoTracks()[0];
     const caps = track.getCapabilities ? track.getCapabilities() : {};
@@ -652,7 +920,6 @@ async function toggleTorch() {
   try { await stream.getVideoTracks()[0].applyConstraints({ advanced: [{ torch: torchOn }] }); } catch (e) { torchOn = false; }
   $("#torch").setAttribute("aria-pressed", torchOn);
 }
-
 let worker = null, workerP = null;
 function getWorker() {
   if (worker) return Promise.resolve(worker);
@@ -727,10 +994,10 @@ async function identify(nameTxt, infoTxt) {
   if (byName) return setMatch(byName, false);
   if (byCode) return setMatch(byCode, false);
   if (name.length >= 3) {
-    try {
-      const r = await sf("/cards/autocomplete?q=" + encodeURIComponent(name.split(" ").slice(0, 2).join(" ")));
-      if (r.data && r.data.length) { sc.match = null; sc.candidates = r.data.slice(0, 6); drawMatch(); scStatus(`Read “${name}”. Is it one of these?`); return; }
-    } catch (e) {}
+    await loadNames().catch(() => {});
+    let cands = suggest(name, 6);
+    if (!cands || !cands.length) cands = suggest(name.split(" ").slice(0, 2).join(" "), 6);
+    if (cands && cands.length) { sc.match = null; sc.candidates = cands; drawMatch(); scStatus(`Read “${name}”. Is it one of these?`); return; }
   }
   sc.match = null; sc.candidates = []; drawMatch();
   scStatus(name ? `Read “${name}” but couldn't find it. Try more light, hold steady, or type the name below.` : "Couldn't read the name. Fill the frame, add light, and try again.");
@@ -743,10 +1010,10 @@ function setMatch(card, exact) {
   drawMatch();
 }
 function addScan(qty) {
-  const s = sc.match.card, fin = s.finishes.includes(sc.finish) ? sc.finish : s.finishes[0];
-  addToColl(s, fin, qty); sc.session.push({ card: s, finish: fin, qty }); sc.match = null;
+  const s = sc.match.card, fin = s.finishes.includes(sc.finish) ? sc.finish : s.finishes[0], b = defaultBinder();
+  addToColl(s, fin, qty, b); sc.session.push({ card: s, finish: fin, qty, binder: b }); sc.match = null;
   if (navigator.vibrate) navigator.vibrate(30);
-  renderScan(); scStatus(`Added ${qty}× ${s.name}. Ready for the next card.`);
+  renderScan(); scStatus(`Added ${qty}× ${s.name} to ${S.binders[b].name}. Ready for the next card.`);
 }
 function drawMatch() {
   const el = $("#scMatch"); if (!el) return;
@@ -770,14 +1037,106 @@ function drawMatch() {
   $("#mPr").onclick = () => showPrints(s, picked => { sc.match = { card: slim(picked), exact: true }; drawMatch(); });
 }
 
+/* ================= TRADE ================= */
+function tradeAddGive(k) {
+  const e = S.coll[k]; if (!e) return;
+  const x = S.trade.give.find(g => g.key === k);
+  if (x) x.qty = Math.min(e.qty, x.qty + 1); else S.trade.give.push({ key: k, qty: 1 });
+  save();
+}
+function tradeAddGet(s, fin) {
+  fin = s.finishes.includes(fin) ? fin : s.finishes[0];
+  const x = S.trade.get.find(g => g.card.id === s.id && g.finish === fin);
+  if (x) x.qty++; else S.trade.get.push({ card: s, finish: fin, qty: 1 });
+  save();
+}
+function tradeTotals() {
+  S.trade.give = S.trade.give.filter(g => S.coll[g.key]);
+  const give = S.trade.give.reduce((a, g) => { const e = S.coll[g.key]; return a + (priceOf(e, e.finish) || 0) * g.qty; }, 0);
+  const get = S.trade.get.reduce((a, g) => a + (priceOf(g.card, g.finish) || 0) * g.qty, 0);
+  return { give, get };
+}
+function renderTrade() {
+  const t = tradeTotals(), diff = t.get - t.give, big = Math.max(t.give, t.get), pct = big ? Math.abs(diff) / big : 0;
+  setHead("Trade", (S.trade.give.length || S.trade.get.length) ? `${money(t.give)} for ${money(t.get)}` : "");
+  const verdict = !big ? "Add cards to both sides to compare." : pct < 0.05 ? "About even" : diff > 0 ? `You come out ${money(diff)} ahead` : `You give up ${money(-diff)} more`;
+  const fins = (s, cur) => s.finishes.length > 1 ? `<button class="chip ${cur !== "nonfoil" ? "foil" : ""}" data-fin>${cur === "nonfoil" ? "normal" : cur}</button>` : (cur !== "nonfoil" ? `<span class="chip foil">${cur}</span>` : "");
+  $("#view").innerHTML = `<div class="stack">
+    <div class="summary"><div><span class="label">You give</span><b class="num down">${money(t.give)}</b></div><div><span class="label">You get</span><b class="num up">${money(t.get)}</b></div>
+      <div><span class="label">Difference</span><b class="num">${signed(diff)}</b></div></div>
+    <div class="box"><div class="scale" aria-hidden="true"><div class="g" style="width:${big ? t.give / (t.give + t.get) * 100 : 50}%"></div><div class="r" style="flex:1"></div></div>
+      <div class="kv"><b>${verdict}</b><span class="small muted">${big ? Math.round(pct * 100) + "% gap" : ""}</span></div>
+      <span class="small muted">Uses TCGplayer market prices from Scryfall.</span></div>
+
+    <h2 class="sec">You give</h2>
+    <div class="ac"><input type="search" id="tgq" placeholder="Pick from your collection" autocomplete="off"><ul id="tgl" hidden></ul></div>
+    ${S.trade.give.length ? `<div class="list" id="tGive">${S.trade.give.map((g, i) => { const e = S.coll[g.key]; return `<div class="item" data-i="${i}"><img src="${esc(e.img)}" alt="">
+      <div style="min-width:0"><div class="name">${esc(e.name)}</div><div class="meta"><span>${esc(e.set.toUpperCase())} #${esc(e.num)}</span>${e.finish !== "nonfoil" ? `<span class="chip foil">${e.finish}</span>` : ""}<span class="num">${money(priceOf(e, e.finish))} ea · you have ${e.qty}</span></div></div>
+      <div class="right"><span class="num price">${money((priceOf(e, e.finish) || 0) * g.qty)}</span><span class="stepper"><button data-d="-1" aria-label="Remove one">−</button><span class="num">${g.qty}</span><button data-d="1" aria-label="Add one">+</button></span></div></div>`; }).join("")}</div>`
+      : `<p class="small muted" style="margin:0">Type a name to pick cards you own.</p>`}
+
+    <h2 class="sec">You get</h2>
+    <div class="ac"><input type="search" id="tsq" placeholder="Start typing any card name" autocomplete="off" autocapitalize="off" spellcheck="false"><ul id="tsl" hidden></ul></div>
+    ${S.trade.get.length ? `<div class="list" id="tGet">${S.trade.get.map((g, i) => `<div class="item" data-i="${i}"><img src="${esc(g.card.img)}" alt="">
+      <div style="min-width:0"><button class="tap name" data-pr>${esc(g.card.name)}</button><div class="meta"><button class="tap" data-pr style="width:auto">${esc(g.card.set.toUpperCase())} #${esc(g.card.num)} ▾</button>${fins(g.card, g.finish)}<span class="num">${money(priceOf(g.card, g.finish))} ea</span></div></div>
+      <div class="right"><span class="num price">${money((priceOf(g.card, g.finish) || 0) * g.qty)}</span><span class="stepper"><button data-d="-1" aria-label="Remove one">−</button><span class="num">${g.qty}</span><button data-d="1" aria-label="Add one">+</button></span></div></div>`).join("")}</div>`
+      : `<p class="small muted" style="margin:0">Add the cards your friend is offering.</p>`}
+
+    ${S.trade.give.length || S.trade.get.length ? `<div class="box">
+      <div class="row wrap"><label class="small grow">Put received cards in <select id="tBin">${binderOptions(isWish(defaultBinder()) ? "main" : defaultBinder())}</select></label></div>
+      <div class="row wrap"><button class="btn primary grow" id="tDone">Complete trade</button><button class="btn" id="tClear">Clear</button></div>
+      <div class="row" id="tConfirm" hidden><span class="grow small">Remove the cards you give from your collection and add the ones you get?</span><button class="btn sm primary" id="tYes">Yes, trade</button><button class="btn sm" id="tNo">Not yet</button></div>
+    </div>` : ""}
+  </div>`;
+  const gq = $("#tgq"), gl = $("#tgl");
+  gq.oninput = () => {
+    const q = norm(gq.value.trim()); if (q.length < 1) { gl.hidden = true; return; }
+    const hits = Object.entries(S.coll).filter(([, e]) => !isWish(e.binder) && norm(e.name).includes(q)).slice(0, 10);
+    gl.innerHTML = hits.map(([k, e]) => `<li><button type="button" data-k="${esc(k)}"><span>${hilite(e.name, gq.value)} <span class="muted small">${esc(e.set.toUpperCase())}${e.finish !== "nonfoil" ? " " + e.finish : ""}</span></span><span class="num small">${e.qty}× ${money(priceOf(e, e.finish))}</span></button></li>`).join("") || `<li class="small muted" style="padding:10px">You don't own a card with that name.</li>`;
+    gl.hidden = false;
+  };
+  gq.addEventListener("blur", () => setTimeout(() => gl.hidden = true, 250));
+  gl.addEventListener("pointerdown", e => e.preventDefault());
+  gl.onclick = e => { const b = e.target.closest("button"); if (b) { tradeAddGive(b.dataset.k); renderTrade(); } };
+  attachAutocomplete($("#tsq"), $("#tsl"), async name => { try { tradeAddGet(slim(await sf("/cards/named?exact=" + encodeURIComponent(name))), "nonfoil"); renderTrade(); } catch (e) { toast(e.message); } });
+  const tg = $("#tGive"); if (tg) tg.onclick = e => {
+    const b = e.target.closest("button[data-d]"); if (!b) return; const i = +b.closest(".item").dataset.i, g = S.trade.give[i], max = S.coll[g.key].qty;
+    g.qty = Math.min(max, g.qty + +b.dataset.d); if (g.qty <= 0) S.trade.give.splice(i, 1); save(); renderTrade();
+  };
+  const tt = $("#tGet"); if (tt) tt.onclick = e => {
+    const it = e.target.closest(".item"), b = e.target.closest("button"); if (!it || !b) return;
+    const i = +it.dataset.i, g = S.trade.get[i];
+    if (b.dataset.d) { g.qty += +b.dataset.d; if (g.qty <= 0) S.trade.get.splice(i, 1); save(); renderTrade(); }
+    else if (b.hasAttribute("data-fin")) { const f = g.card.finishes; g.finish = f[(f.indexOf(g.finish) + 1) % f.length]; save(); renderTrade(); }
+    else if (b.hasAttribute("data-pr")) {
+      openSheet(`<h2>${esc(g.card.name)}</h2><p class="small muted">Pick the printing your friend has.</p><div id="printBox"></div>`, () => render());
+      showPrints(g.card, picked => { g.card = slim(picked); if (!g.card.finishes.includes(g.finish)) g.finish = g.card.finishes[0]; save(); closeSheet(); });
+    }
+  };
+  const done = $("#tDone");
+  if (done) {
+    done.onclick = () => { $("#tConfirm").hidden = false; };
+    $("#tNo").onclick = () => { $("#tConfirm").hidden = true; };
+    $("#tClear").onclick = () => { S.trade = { give: [], get: [] }; save(); renderTrade(); };
+    $("#tYes").onclick = () => {
+      const bin = $("#tBin").value;
+      for (const g of S.trade.give) { const e = S.coll[g.key]; if (!e) continue; e.qty -= g.qty; if (e.qty <= 0) delete S.coll[g.key]; }
+      for (const g of S.trade.get) addToColl(g.card, g.finish, g.qty, bin);
+      S.trade = { give: [], get: [] }; save(); renderTrade(); toast("Trade done. Your collection is updated.");
+    };
+  }
+}
+
 /* ================= DECKS ================= */
 const TYPES = ["Creature", "Planeswalker", "Battle", "Instant", "Sorcery", "Artifact", "Enchantment", "Land"];
 const typeOf = t => { for (const x of ["Land", "Creature", "Planeswalker", "Battle", "Instant", "Sorcery", "Artifact", "Enchantment"]) if ((t || "").split("//")[0].includes(x)) return x; return "Other"; };
+const DECK_FIELDS = ["id", "oid", "name", "set", "setName", "num", "rarity", "type", "cmc", "mana", "colors", "ci", "img", "imgN", "prices", "finishes", "uri", "leg", "cap", "basic", "canCmdr", "partner"];
 function addToDeck(d, card, qty, side) {
-  const s = card.oid !== undefined && card.img !== undefined ? card : slim(card);
+  const s = isSlim(card) ? card : slim(card);
   const k = s.id + "|" + (side ? 1 : 0);
-  if (d.cards[k]) d.cards[k].qty += qty; else d.cards[k] = { id: s.id, name: s.name, set: s.set, num: s.num, type: s.type, cmc: s.cmc, mana: s.mana, colors: s.colors, img: s.img, imgN: s.imgN, prices: s.prices, finishes: s.finishes, oid: s.oid, setName: s.setName, rarity: s.rarity, uri: s.uri, qty, side: !!side };
-  if (d.cards[k].qty <= 0) delete d.cards[k];
+  if (d.cards[k]) d.cards[k].qty += qty;
+  else { const c = { qty, side: !!side }; DECK_FIELDS.forEach(f => c[f] = s[f]); d.cards[k] = c; }
+  if (d.cards[k].qty <= 0) { delete d.cards[k]; d.cmdr = d.cmdr.filter(x => x !== k); }
   d.updated = Date.now(); save();
 }
 function deckStats(d) {
@@ -791,98 +1150,188 @@ function deckStats(d) {
   for (const nm in need) missing += Math.max(0, need[nm] - ownedByName(nm));
   return { main, side, mainN: n(main), sideN: n(side), value, curve, colors, missing };
 }
+function cmdrCI(d) { const s = new Set(); for (const k of d.cmdr) { const c = d.cards[k]; if (c) (c.ci || []).forEach(x => s.add(x)); } return [..."WUBRG"].filter(x => s.has(x)); }
+function checkDeck(d) {
+  const F = d.format, issues = [], flags = {};
+  if (!F || F === "casual") return { issues, flags, pending: false, checked: false };
+  const flag = (k, msg) => (flags[k] = flags[k] || []).push(msg);
+  const all = Object.entries(d.cards);
+  const pending = all.some(([, c]) => !c.leg);
+  const main = all.filter(([, c]) => !c.side), side = all.filter(([, c]) => c.side);
+  const mainN = main.reduce((a, [, c]) => a + c.qty, 0), sideN = side.reduce((a, [, c]) => a + c.qty, 0);
+  const cmd = F === "commander";
+  if (cmd) {
+    if (mainN !== 100) issues.push(`Commander decks need exactly 100 cards, including your commander. You have ${mainN}.`);
+    if (sideN) issues.push(`Commander has no sideboard. ${sideN} card${sideN > 1 ? "s are" : " is"} in the sideboard and won't be checked.`);
+  } else {
+    if (mainN < 60) issues.push(`${FORMATS[F]} decks need at least 60 cards in the main deck. You have ${mainN}.`);
+    if (sideN > 15) issues.push(`Sideboards can have at most 15 cards. You have ${sideN}.`);
+  }
+  const pool = cmd ? main : all, byName = {};
+  for (const [k, c] of pool) (byName[c.name] = byName[c.name] || []).push([k, c]);
+  let copyBad = 0, legalBad = 0, ciBad = 0;
+  for (const name in byName) {
+    const list = byName[name], c = list[0][1], count = list.reduce((a, [, x]) => a + x.qty, 0);
+    let limit = cmd ? 1 : 4;
+    if (c.basic) limit = Infinity; else if (c.cap) limit = c.cap;
+    if (F === "vintage" && c.leg && c.leg.vintage === "r") limit = 1;
+    if (count > limit) { copyBad++; list.forEach(([k]) => flag(k, `${count} copies, max ${limit}`)); }
+    const L = c.leg && c.leg[F];
+    if (L === "b") { legalBad++; list.forEach(([k]) => flag(k, `Banned in ${FORMATS[F]}`)); }
+    else if (L === "n") { legalBad++; list.forEach(([k]) => flag(k, `Not legal in ${FORMATS[F]}`)); }
+  }
+  if (copyBad) issues.push(`${copyBad} card${copyBad > 1 ? "s have" : " has"} too many copies.`);
+  if (legalBad) issues.push(`${legalBad} card${legalBad > 1 ? "s aren't" : " isn't"} legal in ${FORMATS[F]}.`);
+  if (cmd) {
+    const cm = d.cmdr.map(k => d.cards[k]).filter(Boolean);
+    if (!cm.length) issues.push("Choose your commander below so colors can be checked.");
+    else {
+      for (const c of cm) if (c.canCmdr === false) issues.push(`${c.name} can't be a commander. It has to be a legendary creature or say it can be your commander.`);
+      if (cm.length === 2 && !cm.every(c => c.partner)) issues.push("Two commanders are only allowed when both have Partner or a similar ability.");
+      const ci = new Set(cmdrCI(d));
+      for (const [k, c] of main) if (!d.cmdr.includes(k) && (c.ci || []).some(x => !ci.has(x))) { ciBad++; flag(k, "Outside your commander's colors"); }
+      if (ciBad) issues.push(`${ciBad} card${ciBad > 1 ? "s are" : " is"} outside your commander's colors.`);
+    }
+  }
+  return { issues, flags, pending, checked: true };
+}
+const filling = new Set();
+async function fillDeck(d) {
+  if (filling.has(d.id)) return;
+  const need = Object.values(d.cards).filter(c => !c.leg).map(c => c.id);
+  if (!need.length) return; filling.add(d.id);
+  try {
+    const { found } = await cardsByIdentifiers([...new Set(need)].map(id => ({ id })));
+    const map = {}; for (const c of found) map[c.id] = slim(c);
+    for (const c of Object.values(d.cards)) { const s = map[c.id]; if (s) DECK_FIELDS.forEach(f => c[f] = s[f]); else if (!c.leg) c.leg = {}; }
+    save(); if (tab === "decks" && deckOpen === d.id) renderDeck(d);
+  } catch (e) {} finally { filling.delete(d.id); }
+}
 function renderDecks() {
   setHead("Decks", Object.keys(S.decks).length ? Object.keys(S.decks).length + " decks" : "");
   const decks = Object.values(S.decks).sort((a, b) => b.updated - a.updated);
   $("#view").innerHTML = `<div class="stack">
-    <form id="nd" class="row"><input type="text" id="ndName" class="grow" placeholder="New deck name, e.g. Atraxa Superfriends" maxlength="60"><button class="btn primary">Create</button></form>
-    ${decks.length ? decks.map(d => { const st = deckStats(d); return `<button class="deck-card" data-d="${d.id}"><div style="min-width:0"><h3>${esc(d.name)}</h3>
-      <div class="small muted num">${st.mainN} main${st.sideN ? " · " + st.sideN + " side" : ""} · ${money(st.value)}${st.missing ? ` · <span style="color:var(--danger)">${st.missing} not owned</span>` : ""}</div></div>
-      <span>${"WUBRG".split("").filter(c => st.colors[c]).map(c => `<i class="pip p${c}">${c}</i>`).join("")}</span></button>`; }).join("")
-    : `<div class="empty"><h2>No decks yet</h2><p>Name a deck above, then add cards from Search or paste a list from Moxfield, Archidekt or MTG Arena.</p></div>`}</div>`;
-  $("#nd").onsubmit = e => { e.preventDefault(); const nm = $("#ndName").value.trim(); if (!nm) return; const id = uid(); S.decks[id] = { id, name: nm, cards: {}, created: Date.now(), updated: Date.now() }; save(); go("decks", id); };
+    <form id="nd" class="stack" style="gap:8px"><input type="text" id="ndName" placeholder="New deck name, e.g. Atraxa Superfriends" maxlength="60">
+      <div class="row"><select id="ndFmt" class="grow" aria-label="Format">${Object.entries(FORMATS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select><button class="btn primary">Create deck</button></div></form>
+    ${decks.length ? decks.map(d => { const st = deckStats(d), ck = checkDeck(d); return `<button class="deck-card" data-d="${d.id}"><div style="min-width:0"><h3>${esc(d.name)}</h3>
+      <div class="small muted num">${FORMATS[d.format] || "Casual"} · ${st.mainN} cards · ${money(st.value)}${st.missing ? ` · <span class="down">${st.missing} not owned</span>` : ""}</div>
+      ${ck.checked && !ck.pending ? `<div style="margin-top:4px">${ck.issues.length ? `<span class="chip warn">${ck.issues.length} problem${ck.issues.length > 1 ? "s" : ""}</span>` : `<span class="chip ok">Legal</span>`}</div>` : ""}</div>
+      <span style="flex:none">${d.format === "commander" && d.cmdr.length ? ciPips(cmdrCI(d)) : "WUBRG".split("").filter(c => st.colors[c]).map(c => `<i class="pip p${c}">${c}</i>`).join("")}</span></button>`; }).join("")
+    : `<div class="empty"><h2>No decks yet</h2><p>Name a deck and pick its format above, then add cards from Search or paste a list from Moxfield, Archidekt or MTG Arena.</p></div>`}</div>`;
+  $("#nd").onsubmit = e => { e.preventDefault(); const nm = $("#ndName").value.trim(); if (!nm) { $("#ndName").focus(); return; } const id = uid(); S.decks[id] = { id, name: nm, format: $("#ndFmt").value, cmdr: [], cards: {}, created: Date.now(), updated: Date.now() }; save(); go("decks", id); };
   $("#view").querySelectorAll("[data-d]").forEach(b => b.onclick = () => go("decks", b.dataset.d));
 }
 function renderDeck(d) {
-  const st = deckStats(d), max = Math.max(1, ...st.curve);
+  const st = deckStats(d), max = Math.max(1, ...st.curve), ck = checkDeck(d), cmd = d.format === "commander";
+  if (ck.pending) fillDeck(d);
   setHead(d.name, `${st.mainN} cards · ${money(st.value)}`);
+  const row = c => { const k = c.id + "|" + (c.side ? 1 : 0), own = ownedByName(c.name), fl = ck.pending ? null : ck.flags[k]; return `
+      <div class="item ${fl ? "flagged" : ""}"><img loading="lazy" src="${esc(c.img)}" alt=""><button class="tap" data-open="${esc(k)}"><div class="name">${esc(c.name)}</div>
+        <div class="meta"><span>${pips(c.mana)}</span>${own < c.qty ? `<span class="chip">own ${own}</span>` : ""}<span class="num">${money(priceOf(c))}</span>${fl ? fl.map(f => `<span class="chip warn">${esc(f)}</span>`).join("") : ""}</div></button>
+        <div class="right"><span class="stepper"><button data-dec="${esc(k)}" aria-label="Remove one">−</button><span class="num">${c.qty}</span><button data-inc="${esc(k)}" aria-label="Add one">+</button></span></div></div>`; };
   const group = (cards, title) => {
     if (!cards.length) return "";
     const by = {}; for (const c of cards) (by[typeOf(c.type)] = by[typeOf(c.type)] || []).push(c);
     return [...TYPES, "Other"].filter(t => by[t]).map(t => `<div class="group-h"><span>${title ? title + " · " : ""}${t}</span><span class="num">${by[t].reduce((a, c) => a + c.qty, 0)}</span></div>` +
-      by[t].sort((a, b) => a.cmc - b.cmc || a.name.localeCompare(b.name)).map(c => { const k = c.id + "|" + (c.side ? 1 : 0), own = ownedByName(c.name); return `
-      <div class="item"><img loading="lazy" src="${esc(c.img)}" alt=""><button class="tap" data-open="${esc(k)}"><div class="name">${esc(c.name)}</div>
-        <div class="meta"><span>${pips(c.mana)}</span>${own < c.qty ? `<span class="chip warn">own ${own}</span>` : ""}<span class="num">${money(priceOf(c))}</span></div></button>
-        <div class="right"><span class="stepper"><button data-dec="${esc(k)}" aria-label="Remove one">−</button><span class="num">${c.qty}</span><button data-inc="${esc(k)}" aria-label="Add one">+</button></span></div></div>`; }).join("")).join("");
+      by[t].sort((a, b) => a.cmc - b.cmc || a.name.localeCompare(b.name)).map(row).join("")).join("");
   };
+  const cmdCards = cmd ? d.cmdr.map(k => d.cards[k]).filter(Boolean) : [];
+  const mainRest = st.main.filter(c => !cmdCards.includes(c));
+  const choices = st.main.filter(c => c.canCmdr || (c.canCmdr === undefined && /Legendary/.test(c.type || "")));
+  const cmdSel = i => `<select data-cmdr="${i}" class="grow" aria-label="${i ? "Partner commander" : "Commander"}"><option value="">${i ? "No partner" : "Choose commander…"}</option>
+    ${choices.map(c => { const k = c.id + "|0"; return `<option value="${esc(k)}" ${d.cmdr[i] === k ? "selected" : ""}>${esc(c.name)}</option>`; }).join("")}</select>`;
   $("#view").innerHTML = `<div class="stack">
     <div class="row"><button class="btn sm ghost" id="back">← All decks</button><span class="grow"></span><button class="btn sm" id="dMenu">Deck options</button></div>
     <div class="summary"><div><span class="label">Main</span><b class="num">${st.mainN}</b></div><div><span class="label">Value</span><b class="num gold">${money(st.value)}</b></div>
-      <div><span class="label">Not owned</span><b class="num" style="${st.missing ? "color:var(--danger)" : ""}">${st.missing}</b></div></div>
-    <div class="ac"><input type="search" id="dAdd" placeholder="Add a card by name" autocomplete="off"><ul id="dAc" hidden></ul></div>
-    ${st.mainN ? `<div class="card-box"><div class="row" style="justify-content:space-between"><span class="label">Mana curve (spells)</span>
+      <div><span class="label">Not owned</span><b class="num ${st.missing ? "down" : ""}">${st.missing}</b></div></div>
+    <div class="box ${ck.checked && !ck.pending && ck.issues.length ? "bad" : ""}">
+      <div class="row"><span class="label grow">Format</span><select id="dFmt" aria-label="Format">${Object.entries(FORMATS).map(([k, v]) => `<option value="${k}" ${d.format === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+      ${cmd ? `<div class="row wrap">${cmdSel(0)}${d.cmdr[0] ? cmdSel(1) : ""}</div>${cmdCards.length ? `<div class="kv small"><span class="muted">Color identity</span><span>${ciPips(cmdrCI(d))}</span></div>` : ""}
+        ${!choices.length ? `<span class="small muted">Add a legendary creature to the deck, then choose it here.</span>` : ""}` : ""}
+      ${!ck.checked ? `<span class="small muted">Pick a format to check card legality, copy limits and deck size.</span>`
+        : ck.pending ? `<span class="small muted">Checking card legality…</span>`
+        : ck.issues.length ? `<ul class="issues">${ck.issues.map(i => `<li>${esc(i)}</li>`).join("")}</ul>` : `<span class="chip ok" style="align-self:flex-start">Legal in ${FORMATS[d.format]}</span>`}
+    </div>
+    <div class="ac"><input type="search" id="dAdd" placeholder="Start typing a card to add" autocomplete="off" autocapitalize="off" spellcheck="false"><ul id="dAc" hidden></ul></div>
+    ${st.mainN ? `<div class="box"><div class="row" style="justify-content:space-between"><span class="label">Mana curve (spells)</span>
         <span>${"WUBRG".split("").filter(c => st.colors[c]).map(c => `<i class="pip p${c}">${c}</i><span class="small num" style="margin-right:6px">${st.colors[c]}</span>`).join("")}</span></div>
       <div class="curve">${st.curve.map(v => `<div class="bar" style="height:${v / max * 100}%"><span class="num">${v || ""}</span></div>`).join("")}</div>
       <div class="curve-x"><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7+</span></div></div>
-      <div class="card-box"><div class="row"><span class="label grow">Sample hand</span><button class="btn sm" id="hNew">Draw 7</button><button class="btn sm" id="hOne" ${hand.deck === d.id && hand.cards.length ? "" : "disabled"}>Draw 1</button></div>
+      <div class="box"><div class="row"><span class="label grow">Sample hand</span><button class="btn sm" id="hNew">Draw 7</button><button class="btn sm" id="hOne" ${hand.deck === d.id && hand.cards.length ? "" : "disabled"}>Draw 1</button></div>
         <div class="hand" id="hand">${hand.deck === d.id ? hand.cards.map(c => `<img src="${esc(c.imgN || c.img)}" alt="${esc(c.name)}">`).join("") : ""}</div></div>` : ""}
-    <div class="list" id="dl">${group(st.main, "") || `<div class="empty" style="border:0"><p>No cards yet. Search above, or use Deck options → Paste a deck list.</p></div>`}${group(st.side, "Side")}</div></div>`;
+    <div class="list" id="dl">${cmdCards.length ? `<div class="group-h"><span>Commander</span><span class="num">${cmdCards.length}</span></div>${cmdCards.map(row).join("")}` : ""}
+      ${group(mainRest, "") || (cmdCards.length ? "" : `<div class="empty" style="border:0"><p>No cards yet. Type above, or use Deck options → Paste a deck list.</p></div>`)}${group(st.side, "Side")}</div></div>`;
   $("#back").onclick = () => go("decks");
   $("#dMenu").onclick = () => deckMenu(d);
+  $("#dFmt").onchange = e => { d.format = e.target.value; d.updated = Date.now(); save(); renderDeck(d); };
+  $("#view").querySelectorAll("[data-cmdr]").forEach(sel => sel.onchange = () => {
+    const i = +sel.dataset.cmdr, next = d.cmdr.slice(); if (sel.value) next[i] = sel.value; else next.splice(i);
+    d.cmdr = [...new Set(next.filter(Boolean))]; save(); renderDeck(d);
+  });
   attachAutocomplete($("#dAdd"), $("#dAc"), async name => { $("#dAdd").value = ""; try { addToDeck(d, await sf("/cards/named?exact=" + encodeURIComponent(name)), 1, false); renderDeck(d); toast("Added " + name); } catch (e) { toast(e.message); } });
   const hn = $("#hNew"); if (hn) { hn.onclick = () => { newHand(d); renderDeck(d); }; $("#hOne").onclick = () => { if (hand.lib.length) hand.cards.push(hand.lib.pop()); renderDeck(d); }; }
   $("#dl").onclick = e => {
     const b = e.target.closest("button"); if (!b) return;
     const k = b.dataset.inc || b.dataset.dec || b.dataset.open, c = d.cards[k]; if (!c) return;
     if (b.dataset.inc) { c.qty++; d.updated = Date.now(); save(); renderDeck(d); }
-    else if (b.dataset.dec) { c.qty--; if (c.qty <= 0) delete d.cards[k]; d.updated = Date.now(); save(); renderDeck(d); }
+    else if (b.dataset.dec) { c.qty--; if (c.qty <= 0) { delete d.cards[k]; d.cmdr = d.cmdr.filter(x => x !== k); } d.updated = Date.now(); save(); renderDeck(d); }
     else openCard(c);
   };
 }
 const hand = { deck: null, cards: [], lib: [] };
 function newHand(d) {
-  const lib = []; for (const c of Object.values(d.cards)) if (!c.side) for (let i = 0; i < c.qty; i++) lib.push(c);
+  const lib = []; for (const [k, c] of Object.entries(d.cards)) if (!c.side && !(d.format === "commander" && d.cmdr.includes(k))) for (let i = 0; i < c.qty; i++) lib.push(c);
   for (let i = lib.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [lib[i], lib[j]] = [lib[j], lib[i]]; }
   hand.deck = d.id; hand.cards = lib.splice(-7); hand.lib = lib;
 }
 function deckText(d) {
   const line = c => `${c.qty} ${c.name} (${c.set.toUpperCase()}) ${c.num}`;
-  const m = Object.values(d.cards).filter(c => !c.side).map(line), s = Object.values(d.cards).filter(c => c.side).map(line);
-  return m.join("\n") + (s.length ? "\n\nSideboard\n" + s.join("\n") : "");
+  const cm = d.format === "commander" ? d.cmdr.map(k => d.cards[k]).filter(Boolean) : [];
+  const m = Object.values(d.cards).filter(c => !c.side && !cm.includes(c)).map(line), s = Object.values(d.cards).filter(c => c.side).map(line);
+  return (cm.length ? "Commander\n" + cm.map(line).join("\n") + "\n\nDeck\n" : "") + m.join("\n") + (s.length ? "\n\nSideboard\n" + s.join("\n") : "");
 }
 function deckMenu(d) {
   openSheet(`<h2>${esc(d.name)}</h2>
     <div class="stack" style="margin-top:12px">
-      <div class="card-box"><span class="label">Rename</span><div class="row"><input type="text" id="rn" class="grow" value="${esc(d.name)}" maxlength="60"><button class="btn sm" id="rnGo">Save</button></div></div>
-      <div class="card-box"><span class="label">Paste a deck list</span>
-        <textarea id="pl" placeholder="4 Lightning Bolt&#10;2 Counterspell (MH2) 267&#10;1x Sol Ring&#10;&#10;Sideboard&#10;2 Pyroblast"></textarea>
+      <div class="box"><span class="label">Rename</span><div class="row"><input type="text" id="rn" class="grow" value="${esc(d.name)}" maxlength="60"><button class="btn sm" id="rnGo">Save</button></div></div>
+      <div class="box"><span class="label">Paste a deck list</span>
+        <textarea id="pl" placeholder="Commander&#10;1 Atraxa, Praetors' Voice&#10;&#10;Deck&#10;4 Lightning Bolt&#10;2 Counterspell (MH2) 267&#10;1x Sol Ring&#10;&#10;Sideboard&#10;2 Pyroblast"></textarea>
         <button class="btn primary" id="plGo">Add these cards</button><div class="status small" id="plMsg"></div></div>
-      <div class="card-box"><span class="label">Export</span><textarea id="ex" readonly>${esc(deckText(d))}</textarea><button class="btn" id="cp">Copy list</button></div>
-      <div class="card-box"><span class="label">Missing cards</span><button class="btn" id="miss">Copy the cards I don't own</button></div>
-      <div class="card-box"><button class="btn danger" id="del">Delete deck</button>
+      <div class="box"><span class="label">Export</span><textarea id="ex" readonly>${esc(deckText(d))}</textarea><button class="btn" id="cp">Copy list</button></div>
+      <div class="box"><span class="label">Missing cards</span><div class="row wrap"><button class="btn" id="miss">Copy the cards I don't own</button><button class="btn" id="missW">Add them to my wishlist</button></div></div>
+      <div class="box"><button class="btn danger" id="del">Delete deck</button>
         <div class="row" id="delConfirm" hidden><span class="grow small">Delete “${esc(d.name)}” for good?</span><button class="btn sm danger" id="delYes">Delete</button><button class="btn sm" id="delNo">Keep</button></div></div>
     </div>`, () => render());
   $("#rnGo").onclick = () => { const v = $("#rn").value.trim(); if (v) { d.name = v; save(); toast("Renamed"); } };
   const copy = async (text, el) => { try { await navigator.clipboard.writeText(text); toast("Copied"); } catch (e) { if (el) { el.select(); } toast("Select the text and copy it"); } };
   $("#cp").onclick = () => copy($("#ex").value, $("#ex"));
-  $("#miss").onclick = () => {
-    const need = {}; for (const c of Object.values(d.cards)) need[c.name] = (need[c.name] || 0) + c.qty;
-    const lines = Object.entries(need).map(([n, q]) => [n, q - ownedByName(n)]).filter(([, q]) => q > 0).map(([n, q]) => `${q} ${n}`);
-    lines.length ? copy(lines.join("\n")) : toast("You own every card in this deck");
+  const missingList = () => {
+    const need = {}; for (const c of Object.values(d.cards)) { need[c.name] = need[c.name] || { q: 0, c }; need[c.name].q += c.qty; }
+    return Object.values(need).map(x => ({ c: x.c, q: x.q - ownedByName(x.c.name) })).filter(x => x.q > 0);
+  };
+  $("#miss").onclick = () => { const l = missingList(); l.length ? copy(l.map(x => `${x.q} ${x.c.name}`).join("\n")) : toast("You own every card in this deck"); };
+  $("#missW").onclick = () => {
+    const l = missingList(); if (!l.length) { toast("You own every card in this deck"); return; }
+    let w = Object.values(S.binders).find(b => b.wish); if (!w) { w = S.binders.wish = { id: "wish", name: "Wishlist", wish: true }; }
+    for (const x of l) { const have = Object.values(S.coll).filter(e => e.binder === w.id && e.name === x.c.name).reduce((a, e) => a + e.qty, 0); if (x.q > have) addToColl(x.c, "nonfoil", x.q - have, w.id); }
+    toast(`Added ${l.length} cards to ${w.name}`);
   };
   $("#del").onclick = () => { $("#delConfirm").hidden = false; };
   $("#delNo").onclick = () => { $("#delConfirm").hidden = true; };
   $("#delYes").onclick = () => { delete S.decks[d.id]; save(); deckOpen = null; closeSheet(); toast("Deck deleted"); };
   $("#plGo").onclick = async () => {
-    const msg = $("#plMsg"), lines = $("#pl").value.split(/\n/); let side = false; const want = [];
-    for (let raw of lines) {
+    const msg = $("#plMsg"), lines = $("#pl").value.split(/\n/); let side = false, cmdrSec = false; const want = [];
+    for (const raw of lines) {
       const l = raw.trim(); if (!l) continue;
-      if (/^(sideboard|side|sb:?)$/i.test(l)) { side = true; continue; }
-      if (/^(deck|main|mainboard|commander|companion)$/i.test(l)) continue;
-      let m = l.replace(/^SB:\s*/i, () => { side = true; return ""; }).match(/^(\d+)\s*x?\s+(.+?)(?:\s+\(([A-Za-z0-9]{2,6})\)\s*([\w★-]+)?)?(?:\s+\*F\*)?\s*$/);
-      if (!m) m = [null, "1", l.replace(/\s+\(.*$/, "")];
+      if (/^(sideboard|side|sb:?)$/i.test(l)) { side = true; cmdrSec = false; continue; }
+      if (/^commanders?:?$/i.test(l)) { cmdrSec = true; side = false; continue; }
+      if (/^(deck|main|mainboard|companion|about)$/i.test(l)) { cmdrSec = false; continue; }
+      let sb = side, src = l;
+      if (/^SB:\s*/i.test(src)) { sb = true; src = src.replace(/^SB:\s*/i, ""); }
+      let m = src.match(/^(\d+)\s*x?\s+(.+?)(?:\s+\(([A-Za-z0-9]{2,6})\)\s*([\w★-]+)?)?(?:\s+\*F\*)?\s*$/);
+      if (!m) m = [null, "1", src.replace(/\s+\(.*$/, "")];
       const qty = parseInt(m[1]) || 1, name = m[2].trim(), set = m[3], num = m[4];
-      want.push({ qty, side, ident: set && num ? { set: set.toLowerCase(), collector_number: num } : { name: name.split(" // ")[0] }, name });
+      want.push({ qty, side: sb, cmdr: cmdrSec, ident: set && num ? { set: set.toLowerCase(), collector_number: num } : { name: name.split(" // ")[0] }, name });
     }
     if (!want.length) { msg.textContent = "Paste one card per line, like “4 Lightning Bolt”."; return; }
     msg.textContent = `Looking up ${want.length} cards…`;
@@ -891,10 +1340,12 @@ function deckMenu(d) {
       for (let i = 0; i < want.length; i += 75) {
         const chunk = want.slice(i, i + 75), r = await sf("/cards/collection", { identifiers: chunk.map(w => w.ident) }), data = r.data || [];
         for (const w of chunk) {
-          const c = data.find(c => w.ident.collector_number ? c.set === w.ident.set && c.collector_number === w.ident.collector_number : c.name.toLowerCase() === w.ident.name.toLowerCase() || c.name.toLowerCase().startsWith(w.ident.name.toLowerCase() + " //"));
-          if (c) addToDeck(d, c, w.qty, w.side); else missing.push(w.name);
+          const c = matchIdent(data, w.ident);
+          if (c) { addToDeck(d, c, w.qty, w.side); if (w.cmdr) { d.format = "commander"; const k = c.id + "|0"; if (!d.cmdr.includes(k) && d.cmdr.length < 2) d.cmdr.push(k); } }
+          else missing.push(w.name);
         }
       }
+      save();
       msg.textContent = missing.length ? `Added. Couldn't find: ${missing.join(", ")}` : "All cards added.";
       $("#ex").value = deckText(d);
     } catch (e) { msg.textContent = "Lookup failed: " + e.message; }
@@ -903,6 +1354,8 @@ function deckMenu(d) {
 
 /* ---------- start ---------- */
 go("coll");
+loadNames().catch(() => {});
+if (Object.keys(S.coll).length && (!S.meta.pricedAt || Date.now() - S.meta.pricedAt > 20 * 36e5)) setTimeout(() => refreshPrices(true), 1500);
 </script>
 </body>
 </html>
