@@ -175,11 +175,21 @@ details.box summary::after{content:" ▾"}
 .box{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px;min-width:0}
 .box.alert{border-color:var(--gold)}
 .box.bad{border-color:var(--danger)}
-.prints{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}
-.prints button{flex:0 0 84px;border:2px solid transparent;border-radius:6px;padding:0;background:none}
-.prints button[aria-pressed="true"]{border-color:var(--accent)}
-.prints img{width:100%;border-radius:4px;display:block}
-.prints small{display:block;font-size:11px;color:var(--muted)}
+.prints{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px;max-height:60vh;overflow-y:auto;padding:2px}
+.prints button{border:2px solid var(--line);border-radius:8px;padding:4px;background:var(--surface);text-align:left;display:flex;flex-direction:column;gap:3px;min-width:0}
+.prints button[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+.prints img{width:100%;aspect-ratio:63/88;object-fit:cover;border-radius:5px;display:block;background:var(--sunk)}
+.prints .pl1{display:flex;align-items:center;gap:5px;font-size:13px;min-width:0}
+.prints .pl1 .num{color:var(--muted)}
+.prints .pl2{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prints .pl3{font-size:12px}
+.prints .chip{align-self:flex-start}
+.sym{display:inline-block;flex:none;width:16px;height:16px;vertical-align:-3px;background:var(--ink);-webkit-mask:var(--sym) center/contain no-repeat;mask:var(--sym) center/contain no-repeat}
+.sym.big{width:22px;height:22px;vertical-align:-5px}
+.sym[data-r="uncommon"]{background:#8fa3b3}
+.sym[data-r="rare"]{background:#c9a227}
+.sym[data-r="mythic"]{background:#e2621a}
+.sym[data-r="special"],.sym[data-r="bonus"]{background:#8e5bb5}
 .kv{display:flex;justify-content:space-between;gap:10px;align-items:center;font-size:14px}
 .kv select{min-height:34px;padding:4px 8px;font-size:14px}
 
@@ -745,7 +755,7 @@ function drawCollList() {
   el.innerHTML = `<div class="list">${shown.map(([k, e]) => { const c = phChange(e); return `${dayHead(e)}
     <div class="item"><img loading="lazy" src="${esc(e.img)}" alt="">
       <button class="tap" data-open="${esc(k)}"><div class="name">${esc(e.name)}</div>
-        <div class="meta"><span>${esc(e.set.toUpperCase())} #${esc(e.num)}</span>${e.finish !== "nonfoil" ? `<span class="chip foil">${e.finish}</span>` : ""}
+        <div class="meta"><span>${setIcon(e.set, e.rarity)} ${esc(e.set.toUpperCase())} #${esc(e.num)}</span>${e.finish !== "nonfoil" ? `<span class="chip foil">${e.finish}</span>` : ""}
           ${cv.binder === "all" && e.binder !== "main" ? `<span class="chip">${esc(S.binders[e.binder].name)}</span>` : ""}
           <span class="num">${money(priceOf(e, e.finish))} ea</span>${e.priceFrom === "en" ? `<span class="chip" title="No price for this language, so the English printing's price is used">${esc((e.lang || "").toUpperCase())} · EN price</span>` : priceOf(e, e.finish) == null ? `<span class="chip warn">No price</span>` : ""}${c && c.d ? `<span class="num ${c.d > 0 ? "up" : "down"}">${signed(c.d)}</span>` : ""}
           ${e.scanned ? `<span class="scanned num" title="Last scanned ${esc(new Date(e.scanned).toLocaleString())}">Scanned ${esc(cv.sort === "scanned" ? clock(e.scanned) : scanWhen(e.scanned))}</span>` : ""}</div></button>
@@ -1177,7 +1187,7 @@ function openCard(card, finish, binder) {
       <img class="big" id="bigImg" src="${esc(s.imgN || s.img)}" alt="${esc(s.name)}">
       ${faces ? `<p class="small muted" style="text-align:center;margin:4px 0 0">Tap the card to flip it</p>` : ""}
       <div class="row" style="justify-content:space-between;align-items:flex-start;margin-top:12px"><h2>${esc(s.name)}</h2><span>${pips(s.mana)}</span></div>
-      <div class="muted small">${esc(s.setName)} · ${esc(s.set.toUpperCase())} #${esc(s.num)} · ${esc(s.rarity)}</div>
+      <div class="muted small">${setIcon(s.set, s.rarity, true)} ${esc(s.setName)} · ${esc(s.set.toUpperCase())} #${esc(s.num)} · ${esc(s.rarity)}</div>
       <div class="oracle" style="margin-top:10px">${esc(text)}</div>
       ${legal ? `<div class="chips" style="margin-top:8px">${legal}</div>` : ""}
       <div class="prices" style="margin-top:10px">
@@ -1241,13 +1251,57 @@ function openCard(card, finish, binder) {
   draw();
   if (!full || !s.leg) sf("/cards/" + s.id).then(c => { full = c; s = slim(c); if ($("#sheetBody")) draw(); }).catch(() => {});
 }
+/* ---------- set symbols (from Scryfall's set list, cached on the device for a week) ---------- */
+let SETS = null, setsP = null;
+function loadSets() {
+  if (SETS) return Promise.resolve(SETS);
+  if (setsP) return setsP;
+  setsP = (async () => {
+    let c = null; try { c = idb.ok ? await idbGet("sets") : null; } catch (e) {}
+    if (c && c.map) SETS = c.map;
+    if (!c || Date.now() - c.at > 7 * 864e5) {
+      try {
+        const r = await sf("/sets"), map = {};
+        for (const z of r.data || []) map[z.code] = { icon: z.icon_svg_uri || "", name: z.name, year: (z.released_at || "").slice(0, 4) };
+        SETS = map; if (idb.ok) idbSet("sets", { at: Date.now(), map }).catch(() => {});
+      } catch (e) { if (!SETS) { setsP = null; throw e; } }
+    }
+    return SETS;
+  })();
+  return setsP;
+}
+// The set symbol, coloured by rarity like on the card (common, uncommon silver, rare gold, mythic orange).
+function setIcon(code, rarity, big) {
+  const z = SETS && SETS[code]; if (!z || !z.icon) return "";
+  return `<span class="sym${big ? " big" : ""}" data-r="${esc(rarity || "common")}" style="--sym:url('${esc(z.icon)}')" title="${esc(z.name)}${rarity ? " · " + esc(rarity) : ""}" role="img" aria-label="${esc(z.name)} set symbol"></span>`;
+}
 async function showPrints(s, onPick) {
   const box = $("#printBox"); box.innerHTML = `<p class="small muted">Loading printings…</p>`;
   try {
-    const r = await sf(`/cards/search?q=${encodeURIComponent('!"' + s.name + '"')}&unique=prints&order=released`);
-    const list = r.data || [];
-    box.innerHTML = `<div class="prints" style="margin-top:10px">${list.map((c, i) => `<button data-i="${i}" aria-pressed="${c.id === s.id}"><img loading="lazy" src="${esc(imgOf(c))}" alt=""><small>${esc(c.set.toUpperCase())} #${esc(c.collector_number)}</small><small class="num">${money(priceOf(c))}</small></button>`).join("")}</div>`;
-    box.firstChild.onclick = e => { const b = e.target.closest("button"); if (b) onPick(list[+b.dataset.i]); };
+    const [r] = await Promise.all([sf(`/cards/search?q=${encodeURIComponent('!"' + s.name + '"')}&unique=prints&order=released&dir=desc`), loadSets().catch(() => null)]);
+    let list = r.data || [], next = r.has_more ? r.next_page : null, q = "";
+    const tile = (c, i) => {
+      const nf = priceOf({ prices: c.prices }, "nonfoil"), fo = c.prices && c.prices.usd_foil != null ? parseFloat(c.prices.usd_foil) : null;
+      return `<button data-i="${i}" aria-pressed="${c.id === s.id}" title="${esc(c.set_name)} #${esc(c.collector_number)}">
+        <img loading="lazy" src="${esc(imgOf(c))}" alt="">
+        <span class="pl1">${setIcon(c.set, c.rarity)}<b>${esc(c.set.toUpperCase())}</b><span class="num">#${esc(c.collector_number)}</span></span>
+        <span class="pl2">${esc(c.set_name)}</span>
+        <span class="pl3 num">${esc((c.released_at || "").slice(0, 4))} · ${c.prices && c.prices.usd != null ? money(nf) : fo != null ? money(fo) + " foil" : "—"}${c.prices && c.prices.usd != null && fo != null ? ` · <span class="gold">F ${money(fo)}</span>` : ""}</span>
+        ${c.lang && c.lang !== "en" ? `<span class="chip">${esc(c.lang.toUpperCase())}</span>` : ""}${(c.frame_effects || []).includes("showcase") ? `<span class="chip">showcase</span>` : c.border_color === "borderless" ? `<span class="chip">borderless</span>` : c.full_art ? `<span class="chip">full art</span>` : ""}
+      </button>`;
+    };
+    const draw = () => {
+      const f = q.trim().toLowerCase();
+      const shown = list.map((c, i) => [c, i]).filter(([c]) => !f || (c.set + " " + c.set_name + " " + (c.released_at || "") + " " + c.collector_number).toLowerCase().includes(f));
+      box.innerHTML = `<div class="row" style="margin-top:10px"><input type="search" id="prQ" class="grow" placeholder="Filter by set name, code or year" value="${esc(q)}"></div>
+        <p class="small muted" style="margin:6px 0">${list.length}${next ? "+" : ""} printing${list.length === 1 ? "" : "s"}, newest first. Match the set symbol and number at the bottom of your card.</p>
+        <div class="prints">${shown.map(([c, i]) => tile(c, i)).join("") || `<p class="small muted">No printing matches “${esc(q)}”.</p>`}</div>
+        ${next ? `<button class="btn sm" id="prMore" style="margin-top:8px">Show more printings</button>` : ""}`;
+      $("#prQ").oninput = e => { q = e.target.value; const pos = e.target.selectionStart; draw(); const i = $("#prQ"); i.focus(); i.setSelectionRange(pos, pos); };
+      box.querySelector(".prints").onclick = e => { const b = e.target.closest("button[data-i]"); if (b) onPick(list[+b.dataset.i]); };
+      const m = $("#prMore"); if (m) m.onclick = async () => { m.disabled = true; try { const r2 = await sf(next); list = list.concat(r2.data || []); next = r2.has_more ? r2.next_page : null; } catch (e) { toast(e.message); } draw(); };
+    };
+    draw();
   } catch (e) { box.innerHTML = `<p class="small muted">Couldn't load printings: ${esc(e.message)}</p>`; }
 }
 
@@ -1327,7 +1381,7 @@ function drawSession() {
   const row = it => {
     const c = it.card, pic = c ? `<img src="${esc(c.img)}" alt="">` : it.thumb ? `<img src="${it.thumb}" alt="Picture of the scanned card">` : `<img alt="">`;
     const fin = c && c.finishes.length > 1 && it.state === "review" ? `<button class="chip ${it.finish !== "nonfoil" ? "foil" : ""}" data-fin="${it.id}">${it.finish === "nonfoil" ? "normal" : it.finish} ▾</button>` : it.finish !== "nonfoil" ? `<span class="chip foil">${it.finish}</span>` : "";
-    const meta = c ? `<div class="meta"><span>${esc(c.set.toUpperCase())} #${esc(c.num)}</span>${fin}<span class="num">${money(priceOf(c, it.finish))}</span><span class="num">${esc(clock(it.at))}</span></div>` : "";
+    const meta = c ? `<div class="meta"><span>${setIcon(c.set, c.rarity)} ${esc(c.set.toUpperCase())} #${esc(c.num)}</span>${fin}<span class="num">${money(priceOf(c, it.finish))}</span><span class="num">${esc(clock(it.at))}</span></div>` : "";
     if (it.state === "review") return `<div class="item">${pic}<button class="tap" data-pr="${it.id}"><div class="name">${esc(c.name)}</div>${meta}<div class="small ${it.exact ? "up" : "muted"}">${it.exact ? "Exact printing" : "Tap to check the printing"}</div></button>
       <div class="right"><span class="stepper"><button data-dec="${it.id}" aria-label="One fewer">−</button><span class="num">${it.qty}</span><button data-inc="${it.id}" aria-label="One more">+</button></span>
       <span class="row" style="gap:4px"><button class="btn sm primary" data-add="${it.id}">Add</button><button class="btn sm ghost" data-skip="${it.id}">Skip</button></span></div></div>`;
@@ -1361,7 +1415,7 @@ function drawSession() {
   });
   el.querySelectorAll("[data-pr]").forEach(b => b.onclick = () => {
     const it = find(b.dataset.pr);
-    openSheet(`<h2>${esc(it.card.name)}</h2><p class="small muted">Pick the printing you have.</p><div id="printBox"></div>`, () => drawSession());
+    openSheet(`<h2>${esc(it.card.name)}</h2><p class="small muted">Pick the printing you have. The current pick is outlined.</p><div id="printBox"></div>`, () => drawSession());
     showPrints(it.card, picked => { setItemCard(it, picked, true); saveSession(); closeSheet(); });
   });
 }
@@ -2104,6 +2158,7 @@ async function boot() {
   sc.items = Array.isArray(S.scanSession) ? S.scanSession : [];
   go("coll");
   loadNames().catch(() => {});
+  loadSets().then(() => { if (tab === "coll" && $("#clist")) drawCollList(); else if (tab === "scan") drawSession(); }).catch(() => {});
   if (S.meta.usedScan) setTimeout(() => getWorkers().catch(() => {}), 2500);
   if (Object.keys(S.coll).length && (!S.meta.pricedAt || Date.now() - S.meta.pricedAt > 20 * 36e5)) setTimeout(() => refreshPrices(true), 1500);
 }
