@@ -149,6 +149,9 @@ details.box summary::after{content:" ▾"}
 .cam .sbar.ok .sfill{background:#5cc489}
 .cam .sbar.fail .sfill{background:#ef7462}
 .cam .flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
+.cam .zoombar{position:absolute;left:10px;top:40px;display:flex;gap:4px;background:rgba(0,0,0,.55);border-radius:999px;padding:3px}
+.cam .zoombar button{border:0;background:none;color:#fff;font:700 12px var(--f-display);border-radius:999px;padding:5px 9px;min-width:38px}
+.cam .zoombar button[aria-pressed="true"]{background:#ffd76a;color:#000}
 .cam .flash.on{animation:camflash .28s ease-out}
 @keyframes camflash{from{opacity:.55}to{opacity:0}}
 .ibar{height:5px;border-radius:3px;background:var(--sunk);overflow:hidden;margin-top:6px}
@@ -1281,6 +1284,7 @@ function renderScan() {
       <div class="sbar" id="sbar" hidden><div class="strack"><div class="sfill" id="sfill"></div></div><span id="slabel">Reading…</span></div>
       <div class="flash" id="flash"></div>
       <button class="pill" id="autoBtn" aria-pressed="${sc.auto}">Auto ${sc.auto ? "on" : "off"}</button>
+      <div class="zoombar" id="zoomBar" hidden></div>
       <div class="ctrl"><button class="round" id="torch" aria-pressed="${torchOn}" aria-label="Flashlight" hidden>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 2h8l-2 7h-4zM10 9v13h4V9"/></svg></button>
         <button class="shutter" id="shoot" aria-label="Take a picture of the card"></button>
@@ -1370,7 +1374,7 @@ function scStatus(t) { const el = $("#scStatus"); if (el) el.textContent = t; }
 function camHint(t) { const h = $("#camHint"); if (h && h.textContent !== t) h.textContent = t; }
 /* ---------- where the card is: guide frame, or the card's own edges once found ---------- */
 const det = { box: null, cand: null, seen: 0, cv: null, moved: 1, lastPOI: 0, lastRefocus: 0, blurSince: 0 };
-const camDev = { track: null, caps: {} };
+const camDev = { track: null, caps: {}, held: false };
 function camXform(vid) {
   const cam = $("#cam"), W = cam.clientWidth, H = cam.clientHeight, vw = vid.videoWidth, vh = vid.videoHeight;
   const sc_ = Math.max(W / vw, H / vh); return { s: sc_, ox: (W - vw * sc_) / 2, oy: (H - vh * sc_) / 2, W, H };
@@ -1470,23 +1474,48 @@ function updateBox(vid, r) {
   } else { det.moved = 1; det.box = r; }
   det.seen = now;
 }
-// Focus: point the camera's focus at the card, refocus when text stays blurry, tap to focus.
+// Focus: aim at the card once, then HOLD that focus for the next cards (a stack is scanned at the
+// same distance, so the camera shouldn't refocus on the table every time a card is swapped).
+// Focus is released and redone only if the card stays blurry. Tap the preview to focus by hand.
+const hasFM = m => (camDev.caps.focusMode || []).includes(m);
 function focusAt(nx, ny, once) {
   const tr = camDev.track; if (!tr) return;
-  const fm = camDev.caps.focusMode || [], adv = { pointsOfInterest: [{ x: Math.max(0, Math.min(1, nx)), y: Math.max(0, Math.min(1, ny)) }] };
-  if (once && fm.includes("single-shot")) adv.focusMode = "single-shot"; else if (fm.includes("continuous")) adv.focusMode = "continuous";
+  const adv = { pointsOfInterest: [{ x: Math.max(0, Math.min(1, nx)), y: Math.max(0, Math.min(1, ny)) }] };
+  if (once && hasFM("single-shot")) adv.focusMode = "single-shot"; else if (hasFM("continuous")) adv.focusMode = "continuous";
+  camDev.held = false;
   tr.applyConstraints({ advanced: [adv] }).catch(() => {});
-  if (once && fm.includes("single-shot") && fm.includes("continuous")) setTimeout(() => { if (camDev.track) camDev.track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {}); }, 900);
 }
+function holdFocus() {
+  const tr = camDev.track; if (!tr || camDev.held) return;
+  let fd; try { fd = tr.getSettings().focusDistance; } catch (e) {}
+  if (hasFM("manual") && camDev.caps.focusDistance && fd != null) tr.applyConstraints({ advanced: [{ focusMode: "manual", focusDistance: fd }] }).catch(() => {});
+  else if (hasFM("single-shot")) tr.applyConstraints({ advanced: [{ focusMode: "single-shot" }] }).catch(() => {});   // focuses once, then stays put
+  else return;
+  camDev.held = true;
+}
+function releaseFocus() { camDev.held = false; if (camDev.track && hasFM("continuous")) camDev.track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {}); }
 function focusTick(vid) {
   if (!cardLocked()) { det.blurSince = 0; return; }
   const now = performance.now(), b = det.box, nx = (b.x + b.w / 2) / vid.videoWidth, ny = (b.y + b.h * 0.3) / vid.videoHeight;
-  if (det.moved > 0.08 && now - det.lastPOI > 700) { focusAt(nx, ny, false); det.lastPOI = now; }
-  const blurry = ana.last && ana.last.text >= AUTO.minText && ana.last.sharp < AUTO.minSharp;
+  if (det.moved >= 1 && !camDev.held && now - det.lastPOI > 1200) { focusAt(nx, ny, false); det.lastPOI = now; }   // a newly found card: aim focus at it
+  const s = ana.last; if (!s || s.text < AUTO.minText) { det.blurSince = 0; return; }
+  const ref = S.meta.sharpRef, blurry = s.sharp < (ref ? ref * 0.45 : AUTO.floor0 * 0.8);
   if (!blurry) { det.blurSince = 0; return; }
   if (!det.blurSince) det.blurSince = now;
-  if (now - det.blurSince > 1000 && now - det.lastRefocus > 2500) { focusAt(nx, ny, true); det.lastRefocus = now; det.blurSince = 0; }
+  if (now - det.blurSince > 700 && now - det.lastRefocus > 1500) { focusAt(nx, ny, !hasFM("continuous")); det.lastRefocus = now; det.blurSince = 0; }
 }
+// Zoom lets the phone stay farther from the card, where phone cameras focus faster.
+function zoomButtons() {
+  const z = camDev.caps.zoom, bar = $("#zoomBar"); if (!bar) return;
+  if (!z || !(z.max >= 1.4)) { bar.hidden = true; return; }
+  const opts = [1, 1.5, 2].filter(v => v >= (z.min || 1) && v <= z.max);
+  if (S.meta.zoom == null) S.meta.zoom = opts.includes(1.5) ? 1.5 : 1;
+  bar.hidden = false;
+  bar.innerHTML = opts.map(v => `<button data-z="${v}" aria-pressed="${S.meta.zoom === v}">${v}×</button>`).join("");
+  bar.onclick = e => { const b = e.target.closest("button"); if (!b) return; S.meta.zoom = +b.dataset.z; save(); applyZoom(); zoomButtons(); releaseFocus(); };
+  applyZoom();
+}
+function applyZoom() { if (camDev.track && camDev.caps.zoom) camDev.track.applyConstraints({ advanced: [{ zoom: S.meta.zoom || 1 }] }).catch(() => {}); }
 function watchTick() {
   if (tab !== "scan" || !stream || document.hidden) return;
   const vid = $("#vid"); if (!vid || !vid.videoWidth) return;
@@ -1501,17 +1530,18 @@ async function startCamera() {
     if (tab !== "scan") { stopCamera(); return; }
     vid.srcObject = stream; await vid.play().catch(() => {});
     const track = stream.getVideoTracks()[0];
-    camDev.track = track; camDev.caps = track.getCapabilities ? track.getCapabilities() : {};
+    camDev.track = track; camDev.caps = track.getCapabilities ? track.getCapabilities() : {}; camDev.held = false;
+    zoomButtons();
     if (camDev.caps.torch) $("#torch").hidden = false;
     if ((camDev.caps.focusMode || []).includes("continuous")) track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
-    vid.onclick = e => { const t = camXform(vid), r = vid.getBoundingClientRect(); focusAt(((e.clientX - r.left) - t.ox) / t.s / vid.videoWidth, ((e.clientY - r.top) - t.oy) / t.s / vid.videoHeight, true); camHint("Focusing…"); };
+    vid.onclick = e => { const t = camXform(vid), r = vid.getBoundingClientRect(); focusAt(((e.clientX - r.left) - t.ox) / t.s / vid.videoWidth, ((e.clientY - r.top) - t.oy) / t.s / vid.videoHeight, true); ana.sh = []; camHint("Focusing…"); };
     scStatus(readyMsg());
     getWorker().catch(() => {});
     vid.onloadedmetadata = () => placeFrame(vid); placeFrame(vid);
     startAuto();
   } catch (e) { scStatus("Camera blocked. Allow camera access in Chrome's site settings, or use the photo button."); }
 }
-function stopCamera() { stopAuto(); camDev.track = null; det.box = null; if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; torchOn = false; } window.onresize = null; }
+function stopCamera() { stopAuto(); camDev.track = null; camDev.held = false; det.box = null; if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; torchOn = false; } window.onresize = null; }
 async function toggleTorch() {
   if (!stream) return; torchOn = !torchOn;
   try { await stream.getVideoTracks()[0].applyConstraints({ advanced: [{ torch: torchOn }] }); } catch (e) { torchOn = false; }
@@ -1519,8 +1549,8 @@ async function toggleTorch() {
 }
 
 /* ---------- auto-capture: watch the frame, shoot when a card is in focus and still ---------- */
-const AUTO = { W: 144, H: 200, still: 6, snapStill: 8, maxQueue: 6, minStd: 20, minText: 12, minSharp: 2.5, rearm: 30, every: 120 };
-const ana = { timer: null, prev: null, good: 0, armed: true, sig: null, cv: null, ac: null, last: null };
+const AUTO = { W: 216, H: 300, still: 6, snapStill: 8, maxQueue: 6, minStd: 20, minText: 12, minSharp: 2.5, floor0: 1.4, plateau: 1.1, peakFrac: 0.85, rearm: 30, every: 120 };
+const ana = { timer: null, prev: null, good: 0, armed: true, sig: null, cv: null, ac: null, last: null, sh: [], prevSharp: null, blurFor: 0 };
 function startAuto() { stopAuto(); ana.prev = null; ana.good = 0; ana.timer = setInterval(watchTick, AUTO.every); }
 function stopAuto() { if (ana.timer) clearInterval(ana.timer); ana.timer = null; setFrameState("", 0); }
 function setFrameState(st, p) {
@@ -1537,7 +1567,7 @@ function sampleCard(vid) {
   const d = g.getImageData(0, 0, W, H).data, L = new Float32Array(W * H);
   let sum = 0;
   for (let i = 0, j = 0; i < d.length; i += 4, j++) { const y = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114; L[j] = y; sum += y; }
-  return Object.assign({ L }, frameStats(L, W, H, sum / L.length));
+  return Object.assign({ L, mean: sum / L.length }, frameStats(L, W, H, sum / L.length));
 }
 function frameStats(L, W, H, mean) {
   let v = 0; for (let i = 0; i < L.length; i++) v += (L[i] - mean) ** 2;
@@ -1566,12 +1596,25 @@ function autoTick() {
     else { camHint(pendingCount() ? "Got it. Show the next card" : "Got it. Show the next card"); return; }
   }
   if (pendingCount() >= AUTO.maxQueue) { ana.good = 0; setFrameState("", 0); camHint("One moment, reading the last few cards…"); return; }
-  if (noCard) { ana.good = 0; setFrameState("", 0); camHint(locked ? "Hold the card flat and face-up" : "Show a card to the camera"); return; }
+  if (noCard) { ana.good = 0; ana.sh = []; ana.prevSharp = null; ana.blurFor = 0; setFrameState("", 0); camHint(locked ? "Hold the card flat and face-up" : "Show a card to the camera"); return; }
   if (locked) { const t = camXform(vid); if (det.box.h * t.s < t.H * 0.32) { ana.good = 0; setFrameState("", 0); camHint("Move the card a little closer"); return; } }
-  if (s.sharp < AUTO.minSharp) { ana.good = 0; setFrameState("", 0); camHint("Focusing…"); return; }
+  // In focus = the picture has stopped getting sharper (two frames agree) and is near the best seen
+  // for this card, above a floor learned from cards this phone has read successfully.
+  const now = performance.now(), ref = S.meta.sharpRef, floor = ref ? ref * 0.55 : AUTO.floor0;
+  ana.sh.push(s.sharp); if (ana.sh.length > 10) ana.sh.shift();
+  const peak = Math.max(...ana.sh), prevS = ana.prevSharp; ana.prevSharp = s.sharp;
+  const plateau = prevS != null && s.sharp <= prevS * AUTO.plateau && s.sharp >= prevS / AUTO.plateau;
+  if (!(s.sharp >= floor && s.sharp >= peak * AUTO.peakFrac && plateau)) {
+    ana.good = 0; setFrameState("", 0);
+    if (!ana.blurFor) ana.blurFor = now;
+    const long = now - ana.blurFor > 1500;
+    camHint(!long ? "Focusing…" : s.mean < 70 && !torchOn ? "It's dark here. Tap the flashlight" : camDev.caps.zoom && (S.meta.zoom || 1) < 1.5 ? "Still focusing. Try 1.5× zoom and hold the phone a bit farther away" : "Still focusing. Hold the phone a bit farther from the card");
+    return;
+  }
+  ana.blurFor = 0;
   if (moving > AUTO.snapStill) { ana.good = 0; setFrameState("steady", 0.25); camHint("Steady…"); return; }
   ana.good = (ana.good || 0) + 1;
-  const need = locked ? 1 : 2;                        // a found card needs one steady frame; the guide box two
+  const need = 1;                                    // focus plateau already needs two agreeing frames
   setFrameState("steady", ana.good / need);
   if (ana.good >= need) { ana.good = 0; snapNow(vid, s); }
 }
@@ -1592,6 +1635,8 @@ function snapNow(vid, s) {
   setFrameState("good", 1); setTimeout(() => setFrameState("", 0), 260);
   shutter(); if (navigator.vibrate) navigator.vibrate(25);
   camHint("Got it. Show the next card");
+  shot.sharp = s ? s.sharp : null;
+  if (s) holdFocus();
   enqueue(shot);
 }
 async function snapFromFile(file) {
@@ -1664,7 +1709,7 @@ function prep(src, sx, sy, sw, sh, targetW = 1100, binarize = false) {
   g.putImageData(d, 0, 0); return c;
 }
 function enqueue(shot) {
-  sc.items.push({ id: uid(), state: "queued", snap: shot.snap, thumb: shot.thumb, finish: sc.finish, binder: defaultBinder(), at: Date.now(), qty: 1, tries: 0, p: 0 });
+  sc.items.push({ id: uid(), state: "queued", snap: shot.snap, thumb: shot.thumb, sharp: shot.sharp, finish: sc.finish, binder: defaultBinder(), at: Date.now(), qty: 1, tries: 0, p: 0 });
   if (sc.items.length > 80) sc.items.splice(0, sc.items.length - 80);
   drawItems(); scanHead(); processQueue();
 }
@@ -1707,6 +1752,7 @@ async function readSnapshot(it) {
 function applyResult(it, res) {
   if (res.kind === "card") {
     it.card = slim(res.card); it.exact = res.exact;
+    if (it.sharp) { const r = S.meta.sharpRef; S.meta.sharpRef = r ? r * 0.7 + it.sharp * 0.3 : it.sharp; }
     if (!it.card.finishes.includes(it.finish)) it.finish = it.card.finishes[0];
     dropSnap(it, true);
     if (sc.mode === "any" || (sc.mode === "exact" && res.exact)) { addItem(it, 1); scanProg(1, "Added " + it.card.name, "ok"); }
@@ -1714,7 +1760,7 @@ function applyResult(it, res) {
   } else if (res.kind === "pick") {
     it.state = "pick"; it.cands = res.cands; it.read = res.read; dropSnap(it, false); scanProg(1, "Pick the right card below", "ok");
   } else {
-    it.state = "failed"; it.read = res.read || "";
+    it.state = "failed"; it.read = res.read || ""; releaseFocus();
     if (it.tries >= 2) dropSnap(it, false);                        // no more retries: free the picture
     scanProg(1, "Couldn't read that card", "fail");
   }
