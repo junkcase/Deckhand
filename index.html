@@ -1752,13 +1752,13 @@ function detectAt(vid, a) {
   const r = detectCore(G, w, h); if (!r) return null;
   return { x: r.x / k, y: r.y / k, w: r.w / k, h: r.h / k, a, score: r.score, tilt: r.tilt };
 }
-function straighten(vid, r) {
-  if (!r || Math.abs(r.tilt) < 0.75 * DEG) return r;
+function straighten(vid, r, min = 0.75 * DEG) {
+  if (!r || Math.abs(r.tilt) < min) return r;
   const a = roundA(Math.max(-16 * DEG, Math.min(16 * DEG, r.a - r.tilt))); if (a === r.a) return r;
   const r2 = detectAt(vid, a); return r2 && r2.score >= r.score * 0.9 ? r2 : r;
 }
 function detectCard(vid) {
-  if (cardLocked()) { const r = detectAt(vid, det.box.a || 0); if (r) return straighten(vid, r); }
+  if (cardLocked()) { const r = detectAt(vid, det.box.a || 0); if (r) return straighten(vid, r, 1.5 * DEG); }
   const r0 = straighten(vid, detectAt(vid, 0));
   if (r0 && r0.score > 6) return r0;
   const r1 = straighten(vid, detectAt(vid, TILTS[det.ti = ((det.ti || 0) + 1) % TILTS.length]));
@@ -1880,7 +1880,10 @@ function autoTick() {
     else { setFrameState("", 0); camHint(ana.failMsg || "Got it. Show the next card"); return; }
   }
   if (now < ana.cool) return;
-  if (noCard) { ana.since = 0; ana.seenAt = 0; setFrameState("", 0); camHint(locked ? "Hold the card flat and face-up" : "Show a card to the camera"); return; }
+  const dt = Math.min(500, now - (ana.lastTick || now)); ana.lastTick = now;
+  const pre = ana.pre || (ana.pre = { find: 0, small: 0, moving: 0, hold: 0 });
+  if (!noCard) pre[!locked ? "find" : det.box.h * camXform(vid).s < camXform(vid).H * AUTO.tooSmall ? "small" : (moving > AUTO.still ? "moving" : "hold")] += dt;
+  if (noCard) { ana.since = 0; ana.seenAt = 0; ana.pre = null; setFrameState("", 0); camHint(locked ? "Hold the card flat and face-up" : "Show a card to the camera"); return; }
   if (!ana.seenAt) ana.seenAt = performance.now();
   if (locked) { const t = camXform(vid); if (det.box.h * t.s < t.H * AUTO.tooSmall) { ana.since = 0; setFrameState("", 0); camHint("Move the card a little closer"); return; } }
   // No sharpness gate: as soon as a card is in view and steady, take a snapshot and try to read it.
@@ -1892,15 +1895,22 @@ function autoTick() {
   if (p >= 1) { ana.since = 0; autoShoot(s); }
 }
 // Snapshot burst: copy the card out of 3 frames ~80 ms apart and keep the sharpest copy.
+function shotSharp(c) {
+  const { W, H } = AUTO, t = ana.cv2 || (ana.cv2 = document.createElement("canvas")); t.width = W; t.height = H;
+  const g = t.getContext("2d", { willReadFrequently: true }); g.drawImage(c, 0, 0, W, H);
+  const d = g.getImageData(0, 0, W, H).data, L = new Float32Array(W * H); let sum = 0;
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) { const y = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114; L[j] = y; sum += y; }
+  return frameStats(L, W, H, sum / L.length).sharp;
+}
 async function grabBest(vid) {
   const frames = [];
-  for (let i = 0; i < 3; i++) {
-    if (i) await sleep(80);
+  for (let i = 0; i < 2; i++) {
+    if (i) await sleep(60);
     const r = frameRect(vid); if (!r) break;
-    const smp = sampleCard(vid), k = Math.min(1, 1200 / r.h), c = document.createElement("canvas");
+    const k = Math.min(1, 1200 / r.h), c = document.createElement("canvas");
     c.width = Math.max(1, Math.round(r.w * k)); c.height = Math.max(1, Math.round(r.h * k));
     drawBox(c.getContext("2d"), vid, r, c.width, c.height);
-    frames.push({ c, sharp: smp ? smp.sharp : 0 });
+    frames.push({ c, sharp: shotSharp(c) });
   }
   if (!frames.length) return null;
   frames.sort((a, b) => b.sharp - a.sharp);
@@ -1915,7 +1925,7 @@ async function shootAndRead(s) {
   setFrameState("good", 1);
   camHint(ana.fails ? `Trying again (${ana.fails + 1} of ${AUTO.tries})…` : "Reading…");
   const t0 = performance.now();
-  sc.cur = { t0, wait: ana.seenAt ? t0 - ana.seenAt : 0, try: ana.fails + 1, ms: {} };
+  sc.cur = { t0, wait: ana.seenAt ? t0 - ana.seenAt : 0, pre: Object.assign({}, ana.pre || {}), try: ana.fails + 1, ms: {} };
   const vid = $("#vid"), shot = vid && await grabBest(vid);
   if (!shot) { setFrameState("", 0); sc.cur = null; return; }
   sc.cur.ms.capture = performance.now() - t0;
@@ -1923,7 +1933,7 @@ async function shootAndRead(s) {
   const ok = await captureFrom("snap", shot.c, ana.fails % 2 === 1);    // every other retry uses stronger settings
   shot.c.width = shot.c.height = 0;                                       // the snapshot is deleted once read
   if (!sc.auto) return;
-  if (ok) { ana.armed = false; ana.sig = s.L; ana.fails = 0; ana.failMsg = ""; ana.seenAt = 0; beep(); if (navigator.vibrate) navigator.vibrate(40); }
+  if (ok) { ana.armed = false; ana.sig = s.L; ana.fails = 0; ana.failMsg = ""; ana.seenAt = 0; ana.pre = null; beep(); if (navigator.vibrate) navigator.vibrate(40); }
   else {
     ana.fails++; ana.cool = performance.now() + 250;                      // quick automatic retry with a fresh snapshot
     if (ana.fails >= AUTO.tries) {
@@ -2063,6 +2073,37 @@ async function lookupCards(idents) {
   }
   return out;
 }
+// The name crop often picks up a stray letter from the frame at the start ("f One with…") and the mana
+// symbols at the end ("Omen of the Sea RE"). Try the read with short end pieces dropped and keep the best.
+function nameVariants(n) {
+  const v = [n], w = n.split(" ");
+  for (let a = 0; a <= 2; a++) for (let b = 0; b <= 2; b++) {
+    if (!a && !b) continue;
+    const head = w.slice(0, a), tail = w.slice(w.length - b);
+    if (a + b >= w.length || head.some(x => x.length > 2) || tail.some(x => x.length > 3)) continue;
+    v.push(w.slice(a, w.length - b).join(" "));
+  }
+  return [...new Set(v)].filter(x => x.length >= 3);
+}
+function bestMatches(name) {
+  if (!NAMES_F) return null;
+  const best = new Map(); let used = name, top = -1;
+  for (const v of nameVariants(name)) {
+    if (top >= 0.9) break;                                   // the plain read is already clean
+    for (const c of nameMatches(v) || []) {
+      const was = best.get(c.name); if (!was || c.score > was.score) best.set(c.name, c);
+      if (c.score > top) { top = c.score; used = v; }
+    }
+  }
+  const out = [...best.values()].sort((a, b) => b.score - a.score).slice(0, 4); out.used = used; return out;
+}
+// How much of a card's name shows up in what was read, even if the read is badly garbled
+// ("EBiilfbmorphosis" vs "Ichthyomorphosis" → 0.5). Used to confirm a card found by its set code and number.
+function nameShare(read, cardName) {
+  const tri = t => { const s_ = " " + stripName(t).replace(/ /g, "") + " ", o = new Set(); for (let i = 0; i + 3 <= s_.length; i++) o.add(s_.slice(i, i + 3)); return o; };
+  const a = tri(read), b = tri(cardName.split(" // ")[0]); if (!b.size) return 0;
+  let n = 0; for (const x of b) if (a.has(x)) n++; return n / b.size;
+}
 function cleanName(t) {
   // digits and symbols the reader confuses with letters
   t = t.replace(/0/g, "o").replace(/[1|!]/g, "l").replace(/5/g, "s").replace(/8/g, "B").replace(/\$/g, "S").replace(/6/g, "G");
@@ -2091,7 +2132,8 @@ async function identify(nameTxt, infoTxt, ocrConf) {
   Object.assign(cur, { read: name, rawName: nameTxt.trim().slice(0, 60), set: info.set, num: info.num, ocrConf: ocrConf == null ? null : Math.round(ocrConf) });
   scanProg(0.8, "Finding the card…");
   if (!NAMES) await Promise.race([loadNames().catch(() => {}), sleep(1500)]);
-  let cands = name.length >= 3 ? nameMatches(name) : [];
+  let cands = name.length >= 3 ? bestMatches(name) : [];
+  if (cands && cands.used && cands.used !== name) cur.read = cands.used;
   const top = cands && cands[0], second = cands && cands[1], margin = top ? top.score - (second ? second.score : 0) : 0;
   cur.score = top ? +top.score.toFixed(2) : null; cur.margin = top ? +margin.toFixed(2) : null; cur.cand = top ? top.name : null;
   cur.ms.match = performance.now() - t1;
@@ -2111,6 +2153,9 @@ async function identify(nameTxt, infoTxt, ocrConf) {
   const byCode = codeId ? got[identKey(codeId)] : null;
   const done = (card, exact, conf) => { cur.conf = conf; cur.exact = exact; cur.result = card.name + ` (${card.set.toUpperCase()} #${card.num})`; setMatch(card, exact, false, conf); return true; };
   if (byCode && close.some(c => sameName(byCode, c.name))) return done(byCode, true, "high");
+  // set code + number found a card, and enough of its name is in the read: two separate clues agree
+  const share = byCode ? nameShare(name, byCode.name) : 0; cur.share = byCode ? +share.toFixed(2) : null;
+  if (byCode && share >= 0.4) return done(byCode, true, "high");
   const strong = top && top.score >= 0.9 && margin >= 0.1 && (ocrConf == null || ocrConf >= 60);
   const likely = top && top.score >= 0.72 && (margin >= 0.08 || top.score >= 0.92);
   if (strong || likely) {
@@ -2118,7 +2163,8 @@ async function identify(nameTxt, infoTxt, ocrConf) {
     if (card) return done(card, !!(inSet && info.num && inSet.num === info.num), strong ? "high" : "medium");
   }
   if (fuzzy) return done(fuzzy, false, "medium");
-  if (byCode && !name) return done(byCode, false, "medium");
+  // only the set code and number were read clearly: probably right, listed for you to check
+  if (byCode && (!top || top.score < 0.72)) return done(byCode, true, "medium");
   // low confidence: let the person pick
   let picks = (cands || []).filter(c => c.score >= 0.5).map(c => c.name);
   if (!picks.length && name.length >= 4) picks = (suggest(name, 5) || []).slice();   // only part of the name was read
@@ -2137,7 +2183,8 @@ function logScan(c) {
   sc.log = sc.log || S.scanLog || [];
   const r = v => v == null ? null : Math.round(v);
   sc.log.push({ at: c.at, try: c.try || 1, manual: !!c.manual, ok: !!c.ok, conf: c.conf || (c.ok ? "" : "none"), exact: !!c.exact, result: c.result || (c.err ? "error: " + c.err : "not read"),
-    read: c.read || "", raw: c.rawName || "", set: c.set || "", num: c.num || "", ocr: c.ocrConf, score: c.score, margin: c.margin, cand: c.cand || "",
+    read: c.read || "", raw: c.rawName || "", set: c.set || "", num: c.num || "", ocr: c.ocrConf, score: c.score, margin: c.margin, cand: c.cand || "", share: c.share,
+    pre: c.pre ? { find: r(c.pre.find), small: r(c.pre.small), moving: r(c.pre.moving), hold: r(c.pre.hold) } : null,
     ms: { wait: r(c.wait), capture: r(c.ms.capture), prep: r(c.ms.prep), ocr: r(c.ms.ocr), match: r(c.ms.match), lookup: r(c.ms.lookup), total: r(c.ms.total) } });
   if (sc.log.length > 150) sc.log.splice(0, sc.log.length - 150);
   S.scanLog = sc.log; save(); drawLog();
@@ -2148,6 +2195,7 @@ function scanStats(log) {
   const st = k => pct(log.map(e => e.ms[k]).filter(v => v != null), 0.5);
   const span = ok.length > 1 ? (ok.at(-1).at - ok[0].at) / 60000 : 0;
   return { n: log.length, ok: ok.length, rate: log.length ? ok.length / log.length : 0, med: pct(tot, 0.5), p95: pct(tot, 0.95), seenMed: pct(seen, 0.5),
+    pre: Object.fromEntries(["find", "small", "moving", "hold"].map(k => [k, pct(log.filter(e => e.pre && e.try === 1).map(e => e.pre[k]), 0.5)])),
     perMin: span > 0.2 ? (ok.length - 1) / span : null, stage: { capture: st("capture"), prep: st("prep"), ocr: st("ocr"), match: st("match"), lookup: st("lookup") },
     conf: { high: ok.filter(e => e.conf === "high").length, medium: ok.filter(e => e.conf === "medium").length, low: ok.filter(e => e.conf === "low").length } };
 }
@@ -2158,7 +2206,7 @@ function drawLog() {
   const s = scanStats(log), ms = v => v == null ? "—" : v >= 1000 ? (v / 1000).toFixed(1) + " s" : v + " ms";
   el.innerHTML = `<div class="stack" style="gap:8px;margin-top:8px">
     <div class="summary"><div><span class="label">Read</span><b class="num">${s.ok}/${s.n}</b></div><div><span class="label">Median</span><b class="num">${ms(s.med)}</b></div><div><span class="label">Slowest 5%</span><b class="num">${ms(s.p95)}</b></div></div>
-    <div class="small">From card in view to result: <b class="num">${ms(s.seenMed)}</b> median${s.perMin ? ` · <b class="num">${s.perMin.toFixed(1)}</b> cards per minute` : ""}</div>
+    <div class="small">Before the snapshot (median): finding the card ${ms(s.pre.find)} · too far ${ms(s.pre.small)} · moving ${ms(s.pre.moving)} · holding still ${ms(s.pre.hold)}${s.perMin ? ` · <b class="num">${s.perMin.toFixed(1)}</b> cards per minute` : ""}</div>
     <div class="small muted">Steps (median): snapshot ${ms(s.stage.capture)} · prepare ${ms(s.stage.prep)} · read text ${ms(s.stage.ocr)} · match name ${ms(s.stage.match)} · look up card ${ms(s.stage.lookup)}</div>
     <div class="small muted">Confidence: ${s.conf.high} high · ${s.conf.medium} medium · ${s.conf.low} low (choices)</div>
     <div style="overflow-x:auto"><table class="ptable"><thead><tr><th>Time</th><th>Result</th><th>Read</th><th>OCR</th><th>Match</th><th>Set/#</th><th>Total</th></tr></thead><tbody>
@@ -2169,10 +2217,10 @@ function drawLog() {
     <div class="row wrap"><button class="btn sm" id="logCopy">Copy log</button><button class="btn sm ghost" id="logClear">Clear log</button></div></div>`;
   $("#logCopy").onclick = async () => {
     const st = scanStats(log), txt = [`Deckhand scan log · ${new Date().toLocaleString()} · ${navigator.userAgent}`,
-      `read ${st.ok}/${st.n}, median ${st.med} ms, p95 ${st.p95} ms, card-in-view→result median ${st.seenMed} ms, ${st.perMin ? st.perMin.toFixed(1) + "/min" : ""}`,
+      `read ${st.ok}/${st.n}, median ${st.med} ms, p95 ${st.p95} ms, before snapshot medians: finding ${st.pre.find}, too far ${st.pre.small}, moving ${st.pre.moving}, holding ${st.pre.hold}, ${st.perMin ? st.perMin.toFixed(1) + "/min" : ""}`,
       `stage medians: capture ${st.stage.capture}, prep ${st.stage.prep}, ocr ${st.stage.ocr}, match ${st.stage.match}, lookup ${st.stage.lookup}`,
-      "time | try | result | conf | read | raw | ocr | score | margin | set # | wait capture prep ocr match lookup total",
-      ...log.map(e => [new Date(e.at).toLocaleTimeString(), e.try, e.result, e.conf, e.read, e.raw, e.ocr, e.score, e.margin, `${e.set} ${e.num}`, Object.values(e.ms).join(" ")].join(" | "))].join("\n");
+      "time | try | result | conf | read | raw | ocr | score | margin | share | set # | find small moving hold | wait capture prep ocr match lookup total",
+      ...log.map(e => [new Date(e.at).toLocaleTimeString(), e.try, e.result, e.conf, e.read, e.raw, e.ocr, e.score, e.margin, e.share ?? "", `${e.set} ${e.num}`, e.pre ? Object.values(e.pre).join(" ") : "", Object.values(e.ms).join(" ")].join(" | "))].join("\n");
     try { await navigator.clipboard.writeText(txt); toast("Log copied. Paste it to me in the chat"); } catch (er) { toast("Couldn't copy here"); }
   };
   $("#logClear").onclick = () => { sc.log = []; S.scanLog = []; save(); drawLog(); };
