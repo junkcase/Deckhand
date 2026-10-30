@@ -136,6 +136,11 @@ details.box summary::after{content:" ▾"}
 .cam .hint{position:absolute;left:0;right:0;top:10px;text-align:left;color:#fff;font-size:14px;font-weight:600;text-shadow:0 1px 3px #000;padding:0 104px 0 12px;min-height:20px}
 .cam .frame{transition:left .12s linear,top .12s linear,width .12s linear,height .12s linear,border-color .15s}
 .cam .frame.locked{border-style:solid;border-color:#fff}
+.cam .ov{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.cam .ov path{fill:rgba(0,0,0,.38)}
+.cam .ov polygon{fill:none;stroke:#fff;stroke-width:2.5;stroke-linejoin:round;transition:stroke .15s}
+.cam .ov.steady polygon{stroke:#ffd76a}
+.cam .ov.good polygon{stroke:#5cc489;stroke-width:4}
 .cam .frame.locked .band{opacity:.45}
 .cam .frame.steady{border-color:#ffd76a}
 .cam .frame.good{border-color:#5cc489;border-width:3px}
@@ -1280,6 +1285,7 @@ function renderScan() {
   $("#view").innerHTML = `<div class="stack">
     <div class="cam" id="cam"><video id="vid" playsinline muted autoplay></video>
       <div class="frame" id="frame"><div class="band name"></div><div class="band info"></div><div class="fprog" id="fprog"></div></div>
+      <svg class="ov" id="ov" hidden aria-hidden="true"><path id="ovMask" fill-rule="evenodd"></path><polygon id="ovQuad"></polygon></svg>
       <div class="hint" id="camHint">${sc.auto ? "Show a card to the camera" : manualHint}</div>
       <div class="sbar" id="sbar" hidden><div class="strack"><div class="sfill" id="sfill"></div></div><span id="slabel">Reading…</span></div>
       <div class="flash" id="flash"></div>
@@ -1288,6 +1294,7 @@ function renderScan() {
       <div class="ctrl"><button class="round" id="torch" aria-pressed="${torchOn}" aria-label="Flashlight" hidden>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 2h8l-2 7h-4zM10 9v13h4V9"/></svg></button>
         <button class="shutter" id="shoot" aria-label="Take a picture of the card"></button>
+        <button class="round" id="camSw" aria-label="Switch camera" hidden><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h3l2-2h6l2 2h3v11H4z"/><path d="M9.5 13.5a2.5 2.5 0 0 0 4.6 1.3M14.5 12.5a2.5 2.5 0 0 0-4.6-1.3"/><path d="M14.4 15.6l-.3-.8.9-.1M9.6 10.4l.3.8-.9.1"/></svg></button>
         <button class="round" id="photo" aria-label="Use a photo instead"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="12" cy="12" r="3.5"/></svg></button></div></div>
     <div class="row wrap">
       <span class="seg" id="scFin"><button data-f="nonfoil" aria-pressed="${sc.finish === "nonfoil"}">Normal</button><button data-f="foil" aria-pressed="${sc.finish === "foil"}">Foil</button></span>
@@ -1301,7 +1308,7 @@ function renderScan() {
     <div id="scItems"></div>
   </div>`;
   layoutFrame(); window.onresize = layoutFrame;
-  $("#shoot").onclick = () => { unlockBeep(); const vid = $("#vid"), r = vid && frameRect(vid); if (!r) { scStatus("The camera isn't ready yet."); return; } snapNow(vid, null); };
+  $("#shoot").onclick = () => { unlockBeep(); const vid = $("#vid"), q = vid && frameQuad(vid); if (!q) { scStatus("The camera isn't ready yet."); return; } snapNow(vid, null); };
   $("#photo").onclick = () => { const f = $("#fileIn"); f.accept = "image/*"; f.setAttribute("capture", "environment"); f.value = ""; f.onchange = () => { f.removeAttribute("capture"); f.files[0] && snapFromFile(f.files[0]); }; f.click(); };
   $("#scFin").onclick = e => { const b = e.target.closest("button"); if (b) { sc.finish = b.dataset.f; $("#scFin").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); } };
   $("#scBinder").onchange = e => { S.meta.binder = e.target.value; save(); };
@@ -1313,6 +1320,7 @@ function renderScan() {
     ana.good = 0; setFrameState("", 0); scStatus(readyMsg());
   };
   $("#torch").onclick = toggleTorch;
+  $("#camSw").onclick = switchCamera;
   attachAutocomplete($("#scType"), $("#scAc"), async name => {
     $("#scType").value = "";
     try {
@@ -1373,7 +1381,7 @@ function drawItems() {
 function scStatus(t) { const el = $("#scStatus"); if (el) el.textContent = t; }
 function camHint(t) { const h = $("#camHint"); if (h && h.textContent !== t) h.textContent = t; }
 /* ---------- where the card is: guide frame, or the card's own edges once found ---------- */
-const det = { box: null, cand: null, seen: 0, cv: null, moved: 1, lastPOI: 0, lastRefocus: 0, blurSince: 0 };
+const det = { box: null, quad: null, deg: 0, cand: null, seen: 0, cv: null, moved: 1, lastPOI: 0, lastRefocus: 0, blurSince: 0, tick: 0 };
 const camDev = { track: null, caps: {}, held: false };
 function camXform(vid) {
   const cam = $("#cam"), W = cam.clientWidth, H = cam.clientHeight, vw = vid.videoWidth, vh = vid.videoHeight;
@@ -1387,15 +1395,197 @@ function guideScreen(cam) {
 function guideBox(vid) { const g = guideScreen($("#cam")), t = camXform(vid); return { x: (g.x - t.ox) / t.s, y: (g.y - t.oy) / t.s, w: g.w / t.s, h: g.h / t.s }; }
 const cardLocked = () => !!det.box && performance.now() - det.seen < 450;
 function frameRect(vid) { if (!vid || !vid.videoWidth || !$("#cam")) return null; return cardLocked() ? det.box : guideBox(vid); }
+// The card's four corners (video pixels): the found card at any tilt, or the guide box.
+function frameQuad(vid) { if (!vid || !vid.videoWidth || !$("#cam")) return null; return cardLocked() && det.quad ? det.quad : rectQuad(guideBox(vid)); }
 function placeFrame(vid) {
-  const fr = $("#frame"), cam = $("#cam"); if (!fr || !cam) return;
-  let r;
-  if (vid && vid.videoWidth) { const b = frameRect(vid), t = camXform(vid); r = { x: b.x * t.s + t.ox, y: b.y * t.s + t.oy, w: b.w * t.s, h: b.h * t.s }; }
-  else r = guideScreen(cam);
-  fr.style.left = r.x + "px"; fr.style.top = r.y + "px"; fr.style.width = r.w + "px"; fr.style.height = r.h + "px";
-  fr.classList.toggle("locked", cardLocked());
+  const fr = $("#frame"), cam = $("#cam"), ov = $("#ov"); if (!fr || !cam) return;
+  const locked = cardLocked() && det.quad && vid && vid.videoWidth;
+  if (!locked) {
+    const r = vid && vid.videoWidth ? (() => { const b = guideBox(vid), t = camXform(vid); return { x: b.x * t.s + t.ox, y: b.y * t.s + t.oy, w: b.w * t.s, h: b.h * t.s }; })() : guideScreen(cam);
+    fr.style.left = r.x + "px"; fr.style.top = r.y + "px"; fr.style.width = r.w + "px"; fr.style.height = r.h + "px";
+    fr.hidden = false; if (ov) ov.hidden = true; return;
+  }
+  // a found card: outline its real corners, darken everything else
+  const t = camXform(vid), P = det.quad.map(p => [p.x * t.s + t.ox, p.y * t.s + t.oy]);
+  fr.hidden = true; if (!ov) return; ov.hidden = false;
+  ov.setAttribute("viewBox", `0 0 ${t.W} ${t.H}`);
+  const pts = P.map(p => p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
+  $("#ovQuad").setAttribute("points", pts);
+  $("#ovMask").setAttribute("d", `M0 0H${t.W}V${t.H}H0Z M${P.map(p => p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" L")}Z`);
 }
 function layoutFrame() { placeFrame($("#vid")); }
+// Homography from the card's own coordinates (u,v) to image points: 4 point pairs -> 3x3 matrix.
+function homography(dst, src) {
+  const A = [], b = [];
+  for (let i = 0; i < 4; i++) {
+    const { x: u, y: v } = dst[i], { x, y } = src[i];
+    A.push([u, v, 1, 0, 0, 0, -u * x, -v * x]); b.push(x);
+    A.push([0, 0, 0, u, v, 1, -u * y, -v * y]); b.push(y);
+  }
+  for (let c = 0; c < 8; c++) {                                  // Gaussian elimination with pivoting
+    let p = c; for (let r = c + 1; r < 8; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    [A[c], A[p]] = [A[p], A[c]]; [b[c], b[p]] = [b[p], b[c]];
+    for (let r = 0; r < 8; r++) { if (r === c) continue; const f = A[r][c] / A[c][c]; for (let k = c; k < 8; k++) A[r][k] -= f * A[c][k]; b[r] -= f * b[c]; }
+  }
+  return b.map((v, i) => v / A[i][i]).concat(1);
+}
+// Straighten: fill a W×H image of the card from source pixels (RGBA, sw×sh, offset ox,oy).
+function warpQuad(src, sw, sh, ox, oy, quad, W, H, gray) {
+  const Hm = homography([{ x: 0, y: 0 }, { x: W, y: 0 }, { x: W, y: H }, { x: 0, y: H }], quad);
+  const out = gray ? new Float32Array(W * H) : new Uint8ClampedArray(W * H * 4);
+  for (let v = 0; v < H; v++) for (let u = 0; u < W; u++) {
+    const uu = u + 0.5, vv = v + 0.5, z = Hm[6] * uu + Hm[7] * vv + 1;
+    let x = (Hm[0] * uu + Hm[1] * vv + Hm[2]) / z - ox - 0.5, y = (Hm[3] * uu + Hm[4] * vv + Hm[5]) / z - oy - 0.5;
+    if (x < 0) x = 0; if (y < 0) y = 0; if (x > sw - 1.001) x = sw - 1.001; if (y > sh - 1.001) y = sh - 1.001;
+    const x0 = x | 0, y0 = y | 0, fx = x - x0, fy = y - y0, i00 = (y0 * sw + x0) * 4, i10 = i00 + 4, i01 = i00 + sw * 4, i11 = i01 + 4;
+    const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy, o = v * W + u;
+    if (gray) {
+      const l = k => src[k] * 0.299 + src[k + 1] * 0.587 + src[k + 2] * 0.114;
+      out[o] = l(i00) * w00 + l(i10) * w10 + l(i01) * w01 + l(i11) * w11;
+    } else for (let ch = 0; ch < 4; ch++) out[o * 4 + ch] = src[i00 + ch] * w00 + src[i10 + ch] * w10 + src[i01 + ch] * w01 + src[i11 + ch] * w11;
+  }
+  return out;
+}
+const quadBBox = q => { const xs = q.map(p => p.x), ys = q.map(p => p.y), x = Math.min(...xs), y = Math.min(...ys); return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y }; };
+const rectQuad = r => [{ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }, { x: r.x + r.w, y: r.y + r.h }, { x: r.x, y: r.y + r.h }];
+
+/* ---------- tilted cards: undo the tilt, use the upright detector, then fit the real edges ---------- */
+// Rotate the picture by -deg around its center (same size), bilinear.
+function rotateGray(G, w, h, deg) {
+  const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), cx = (w - 1) / 2, cy = (h - 1) / 2, out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const dx = x - cx, dy = y - cy, sx = cx + dx * c - dy * s, sy = cy + dx * s + dy * c;   // where this pixel comes from
+    if (sx < 0 || sy < 0 || sx > w - 1.001 || sy > h - 1.001) { out[y * w + x] = 128; continue; }
+    const x0 = sx | 0, y0 = sy | 0, fx = sx - x0, fy = sy - y0, i = y0 * w + x0;
+    out[y * w + x] = G[i] * (1 - fx) * (1 - fy) + G[i + 1] * fx * (1 - fy) + G[i + w] * (1 - fx) * fy + G[i + w + 1] * fx * fy;
+  }
+  return out;
+}
+function unrotate(p, w, h, deg) {
+  const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), cx = (w - 1) / 2, cy = (h - 1) / 2, dx = p.x - cx, dy = p.y - cy;
+  return { x: cx + dx * c - dy * s, y: cy + dx * s + dy * c };
+}
+// Fit each side of a rough outline to the real edge pixels near it (handles a card held at an angle).
+function refineQuad(G, w, h, q) {
+  const n = w * h, mag = new Float32Array(n), gxA = new Float32Array(n), gyA = new Float32Array(n);
+  let sum = 0;
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = y * w + x, gx = G[i + 1] - G[i - 1], gy = G[i + w] - G[i - w], m = Math.hypot(gx, gy);
+    mag[i] = m; gxA[i] = gx / (m || 1); gyA[i] = gy / (m || 1); sum += m;
+  }
+  const thr = Math.max(10, 2 * sum / n);
+  const lineFrom = (P, Q) => { const dx = Q.x - P.x, dy = Q.y - P.y, L = Math.hypot(dx, dy) || 1, c = -dy / L, s = dx / L; return { c, s, rho: P.x * c + P.y * s, P, Q }; };
+  const fit1 = (l, band) => {
+    let W = 0, mx = 0, my = 0; const pts = [];
+    const x0 = Math.max(1, Math.floor(Math.min(l.P.x, l.Q.x) - band - 2)), x1 = Math.min(w - 2, Math.ceil(Math.max(l.P.x, l.Q.x) + band + 2));
+    const y0 = Math.max(1, Math.floor(Math.min(l.P.y, l.Q.y) - band - 2)), y1 = Math.min(h - 2, Math.ceil(Math.max(l.P.y, l.Q.y) + band + 2));
+    const dx = l.Q.x - l.P.x, dy = l.Q.y - l.P.y, LL = dx * dx + dy * dy || 1;
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const i = y * w + x, m = mag[i]; if (m < thr) continue;
+      if (Math.abs(x * l.c + y * l.s - l.rho) > band) continue;
+      const t = ((x - l.P.x) * dx + (y - l.P.y) * dy) / LL; if (t < 0.1 || t > 0.9) continue;     // stay away from the corners
+      if (Math.abs(gxA[i] * l.c + gyA[i] * l.s) < 0.85) continue;
+      pts.push(x, y, m); mx += x * m; my += y * m; W += m;
+    }
+    if (pts.length < 45) return l;
+    mx /= W; my /= W; let sxx = 0, syy = 0, sxy = 0;
+    for (let k = 0; k < pts.length; k += 3) { const ex = pts[k] - mx, ey = pts[k + 1] - my, m = pts[k + 2]; sxx += m * ex * ex; syy += m * ey * ey; sxy += m * ex * ey; }
+    const th = 0.5 * Math.atan2(2 * sxy, sxx - syy) + Math.PI / 2;
+    let c = Math.cos(th), s = Math.sin(th); if (c * l.c + s * l.s < 0) { c = -c; s = -s; }
+    return { c, s, rho: mx * c + my * s, P: l.P, Q: l.Q };
+  };
+  const X = (p, r) => { const det = p.c * r.s - p.s * r.c; if (Math.abs(det) < 1e-6) return null; return { x: (p.rho * r.s - p.s * r.rho) / det, y: (p.c * r.rho - p.rho * r.c) / det }; };
+  const L = [lineFrom(q[0], q[1]), lineFrom(q[1], q[2]), lineFrom(q[2], q[3]), lineFrom(q[3], q[0])].map(l => fit1(fit1(fit1(l, 4), 3), 2));
+  const r = [X(L[3], L[0]), X(L[0], L[1]), X(L[1], L[2]), X(L[2], L[3])];
+  if (r.some(p => !p)) return q;
+  // keep the refinement only if it stays a sensible card shape close to the rough outline
+  const size = Math.hypot(q[0].x - q[3].x, q[0].y - q[3].y);
+  if (r.some((p, i) => Math.hypot(p.x - q[i].x, p.y - q[i].y) > size * 0.08)) return q;
+  return r;
+}
+// The found outline is often the inside edge of the card's black border. Look just outside each
+// side for a parallel outer edge (the card against the background) and move the side out to it.
+function expandToOuter(G, w, h, q) {
+  const n = w * h, mag = new Float32Array(n), ux = new Float32Array(n), uy = new Float32Array(n); let sum = 0;
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const i = y * w + x, gx = G[i + 1] - G[i - 1], gy = G[i + w] - G[i - w], m = Math.hypot(gx, gy); mag[i] = m; ux[i] = gx / (m || 1); uy[i] = gy / (m || 1); sum += m; }
+  const thr = Math.max(10, 2 * sum / n), cx = q.reduce((t, p) => t + p.x, 0) / 4, cy = q.reduce((t, p) => t + p.y, 0) / 4;
+  const size = Math.hypot(q[0].x - q[3].x, q[0].y - q[3].y), maxOff = Math.max(3, Math.round(size * 0.07));
+  const lines = [];
+  for (let s = 0; s < 4; s++) {
+    const P = q[s], Q = q[(s + 1) % 4], dx = Q.x - P.x, dy = Q.y - P.y, L = Math.hypot(dx, dy) || 1;
+    let nx = -dy / L, ny = dx / L; const mx = (P.x + Q.x) / 2, my = (P.y + Q.y) / 2;
+    if ((mx - cx) * nx + (my - cy) * ny < 0) { nx = -nx; ny = -ny; }            // point outward
+    const hits = off => { let k = 0; for (let j = 1; j <= 20; j++) { const t = 0.1 + 0.8 * j / 21, x = Math.round(P.x + dx * t + nx * off), y = Math.round(P.y + dy * t + ny * off); if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) continue; const i = y * w + x; if (mag[i] >= thr && Math.abs(ux[i] * nx + uy[i] * ny) > 0.8) k++; } return k / 20; };
+    let best = 0;
+    for (let off = 2; off <= maxOff; off++) { const v = Math.max(hits(off), hits(off + 0.5)); if (v >= 0.5) best = off; }
+    lines.push({ P: { x: P.x + nx * best, y: P.y + ny * best }, Q: { x: Q.x + nx * best, y: Q.y + ny * best } });
+  }
+  const X = (a, b) => { const d1x = a.Q.x - a.P.x, d1y = a.Q.y - a.P.y, d2x = b.Q.x - b.P.x, d2y = b.Q.y - b.P.y, den = d1x * d2y - d1y * d2x; if (Math.abs(den) < 1e-6) return null; const t = ((b.P.x - a.P.x) * d2y - (b.P.y - a.P.y) * d2x) / den; return { x: a.P.x + d1x * t, y: a.P.y + d1y * t }; };
+  const r = [X(lines[3], lines[0]), X(lines[0], lines[1]), X(lines[1], lines[2]), X(lines[2], lines[3])];
+  return r.some(p => !p) ? q : r;
+}
+// Try each likely tilt with the upright detector; keep the best-scoring card.
+function detectTilted(G, w, h, angles) {
+  let best = null;
+  for (const deg of angles) {
+    const R = deg ? rotateGray(G, w, h, deg) : G, r = detectCore(R, w, h);
+    if (r && (!best || r.score > best.r.score)) best = { r, deg };
+  }
+  if (!best) return null;
+  const toQuad = (r, deg) => [{ x: r.x, y: r.y }, { x: r.x + r.w, y: r.y }, { x: r.x + r.w, y: r.y + r.h }, { x: r.x, y: r.y + r.h }].map(p => deg ? unrotate(p, w, h, deg) : p);
+  let q = refineQuad(G, w, h, toQuad(best.r, best.deg)), deg = best.deg, score = best.r.score;
+  // second pass: take the tilt from the edges just found (average of the two long sides) and look again
+  const sideDeg = (a, b) => Math.atan2(b.x - a.x, b.y - a.y) * -180 / Math.PI;
+  const est = (sideDeg(q[0], q[3]) + sideDeg(q[1], q[2])) / 2;
+  if (Math.abs(est - deg) >= 2.5 && Math.abs(est) < 46) {
+    const R = rotateGray(G, w, h, est), r2 = detectCore(R, w, h);
+    if (r2 && r2.score >= score - 0.3) { q = refineQuad(G, w, h, toQuad(r2, est)); deg = est; score = r2.score; }
+  }
+  if (!borderLooksLikeCard(G, w, h, q) && score < 5.5) return null;   // no card border and only middling edges: probably not a card
+  return { pts: expandToOuter(G, w, h, q), deg, score };
+}
+// Tilt candidates from the strongest long straight lines (Hough peaks), folded to [-45°, 45°).
+function houghTilts(G, w, h, n = 2) {
+  const TB = 90, dT = Math.PI / TB, diag = Math.ceil(Math.hypot(w, h)), RB = 2 * diag + 1, acc = new Float32Array(TB * RB);
+  const COS = new Float32Array(TB), SIN = new Float32Array(TB); for (let k = 0; k < TB; k++) { COS[k] = Math.cos(k * dT); SIN[k] = Math.sin(k * dT); }
+  let sum = 0; const mag = new Float32Array(w * h), ang = new Float32Array(w * h);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const i = y * w + x, gx = G[i + 1] - G[i - 1], gy = G[i + w] - G[i - w], m = Math.hypot(gx, gy); mag[i] = m; ang[i] = Math.atan2(gy, gx); sum += m; }
+  const thr = Math.max(12, 2.2 * sum / (w * h));
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = y * w + x, m = mag[i]; if (m < thr) continue;
+    let t = ang[i]; if (t < 0) t += Math.PI; if (t >= Math.PI) t -= Math.PI;
+    const kb = Math.round(t / dT);
+    for (let d = -2; d <= 2; d++) { const k = ((kb + d) % TB + TB) % TB; acc[k * RB + Math.round(x * COS[k] + y * SIN[k]) + diag] += m; }
+  }
+  // the card's long straight sides make the tallest peaks; sum the top peaks per folded angle
+  const top = [];
+  for (let k = 0; k < TB; k++) { let bestV = 0; for (let r = 0; r < RB; r++) if (acc[k * RB + r] > bestV) bestV = acc[k * RB + r]; top.push([k, bestV]); }
+  const fold = new Float32Array(45);                              // 2° bins over [-45, 45)
+  for (const [k, v] of top) { const deg = k * 2; const f = ((deg + 45) % 90) - 45; fold[Math.floor((f + 45) / 2) % 45] += v * v; }
+  const order = [...fold.keys()].sort((a, b) => fold[b] - fold[a]);
+  const out = [];
+  for (const b of order) { const a = b * 2 - 45 + 1; if (out.every(o => Math.abs(o - a) >= 5)) out.push(a); if (out.length >= n) break; }
+  if (!out.some(a => Math.abs(a) < 3)) out.push(0);
+  return out;
+}
+// Does this outline look like a card? Just inside it, most of the way round, is one border colour
+// that differs from what's just outside (a finger may cover part of it).
+function borderLooksLikeCard(G, w, h, q) {
+  const Hm = homography([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }], q);
+  const at = (u, v) => { const z = Hm[6] * u + Hm[7] * v + 1, x = Math.round((Hm[0] * u + Hm[1] * v + Hm[2]) / z), y = Math.round((Hm[3] * u + Hm[4] * v + Hm[5]) / z); return x >= 0 && y >= 0 && x < w && y < h ? G[y * w + x] : null; };
+  const ins = [], diffs = [];
+  for (let k = 0; k < 48; k++) {
+    const t = 0.08 + 0.84 * ((k % 12) / 11), side = k / 12 | 0;
+    const [u, v, uo, vo] = side === 0 ? [t, 0.02, t, -0.035] : side === 1 ? [0.973, t, 1.045, t] : side === 2 ? [t, 0.98, t, 1.035] : [0.027, t, -0.045, t];
+    const a = at(u, v), b = at(uo, vo); if (a == null) continue; ins.push(a); if (b != null) diffs.push(Math.abs(a - b));
+  }
+  if (ins.length < 30) return false;
+  const sorted = ins.slice().sort((x, y) => x - y), med = sorted[sorted.length >> 1];
+  const even = ins.filter(v => Math.abs(v - med) < 24).length / ins.length;
+  const contrast = diffs.filter(d => d > 16).length / (diffs.length || 1);
+  return even >= 0.62 && contrast >= 0.5;
+}
+
 // Find an upright card: strong straight edges on all four sides with a card's 63:88 shape.
 const DET = { max: 200, minH: 0.27, aspLo: 0.62, aspHi: 0.82, minSide: 2.2 };
 function edgePeaks(P, n, sep) {
@@ -1452,15 +1642,19 @@ function detectCard(vid) {
   g.drawImage(vid, 0, 0, w, h);
   const d = g.getImageData(0, 0, w, h).data, G = new Float32Array(w * h);
   for (let i = 0, j = 0; i < d.length; i += 4, j++) G[j] = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
-  const r = detectCore(G, w, h); if (!r) return null;
-  return { x: r.x / k, y: r.y / k, w: r.w / k, h: r.h / k };
+  // While a card is being tracked, look only at its current tilt (fast); search all tilts every few frames or when lost.
+  det.tick++;
+  const angles = cardLocked() && det.tick % 6 ? [det.deg] : houghTilts(G, w, h, 2);
+  const r = detectTilted(G, w, h, angles); if (!r) return null;
+  return { pts: r.pts.map(p => ({ x: p.x / k, y: p.y / k })), deg: r.deg };
 }
 function iou(a, b) {
   const x0 = Math.max(a.x, b.x), y0 = Math.max(a.y, b.y), x1 = Math.min(a.x + a.w, b.x + b.w), y1 = Math.min(a.y + a.h, b.y + b.h);
   const I = Math.max(0, x1 - x0) * Math.max(0, y1 - y0); return I / (a.w * a.h + b.w * b.h - I);
 }
-function updateBox(vid, r) {
-  if (!r) { det.moved = 1; return; }
+function updateBox(vid, found) {
+  if (!found) { det.moved = 1; return; }
+  const r = quadBBox(found.pts);
   const t = camXform(vid), cx = (r.x + r.w / 2) * t.s + t.ox, cy = (r.y + r.h / 2) * t.s + t.oy;
   if (cx < 0 || cy < 0 || cx > t.W || cy > t.H) return;                       // off the visible screen
   const b = det.box, now = performance.now();
@@ -1470,9 +1664,9 @@ function updateBox(vid, r) {
   }
   if (b && cardLocked() && iou(b, r) > 0.55) {
     det.moved = Math.hypot(r.x + r.w / 2 - (b.x + b.w / 2), r.y + r.h / 2 - (b.y + b.h / 2)) / b.h + Math.abs(r.h - b.h) / b.h;
-    const a = 0.5; det.box = { x: b.x + (r.x - b.x) * a, y: b.y + (r.y - b.y) * a, w: b.w + (r.w - b.w) * a, h: b.h + (r.h - b.h) * a };
-  } else { det.moved = 1; det.box = r; }
-  det.seen = now;
+    const a = 0.5; det.quad = det.quad.map((p, i) => ({ x: p.x + (found.pts[i].x - p.x) * a, y: p.y + (found.pts[i].y - p.y) * a }));
+  } else { det.moved = 1; det.quad = found.pts; }
+  det.box = quadBBox(det.quad); det.deg = found.deg; det.seen = now;
 }
 // Focus: aim at the card once, then HOLD that focus for the next cards (a stack is scanned at the
 // same distance, so the camera shouldn't refocus on the table every time a card is swapped).
@@ -1526,13 +1720,18 @@ async function startCamera() {
   const vid = $("#vid"); if (!vid) return;
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { scStatus("Camera isn't available here. Use the photo button instead. The page must be opened over https."); return; }
   try {
-    if (!stream) stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 2560 }, height: { ideal: 1440 } }, audio: false });
+    const want = { width: { ideal: 2560 }, height: { ideal: 1440 } };
+    if (!stream) {
+      try { stream = await navigator.mediaDevices.getUserMedia({ video: Object.assign(S.meta.camId ? { deviceId: { exact: S.meta.camId } } : { facingMode: { ideal: "environment" } }, want), audio: false }); }
+      catch (e) { if (!S.meta.camId) throw e; S.meta.camId = null; stream = await navigator.mediaDevices.getUserMedia({ video: Object.assign({ facingMode: { ideal: "environment" } }, want), audio: false }); }
+    }
     if (tab !== "scan") { stopCamera(); return; }
     vid.srcObject = stream; await vid.play().catch(() => {});
     const track = stream.getVideoTracks()[0];
     camDev.track = track; camDev.caps = track.getCapabilities ? track.getCapabilities() : {}; camDev.held = false;
     zoomButtons();
     if (camDev.caps.torch) $("#torch").hidden = false;
+    listCameras();
     if ((camDev.caps.focusMode || []).includes("continuous")) track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
     vid.onclick = e => { const t = camXform(vid), r = vid.getBoundingClientRect(); focusAt(((e.clientX - r.left) - t.ox) / t.s / vid.videoWidth, ((e.clientY - r.top) - t.oy) / t.s / vid.videoHeight, true); ana.sh = []; camHint("Focusing…"); };
     scStatus(readyMsg());
@@ -1541,7 +1740,22 @@ async function startCamera() {
     startAuto();
   } catch (e) { scStatus("Camera blocked. Allow camera access in Chrome's site settings, or use the photo button."); }
 }
-function stopCamera() { stopAuto(); camDev.track = null; camDev.held = false; det.box = null; if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; torchOn = false; } window.onresize = null; }
+function stopCamera() { stopAuto(); camDev.track = null; camDev.held = false; det.box = null; det.quad = null; if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; torchOn = false; } window.onresize = null; }
+// Several cameras (front/back, or a tablet's extra lenses): show a switch button and cycle through them.
+let cams = [];
+async function listCameras() {
+  try { cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput"); } catch (e) { cams = []; }
+  const b = $("#camSw"); if (b) b.hidden = cams.length < 2;
+}
+async function switchCamera() {
+  if (cams.length < 2) return;
+  let cur = ""; try { cur = camDev.track.getSettings().deviceId || ""; } catch (e) {}
+  const i = cams.findIndex(c => c.deviceId === cur), next = cams[(i + 1) % cams.length];
+  S.meta.camId = next.deviceId; save();
+  stopCamera(); await startCamera(); layoutFrame(); window.onresize = layoutFrame;
+  let face = ""; try { face = camDev.track.getSettings().facingMode || ""; } catch (e) {}
+  toast(face === "user" ? "Front camera: hold the card up to the screen" : face === "environment" ? "Back camera" : (next.label || "Camera switched"));
+}
 async function toggleTorch() {
   if (!stream) return; torchOn = !torchOn;
   try { await stream.getVideoTracks()[0].applyConstraints({ advanced: [{ torch: torchOn }] }); } catch (e) { torchOn = false; }
@@ -1556,17 +1770,33 @@ function stopAuto() { if (ana.timer) clearInterval(ana.timer); ana.timer = null;
 function setFrameState(st, p) {
   const fr = $("#frame"); if (!fr) return;
   fr.classList.toggle("steady", st === "steady"); fr.classList.toggle("good", st === "good");
+  const ov = $("#ov"); if (ov) { ov.classList.toggle("steady", st === "steady"); ov.classList.toggle("good", st === "good"); }
   const b = $("#fprog"); if (b) b.style.transform = `scaleX(${Math.max(0, Math.min(1, p))})`;
 }
+// Copy the area around the card out of the video (scaled so its long side is at most maxSide).
+function grabRegion(src, quad, maxSide, canvas) {
+  const b = quadBBox(quad), x = Math.max(0, Math.floor(b.x)), y = Math.max(0, Math.floor(b.y));
+  const sw = src.videoWidth || src.width, sh = src.videoHeight || src.height;
+  const w = Math.max(2, Math.min(sw - x, Math.ceil(b.w) + 2)), h = Math.max(2, Math.min(sh - y, Math.ceil(b.h) + 2)), k = Math.min(1, maxSide / Math.max(w, h));
+  const c = canvas || document.createElement("canvas"); c.width = Math.max(2, Math.round(w * k)); c.height = Math.max(2, Math.round(h * k));
+  const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(src, x, y, w, h, 0, 0, c.width, c.height);
+  return { c, g, local: quad.map(p => ({ x: (p.x - x) * k, y: (p.y - y) * k })) };
+}
+const isUpright = q => Math.abs(q[0].y - q[1].y) < 1 && Math.abs(q[0].x - q[3].x) < 1 && Math.abs(q[1].x - q[2].x) < 1;
 function sampleCard(vid) {
-  const r = frameRect(vid); if (!r) return null;
-  const { W, H } = AUTO, c = ana.cv || (ana.cv = document.createElement("canvas"));
-  c.width = W; c.height = H;
-  const g = c.getContext("2d", { willReadFrequently: true });
-  g.drawImage(vid, r.x, r.y, r.w, r.h, 0, 0, W, H);
-  const d = g.getImageData(0, 0, W, H).data, L = new Float32Array(W * H);
-  let sum = 0;
-  for (let i = 0, j = 0; i < d.length; i += 4, j++) { const y = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114; L[j] = y; sum += y; }
+  const q = frameQuad(vid); if (!q) return null;
+  const { W, H } = AUTO; let L, sum = 0;
+  if (isUpright(q)) {
+    const r = quadBBox(q), c = ana.cv || (ana.cv = document.createElement("canvas")); c.width = W; c.height = H;
+    const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(vid, r.x, r.y, r.w, r.h, 0, 0, W, H);
+    const d = g.getImageData(0, 0, W, H).data; L = new Float32Array(W * H);
+    for (let i = 0, j = 0; i < d.length; i += 4, j++) { const y = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114; L[j] = y; sum += y; }
+  } else {                                                         // tilted card: straighten it first
+    const R = grabRegion(vid, q, 420, ana.cv2 || (ana.cv2 = document.createElement("canvas")));
+    const d = R.g.getImageData(0, 0, R.c.width, R.c.height).data;
+    L = warpQuad(d, R.c.width, R.c.height, 0, 0, R.local, W, H, true);
+    for (let i = 0; i < L.length; i++) sum += L[i];
+  }
   return Object.assign({ L, mean: sum / L.length }, frameStats(L, W, H, sum / L.length));
 }
 function frameStats(L, W, H, mean) {
@@ -1618,32 +1848,57 @@ function autoTick() {
   setFrameState("steady", ana.good / need);
   if (ana.good >= need) { ana.good = 0; snapNow(vid, s); }
 }
-// Take the picture: copy just the card out of the video frame at full resolution.
-function takeSnapshot(src, r) {
-  const k = Math.min(1, 1200 / r.h), c = document.createElement("canvas");
-  c.width = Math.max(1, Math.round(r.w * k)); c.height = Math.max(1, Math.round(r.h * k));
-  c.getContext("2d").drawImage(src, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
+// Take the picture: copy just the card out of the frame at full resolution, straightened if it was tilted.
+function takeSnapshot(src, quad) {
+  const c = document.createElement("canvas");
+  if (isUpright(quad)) {
+    const r = quadBBox(quad), k = Math.min(1, 1200 / r.h);
+    c.width = Math.max(1, Math.round(r.w * k)); c.height = Math.max(1, Math.round(r.h * k));
+    c.getContext("2d").drawImage(src, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
+  } else {
+    const R = grabRegion(src, quad, 1500), side = Math.hypot(R.local[0].x - R.local[3].x, R.local[0].y - R.local[3].y);
+    const H = Math.max(300, Math.min(1100, Math.round(side))), W = Math.round(H * 63 / 88);
+    const px = warpQuad(R.g.getImageData(0, 0, R.c.width, R.c.height).data, R.c.width, R.c.height, 0, 0, R.local, W, H, false);
+    c.width = W; c.height = H; c.getContext("2d").putImageData(new ImageData(px, W, H), 0, 0);
+    R.c.width = R.c.height = 0;
+  }
   let thumb = "";
   try { const t = document.createElement("canvas"); t.width = 63; t.height = 88; t.getContext("2d").drawImage(c, 0, 0, 63, 88); thumb = t.toDataURL("image/jpeg", 0.7); } catch (e) {}
   return { snap: c, thumb };
 }
-function snapNow(vid, s) {
-  const r = frameRect(vid); if (!r) return;
-  const shot = takeSnapshot(vid, r);
+// A quick burst: grab 3 frames ~90 ms apart (cheap copies of the area around the card), keep the
+// sharpest, and straighten only that one. A slight hand shake then rarely spoils the picture.
+const BURST = { n: 3, gap: 90 };
+async function snapNow(vid, s) {
+  if (!frameQuad(vid)) return;
   if (s) { ana.armed = false; ana.sig = s.L; }
   const f = $("#flash"); if (f) { f.classList.remove("on"); void f.offsetWidth; f.classList.add("on"); }
   setFrameState("good", 1); setTimeout(() => setFrameState("", 0), 260);
   shutter(); if (navigator.vibrate) navigator.vibrate(25);
   camHint("Got it. Show the next card");
-  shot.sharp = s ? s.sharp : null;
   if (s) holdFocus();
+  const frames = [];
+  for (let i = 0; i < BURST.n; i++) {
+    if (i) await sleep(BURST.gap);
+    const q = frameQuad(vid); if (!q) break;
+    const smp = sampleCard(vid);
+    const R = grabRegion(vid, q, 1500);                              // fast GPU copy of just this frame's card area
+    frames.push({ R, sharp: smp ? smp.sharp : 0 });
+  }
+  if (!frames.length) return;
+  frames.sort((a, b) => b.sharp - a.sharp);
+  const best = frames[0];
+  for (const fr of frames.slice(1)) fr.R.c.width = fr.R.c.height = 0;      // drop the others right away
+  const shot = takeSnapshot(best.R.c, best.R.local);
+  best.R.c.width = best.R.c.height = 0;
+  shot.sharp = best.sharp || (s ? s.sharp : null);
   enqueue(shot);
 }
 async function snapFromFile(file) {
   let src = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => null);
   if (!src) { const img = new Image(); img.src = URL.createObjectURL(file); await img.decode(); src = img; }
   const iw = src.width, ih = src.height, ch = Math.min(ih, iw * 88 / 63) * 0.96, cw = ch * 63 / 88;
-  enqueue(takeSnapshot(src, { x: (iw - cw) / 2, y: (ih - ch) / 2, w: cw, h: ch }));
+  enqueue(takeSnapshot(src, rectQuad({ x: (iw - cw) / 2, y: (ih - ch) / 2, w: cw, h: ch })));
 }
 function unlockBeep() { try { ana.ac = ana.ac || new (window.AudioContext || window.webkitAudioContext)(); if (ana.ac.state === "suspended") ana.ac.resume(); } catch (e) {} }
 function shutter() {
