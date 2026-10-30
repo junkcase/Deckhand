@@ -282,10 +282,36 @@ function migrate() {
 const ckey = (id, finish, binder) => id + "|" + finish + "|" + binder;
 const pkey = (id, finish) => id + "|" + finish;
 migrate();
-function save() {
-  try { localStorage.setItem(KEY, JSON.stringify(S)); }
-  catch (e) { toast("Couldn't save: phone storage is full or blocked. Export a backup from Collection."); }
+/* Saving: the phone's IndexedDB database (room for very large collections). Browser localStorage
+   holds only ~5 MB, which a collection of several thousand cards can outgrow, so it is now only
+   read once to move older data over. */
+const idb = { p: null, ok: typeof indexedDB !== "undefined" };
+function idbOpen() {
+  if (!idb.p) idb.p = new Promise((res, rej) => {
+    const r = indexedDB.open("deckhand", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("kv");
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); r.onblocked = () => rej(new Error("blocked"));
+  });
+  return idb.p;
 }
+async function idbGet(k) { const db = await idbOpen(); return new Promise((res, rej) => { const q = db.transaction("kv").objectStore("kv").get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
+async function idbSet(k, v) { const db = await idbOpen(); return new Promise((res, rej) => { const tx = db.transaction("kv", "readwrite"); tx.objectStore("kv").put(v, k); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error || new Error("aborted")); }); }
+let saveT = null, saving = null, saveWarned = false;
+function save() { clearTimeout(saveT); saveT = setTimeout(flushSave, 250); }
+async function flushSave() {
+  clearTimeout(saveT); saveT = null;
+  if (idb.ok) {
+    try {
+      saving = idbSet("state", S); await saving; saving = null;
+      try { if (localStorage.getItem(KEY)) localStorage.removeItem(KEY); } catch (e) {}
+      return true;
+    } catch (e) { saving = null; idb.ok = false; }
+  }
+  try { localStorage.setItem(KEY, JSON.stringify(S)); return true; }
+  catch (e) { if (!saveWarned) { saveWarned = true; toast("Couldn't save: phone storage is full or blocked. Export a backup from Collection."); } return false; }
+}
+document.addEventListener("visibilitychange", () => { if (document.hidden && saveT) flushSave(); });
+window.addEventListener("pagehide", () => { if (saveT) flushSave(); });
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
 
 /* ---------- Scryfall ---------- */
@@ -364,12 +390,16 @@ function loadNames() {
   if (namesP) return namesP;
   namesP = (async () => {
     let cached = null;
-    try { cached = JSON.parse(localStorage.getItem(NAMES_KEY) || "null"); } catch (e) {}
+    try { cached = idb.ok ? await idbGet("names") : null; } catch (e) {}
+    if (!cached) { try { cached = JSON.parse(localStorage.getItem(NAMES_KEY) || "null"); if (cached && idb.ok) { idbSet("names", cached).then(() => localStorage.removeItem(NAMES_KEY)).catch(() => {}); } } catch (e) {} }
     if (cached && cached.names && cached.names.length) setNames(cached.names);
     if (!cached || Date.now() - cached.at > 7 * 864e5) {
       try {
         const r = await sf("/catalog/card-names");
-        if (r.data && r.data.length) { setNames(r.data); try { localStorage.setItem(NAMES_KEY, JSON.stringify({ at: Date.now(), names: r.data })); } catch (e) {} }
+        if (r.data && r.data.length) {
+          setNames(r.data); const rec = { at: Date.now(), names: r.data };
+          if (idb.ok) idbSet("names", rec).catch(() => {}); else { try { localStorage.setItem(NAMES_KEY, JSON.stringify(rec)); } catch (e) {} }
+        }
       } catch (e) { if (!NAMES) { namesP = null; throw e; } }
     }
     return NAMES;
@@ -911,8 +941,10 @@ async function csvImport(file, target) {
           ${isDeck ? `<select id="impDest"><option value="__new" ${st.dest === "__new" ? "selected" : ""}>New deck…</option>${decks.map(d => `<option value="${d.id}" ${st.dest === d.id ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select>
               ${st.dest === "__new" ? `<input type="text" id="impName" value="${esc(st.newName)}" maxlength="60" aria-label="New deck name"><select id="impFmt" aria-label="Format">${Object.entries(FORMATS).map(([k, v]) => `<option value="${k}" ${st.fmt === k ? "selected" : ""}>${v}</option>`).join("")}</select>` : ""}`
             : `<select id="impDest">${m.binder >= 0 ? `<option value="__file" ${st.dest === "__file" ? "selected" : ""}>Use the binder names in the file</option>` : ""}${binderOptions(st.dest)}</select>`}
-          <span class="small muted">Cards are added to what's already there. Nothing is replaced or removed.</span></div>
-        <button class="btn primary" id="impGo" ${usable.length && !st.running ? "" : "disabled"}>Import ${total.toLocaleString()} cards</button>
+          ${isDeck ? `<span class="small muted">Cards are added to what's already in the deck.</span>`
+            : `<label class="toggle"><input type="checkbox" id="impRepl" ${st.replace ? "checked" : ""}> Replace my whole collection with this file</label>
+               <span class="small ${st.replace ? "down" : "muted"}">${st.replace ? `Your current ${Object.values(S.coll).reduce((a, e) => a + e.qty, 0).toLocaleString()} cards will be removed first, then this file is imported. Decks and price alerts stay. You can undo this right after.` : "Cards are added to what's already there. Use Replace when re-importing your full ManaBox export, so nothing gets doubled."}</span>`}</div>
+        <button class="btn primary" id="impGo" ${usable.length && !st.running ? "" : "disabled"}>${st.replace && !isDeck ? "Replace collection with" : "Import"} ${total.toLocaleString()} cards</button>
         <div id="impProg" class="status" aria-live="polite"></div>
         <div id="impRes"></div>
       </div>`;
@@ -920,6 +952,7 @@ async function csvImport(file, target) {
     $("#impDest").onchange = e => { st.dest = e.target.value; draw(); };
     const nm = $("#impName"); if (nm) nm.oninput = e => st.newName = e.target.value;
     const fm = $("#impFmt"); if (fm) fm.onchange = e => st.fmt = e.target.value;
+    const rp = $("#impRepl"); if (rp) rp.onchange = e => { st.replace = e.target.checked; draw(); };
     $("#impGo").onclick = () => runImport(usable);
   };
   const runImport = async (usable) => {
@@ -951,7 +984,11 @@ async function csvImport(file, target) {
       const stillMissing = [];
       if (second.length) await lookup(second, "Retrying by name:", found, stillMissing);
       missing.push(...stillMissing);
-      let cards = 0, guessed = 0, skipped = 0, where = "";
+      let cards = 0, guessed = 0, skipped = 0, where = "", undo = null;
+      if (!isDeck && st.replace) {
+        undo = { coll: S.coll, trade: S.trade };
+        S.coll = {}; S.trade = { give: [], get: S.trade.get };
+      }
       if (!isDeck) {
         const newBinders = new Set();
         for (const [c, w] of found) {
@@ -971,7 +1008,7 @@ async function csvImport(file, target) {
         }
         where = `Added to ${d.name}.`;
       }
-      save();
+      await flushSave();
       const missNames = missing.map(w => (w.qty > 1 ? w.qty + " " : "") + (w.name || [w.set, w.num].filter(Boolean).join(" #") || w.id));
       if (!isDeck) {
         prog.textContent = "Filling in prices for non-English cards…";
@@ -985,7 +1022,9 @@ async function csvImport(file, target) {
         <span class="small">${esc(where)}${guessed ? ` ${guessed} row${guessed > 1 ? "s" : ""} had a set or number Scryfall didn't recognize, so the newest printing was used.` : ""}${skipped ? ` Skipped ${skipped} maybeboard or token rows.` : ""}</span>
         ${missing.length ? `<span class="small down">${missing.length} row${missing.length > 1 ? "s" : ""} couldn't be found:</span>
           <textarea id="impMiss" readonly style="min-height:90px">${esc(missNames.join("\n"))}</textarea><button class="btn sm" id="impCopy" style="align-self:flex-start">Copy this list</button>` : ""}
-        <button class="btn primary" id="impDone">${isDeck ? "Open the deck" : "See my collection"}</button></div>`;
+        <button class="btn primary" id="impDone">${isDeck ? "Open the deck" : "See my collection"}</button>
+        ${undo ? `<button class="btn" id="impUndo">Undo, put my old collection back</button>` : ""}</div>`;
+      const ub = $("#impUndo"); if (ub) ub.onclick = async () => { S.coll = undo.coll; S.trade = undo.trade; await flushSave(); closeSheet(); go("coll"); toast("Your previous collection is back"); };
       const cp = $("#impCopy"); if (cp) cp.onclick = async () => { try { await navigator.clipboard.writeText(missNames.join("\n")); toast("Copied"); } catch (e) { $("#impMiss").select(); toast("Select the text and copy it"); } };
       $("#impDone").onclick = () => { closeSheet(); if (isDeck) go("decks", st.dest); else { cv.binder = st.dest !== "__file" && S.binders[st.dest] ? st.dest : "all"; go("coll"); } };
     } catch (e) {
@@ -1003,7 +1042,8 @@ const TYPE_OPTS = ["Creature", "Instant", "Sorcery", "Artifact", "Enchantment", 
 const RARITIES = [["common", "Common"], ["uncommon", "Uncommon"], ["rare", "Rare"], ["mythic", "Mythic"]];
 const defaultF = () => ({ colors: [], cmode: "incl", type: "", rarity: [], format: "", mvMin: "", mvMax: "", priceMax: "", set: "" });
 const sv = { q: "", prints: false, sort: "newest", open: false, f: defaultF(), results: [], next: null, total: 0, busy: false, err: "", ran: "" };
-(() => { const sp = S.meta.search; if (sp) { sv.prints = !!sp.prints; sv.sort = SORTS[sp.sort] ? sp.sort : "newest"; sv.f = Object.assign(defaultF(), sp.f || {}); } })();
+function applySearchPrefs() { const sp = S.meta.search; if (sp) { sv.prints = !!sp.prints; sv.sort = SORTS[sp.sort] ? sp.sort : "newest"; sv.f = Object.assign(defaultF(), sp.f || {}); } }
+applySearchPrefs();
 function saveSearchPrefs() { S.meta.search = { prints: sv.prints, sort: sv.sort, f: sv.f }; save(); }
 function filterQuery(f) {
   const parts = [];
@@ -1980,10 +2020,17 @@ function deckMenu(d) {
 }
 
 /* ---------- start ---------- */
-go("coll");
-loadNames().catch(() => {});
-if (S.meta.usedScan) setTimeout(() => getWorkers().catch(() => {}), 2500);
-if (Object.keys(S.coll).length && (!S.meta.pricedAt || Date.now() - S.meta.pricedAt > 20 * 36e5)) setTimeout(() => refreshPrices(true), 1500);
+async function boot() {
+  let stored = null;
+  if (idb.ok) { try { stored = await idbGet("state"); } catch (e) { idb.ok = false; } }
+  if (stored && stored.coll) { S = stored; migrate(); applySearchPrefs(); sc.mode = S.meta.scanMode || "ask"; sc.auto = S.meta.autoCap !== false; }
+  else if (Object.keys(S.coll).length || Object.keys(S.decks).length) await flushSave();     // move older data into the database
+  go("coll");
+  loadNames().catch(() => {});
+  if (S.meta.usedScan) setTimeout(() => getWorkers().catch(() => {}), 2500);
+  if (Object.keys(S.coll).length && (!S.meta.pricedAt || Date.now() - S.meta.pricedAt > 20 * 36e5)) setTimeout(() => refreshPrices(true), 1500);
+}
+boot();
 </script>
 </body>
 </html>
