@@ -110,6 +110,12 @@ select{width:auto;max-width:100%}
 .fgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .fgrid label{display:flex;flex-direction:column;gap:4px;min-width:0}
 .fgrid select{width:100%}
+.ptable{border-collapse:collapse;font-size:13px;width:100%;min-width:420px}
+.ptable th{text-align:left;font:600 11px var(--f-display);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:4px 6px;border-bottom:1px solid var(--line)}
+.ptable td{padding:5px 6px;border-bottom:1px solid var(--line);white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis}
+details.box summary{list-style:none}
+details.box summary::-webkit-details-marker{display:none}
+details.box summary::after{content:" ▾"}
 .cpick{display:inline-flex;gap:6px}
 .cpick button{width:40px;height:40px;border-radius:50%;border:2px solid transparent;background:var(--sunk);display:grid;place-items:center;padding:0;opacity:.55}
 .cpick button[aria-pressed="true"]{opacity:1;border-color:var(--accent);background:var(--surface)}
@@ -406,7 +412,7 @@ function attachAutocomplete(inp, ul, onPick) {
 /* ---------- collection helpers ---------- */
 const isWish = bid => !!(S.binders[bid] && S.binders[bid].wish);
 function defaultBinder() { return S.meta.binder && S.binders[S.meta.binder] ? S.meta.binder : "main"; }
-function addToColl(card, finish = "nonfoil", qty = 1, binder) {
+function addToColl(card, finish = "nonfoil", qty = 1, binder, noSave) {
   const s = isSlim(card) ? card : slim(card);
   binder = binder && S.binders[binder] ? binder : defaultBinder();
   if (!s.finishes.includes(finish)) finish = s.finishes[0] || "nonfoil";
@@ -415,7 +421,7 @@ function addToColl(card, finish = "nonfoil", qty = 1, binder) {
   if (cur) { cur.qty += qty; cur.prices = s.prices; }
   else if (qty > 0) S.coll[k] = Object.assign({}, s, { finish, qty, binder, added: Date.now() });
   if (S.coll[k] && S.coll[k].qty <= 0) delete S.coll[k];
-  save(); return k;
+  if (!noSave) save(); return k;
 }
 function moveEntry(k, b) {
   const e = S.coll[k]; if (!e || e.binder === b) return;
@@ -537,7 +543,7 @@ function renderColl() {
         <button class="btn primary" id="eScan">Scan cards</button><button class="btn" id="eSearch">Search</button>
         <button class="btn" id="eImp">Import ManaBox CSV</button></div>
       <p class="small">In ManaBox: Collection → ⋮ → Export → CSV, then choose that file here.</p></div>`;
-    $("#eScan").onclick = () => go("scan"); $("#eSearch").onclick = () => go("search"); $("#eImp").onclick = () => pickFile(".csv,text/csv", importCSV);
+    $("#eScan").onclick = () => go("scan"); $("#eSearch").onclick = () => go("search"); $("#eImp").onclick = () => pickCSV({ kind: "coll" });
     return;
   }
   const counts = {}; for (const e of Object.values(S.coll)) counts[e.binder] = (counts[e.binder] || 0) + e.qty;
@@ -559,13 +565,14 @@ function renderColl() {
     ${cv.binder === "all" ? moversHTML() : ""}
     <div class="row"><input type="search" id="cq" class="grow" placeholder="Filter by name, set or type" value="${esc(cv.q)}">
       <select id="cs" aria-label="Sort"><option value="value">Value</option><option value="change">Price change</option><option value="name">Name</option><option value="set">Set</option><option value="recent">Recent</option></select></div>
-    <div class="row wrap"><button class="btn sm" id="cRefresh">Update prices</button><button class="btn sm" id="cMore">Import / export</button></div>
+    <div class="row wrap"><button class="btn sm" id="cRefresh">Update prices</button><button class="btn sm" id="cImp">Import CSV</button><button class="btn sm" id="cMore">Backup / export</button></div>
     <div id="clist"></div></div>`;
   $("#cs").value = cv.sort; updRefreshBtn();
   $("#cq").oninput = debounce(e => { cv.q = e.target.value; drawCollList(); }, 150);
   $("#cs").onchange = e => { cv.sort = e.target.value; drawCollList(); };
   $("#cRefresh").onclick = () => refreshPrices(false);
   $("#cMore").onclick = ioSheet;
+  $("#cImp").onclick = () => pickCSV({ kind: "coll" });
   $("#bChips").onclick = e => { const b = e.target.closest("button"); if (!b) return; if (b.dataset.b === "__manage") binderSheet(); else { cv.binder = b.dataset.b; renderColl(); } };
   v.querySelectorAll("[data-seen]").forEach(b => b.onclick = () => { S.alerts[b.dataset.seen].seen = true; save(); renderColl(); });
   v.querySelectorAll("[data-alert]").forEach(b => b.onclick = async () => { const [id, fin] = b.dataset.alert.split("|"); try { openCard(await sf("/cards/" + id), fin); } catch (e) { toast(e.message); } });
@@ -651,9 +658,9 @@ function ioSheet() {
       <button class="btn" id="ioBack">Export full backup (everything)</button>
       <button class="btn" id="ioRest">Restore from a backup file</button>
       <button class="btn" id="ioCsv">Export collection as CSV</button>
-      <button class="btn" id="ioImp">Import ManaBox or other CSV</button>
+      <button class="btn" id="ioImp">Import a CSV file</button>
     </div>
-    <p class="small muted">ManaBox export: open your collection, tap ⋮ → Export → CSV. Deckhand reads the Scryfall ID, set, collector number, foil, quantity and binder name columns, and recreates your ManaBox binders.</p>
+    <p class="small muted">CSV files from ManaBox, Moxfield, Deckbox, TCGplayer, Dragon Shield, Archidekt and most other apps work. You'll see a preview before anything is added.</p>
     <div id="ioMsg" class="status"></div>`);
   const stamp = new Date().toISOString().slice(0, 10);
   $("#ioBack").onclick = () => download(`deckhand-backup-${stamp}.json`, JSON.stringify(S), "application/json");
@@ -667,16 +674,16 @@ function ioSheet() {
     const lines = Object.values(S.coll).map(e => [q(e.name), q(e.set), q(e.setName), q(e.num), e.finish === "nonfoil" ? "normal" : e.finish, e.rarity, e.qty, q(S.binders[e.binder].name), e.id, priceOf(e, e.finish) ?? ""].join(","));
     download(`deckhand-collection-${stamp}.csv`, [head, ...lines].join("\n"), "text/csv");
   };
-  $("#ioImp").onclick = () => pickFile(".csv,text/csv", importCSV);
+  $("#ioImp").onclick = () => pickCSV({ kind: "coll" });
 }
-function parseCSV(text) {
+function parseCSV(text, delim = ",") {
   const rows = []; let row = [], f = "", i = 0, inQ = false;
   text = text.replace(/^﻿/, "");
   while (i < text.length) {
     const c = text[i];
     if (inQ) { if (c === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else inQ = false; } else f += c; }
     else if (c === '"') inQ = true;
-    else if (c === ",") { row.push(f); f = ""; }
+    else if (c === delim) { row.push(f); f = ""; }
     else if (c === "\n" || c === "\r") { if (c === "\r" && text[i + 1] === "\n") i++; row.push(f); rows.push(row); row = []; f = ""; }
     else f += c;
     i++;
@@ -684,42 +691,157 @@ function parseCSV(text) {
   if (f || row.length) { row.push(f); rows.push(row); }
   return rows.filter(r => r.some(x => x.trim()));
 }
+const nameEq = (c, n) => { const a = c.name.toLowerCase(), b = n.toLowerCase(); return a === b || a.startsWith(b + " //") || (c.card_faces || []).some(f => f.name.toLowerCase() === b); };
 const matchIdent = (data, ident) => data.find(c => ident.id ? c.id === ident.id
   : ident.collector_number ? (c.set === ident.set && c.collector_number === ident.collector_number)
-  : c.name.toLowerCase() === ident.name.toLowerCase() || c.name.toLowerCase().startsWith(ident.name.toLowerCase() + " //"));
-async function importCSV(file) {
-  const rows = parseCSV(await file.text());
-  if (rows.length < 2) { toast("That CSV looks empty."); return; }
-  const h = rows[0].map(x => x.trim().toLowerCase());
-  const col = re => h.findIndex(x => re.test(x));
-  const iId = col(/scryfall/), iQty = col(/^(quantity|qty|count)$/), iFoil = col(/foil|finish|printing/), iSet = col(/^(set code|set|edition code)$/),
-    iNum = col(/collector/), iName = col(/^(name|card name|card)$/), iBinder = col(/^(binder name|binder|list name|folder)$/), iBType = col(/^binder type$/);
-  if (iId < 0 && iName < 0) { toast("Couldn't find a Name or Scryfall ID column in that CSV."); return; }
-  const want = rows.slice(1).map(r => {
-    const fv = iFoil >= 0 ? (r[iFoil] || "").toLowerCase() : "";
-    const finish = fv.includes("etched") ? "etched" : (fv === "foil" || fv === "true" || fv === "yes" || fv === "1") ? "foil" : "nonfoil";
-    const qty = Math.max(1, parseInt(iQty >= 0 ? r[iQty] : "1") || 1);
-    let ident;
-    if (iId >= 0 && /^[0-9a-f-]{36}$/i.test((r[iId] || "").trim())) ident = { id: r[iId].trim() };
-    else if (iSet >= 0 && iNum >= 0 && r[iSet] && r[iNum]) ident = { set: r[iSet].trim().toLowerCase(), collector_number: r[iNum].trim() };
-    else if (iName >= 0 && r[iName]) ident = { name: r[iName].trim() };
-    const bname = iBinder >= 0 ? r[iBinder] : "", btype = iBType >= 0 ? (r[iBType] || "").toLowerCase() : "";
-    return ident ? { ident, finish, qty, bname, wishType: btype === "list" && /wish|want/i.test(bname) } : null;
-  }).filter(Boolean);
-  toast(`Importing ${want.length} rows…`);
-  try {
-    const found = [], missing = [];
-    for (let i = 0; i < want.length; i += 75) {
-      const chunk = want.slice(i, i + 75);
-      const r = await sf("/cards/collection", { identifiers: chunk.map(w => w.ident) });
-      for (const w of chunk) { const c = matchIdent(r.data || [], w.ident); if (c) found.push([c, w]); else missing.push(w); }
-      toast(`Importing… ${Math.min(i + 75, want.length)}/${want.length}`);
+  : ident.set ? (c.set === ident.set && nameEq(c, ident.name))
+  : nameEq(c, ident.name));
+
+/* ---------- CSV import (preview, column mapping, destination) ---------- */
+const CSV_FIELDS = [
+  ["name", "Card name", /^(name|card name|card|cardname|card title)$/],
+  ["qty", "Quantity", /^(quantity|qty|count|amount|copies|have|total qty|#)$/],
+  ["set", "Set code", /^(set code|set|edition code|edition|setcode|expansion code|set id)$/],
+  ["setName", "Set name", /^(set name|edition name|expansion|expansion name|set title)$/],
+  ["num", "Collector number", /^(collector number|collector no|collector num|card number|number|cn|no)$/],
+  ["id", "Scryfall ID", /scryfall/],
+  ["foil", "Foil / finish", /^(foil|finish|printing|is foil|foil type)$/],
+  ["binder", "Binder or list", /^(binder name|binder|list name|folder|list|collection name)$/],
+  ["board", "Main / side / commander", /^(board|section|category|zone|deck section)$/]
+];
+function pickCSV(target) { pickFile("", f => csvImport(f, target)); }
+function csvRowInfo(r, m) {
+  const g = k => m[k] >= 0 ? (r[m[k]] || "").trim() : "";
+  const fv = g("foil").toLowerCase();
+  const finish = fv.includes("etched") ? "etched" : /^(foil|true|yes|y|1|x)$/.test(fv) || (fv.includes("foil") && !fv.includes("non")) ? "foil" : "nonfoil";
+  const q = parseInt(g("qty").replace(/[^\d]/g, ""));
+  return { name: g("name").replace(/\s*\(.*?\)\s*$/, ""), qty: m.qty >= 0 ? (isNaN(q) ? 1 : q) : 1, set: g("set").toLowerCase(), setName: g("setName"), num: g("num").replace(/^#/, ""),
+    id: /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(g("id")) ? g("id").toLowerCase() : "", finish, binder: g("binder"), board: g("board").toLowerCase() };
+}
+async function csvImport(file, target) {
+  let text;
+  try { text = await file.text(); } catch (e) { toast("Couldn't read that file."); return; }
+  const first = text.replace(/^﻿/, "").split(/\r?\n/)[0] || "";
+  const cnt = ch => first.split(ch).length - 1;
+  const delim = [",", ";", "\t"].sort((a, b) => cnt(b) - cnt(a))[0];
+  let rows = parseCSV(text, delim);
+  // skip a leading "sep=," line (Excel) or title rows above the real header
+  if (rows.length && /^sep=/i.test(rows[0][0])) rows = rows.slice(1);
+  if (rows.length < 2 || rows[0].length < 1) { toast("That file doesn't look like a CSV with card rows."); return; }
+  const head = rows[0].map(h => h.trim()), H = head.map(h => h.toLowerCase().replace(/[_\s]+/g, " ").trim());
+  const m = {};
+  for (const [k, , re] of CSV_FIELDS) m[k] = H.findIndex(h => re.test(h));
+  if (m.num < 0) m.num = H.findIndex(h => /collector/.test(h));
+  if (m.name < 0) m.name = H.findIndex(h => /name/.test(h) && !/set|binder|list|edition/.test(h));
+  if (m.set >= 0) {
+    const sample = rows.slice(1, 40).map(r => (r[m.set] || "").trim()).filter(Boolean);
+    if (sample.length && sample.filter(v => v.length > 6 || /\s/.test(v)).length > sample.length / 2) { if (m.setName < 0) m.setName = m.set; m.set = -1; }
+  }
+  const fmt = H.includes("binder name") && H.some(h => /scryfall/.test(h)) ? "ManaBox" : H.includes("tradelist count") ? "Deckbox"
+    : H.includes("count") && H.includes("edition") && H.includes("purchase price") ? "Moxfield" : H.includes("product id") || H.includes("tcgplayer id") ? "TCGplayer"
+    : H.includes("folder name") ? "Dragon Shield" : "CSV";
+  const data = rows.slice(1);
+  const isDeck = target.kind === "deck";
+  const decks = Object.values(S.decks);
+  const baseName = file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim().slice(0, 60) || "Imported deck";
+  const st = { dest: isDeck ? (target.id === "__new" || !S.decks[target.id] ? "__new" : target.id) : (m.binder >= 0 ? "__file" : defaultBinder()), newName: baseName, fmt: "casual", running: false };
+  const draw = () => {
+    const info = data.map(r => csvRowInfo(r, m));
+    const usable = info.filter(x => x.id || x.name || (x.set && x.num));
+    const total = usable.reduce((a, x) => a + x.qty, 0);
+    const colSel = k => `<select data-col="${k}"><option value="-1">Not in file</option>${head.map((h, i) => `<option value="${i}" ${m[k] === i ? "selected" : ""}>${esc(h || "Column " + (i + 1))}</option>`).join("")}</select>`;
+    const fields = CSV_FIELDS.filter(([k]) => isDeck ? k !== "binder" : k !== "board");
+    $("#impBody").innerHTML = `<h2>${isDeck ? "Import a deck" : "Import cards"}</h2>
+      <p class="small muted" style="margin:4px 0 12px">${esc(file.name)} · ${data.length.toLocaleString()} rows · ${fmt === "CSV" ? "columns detected automatically" : "looks like a " + fmt + " export"}</p>
+      <div class="stack">
+        <div class="box"><div class="kv"><span class="label">Preview</span><span class="small muted num">${total.toLocaleString()} cards in ${usable.length.toLocaleString()} rows</span></div>
+          <div style="overflow-x:auto"><table class="ptable"><thead><tr><th>Qty</th><th>Card</th><th>Set</th><th>#</th><th>Finish</th>${isDeck ? "<th>Board</th>" : m.binder >= 0 ? "<th>Binder</th>" : ""}</tr></thead>
+            <tbody>${info.slice(0, 6).map(x => `<tr><td class="num">${x.qty}</td><td>${esc(x.name || (x.id ? "(by Scryfall ID)" : "—"))}</td><td>${esc((x.set || x.setName || "").toUpperCase().slice(0, 14))}</td><td>${esc(x.num)}</td><td>${x.finish === "nonfoil" ? "normal" : x.finish}</td>${isDeck ? `<td>${esc(x.board || "main")}</td>` : m.binder >= 0 ? `<td>${esc(x.binder)}</td>` : ""}</tr>`).join("")}</tbody></table></div>
+          ${usable.length ? "" : `<span class="small down">No rows have a card name, Scryfall ID or set + number. Match the columns below.</span>`}</div>
+        <details class="box" ${usable.length ? "" : "open"}><summary class="label" style="cursor:pointer">Columns (check if the preview looks wrong)</summary>
+          <div class="stack" style="gap:8px;margin-top:10px">${fields.map(([k, label]) => `<div class="kv"><span>${label}</span>${colSel(k)}</div>`).join("")}</div></details>
+        <div class="box"><span class="label">${isDeck ? "Add to deck" : "Put cards in"}</span>
+          ${isDeck ? `<select id="impDest"><option value="__new" ${st.dest === "__new" ? "selected" : ""}>New deck…</option>${decks.map(d => `<option value="${d.id}" ${st.dest === d.id ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select>
+              ${st.dest === "__new" ? `<input type="text" id="impName" value="${esc(st.newName)}" maxlength="60" aria-label="New deck name"><select id="impFmt" aria-label="Format">${Object.entries(FORMATS).map(([k, v]) => `<option value="${k}" ${st.fmt === k ? "selected" : ""}>${v}</option>`).join("")}</select>` : ""}`
+            : `<select id="impDest">${m.binder >= 0 ? `<option value="__file" ${st.dest === "__file" ? "selected" : ""}>Use the binder names in the file</option>` : ""}${binderOptions(st.dest)}</select>`}
+          <span class="small muted">Cards are added to what's already there. Nothing is replaced or removed.</span></div>
+        <button class="btn primary" id="impGo" ${usable.length && !st.running ? "" : "disabled"}>Import ${total.toLocaleString()} cards</button>
+        <div id="impProg" class="status" aria-live="polite"></div>
+        <div id="impRes"></div>
+      </div>`;
+    $("#impBody").querySelectorAll("[data-col]").forEach(sel => sel.onchange = () => { m[sel.dataset.col] = +sel.value; draw(); });
+    $("#impDest").onchange = e => { st.dest = e.target.value; draw(); };
+    const nm = $("#impName"); if (nm) nm.oninput = e => st.newName = e.target.value;
+    const fm = $("#impFmt"); if (fm) fm.onchange = e => st.fmt = e.target.value;
+    $("#impGo").onclick = () => runImport(usable);
+  };
+  const runImport = async (usable) => {
+    st.running = true; $("#impGo").disabled = true;
+    const prog = $("#impProg"), res = $("#impRes");
+    try {
+      let codes = null;
+      if (usable.some(x => !x.set && x.setName)) {
+        prog.textContent = "Looking up set names…";
+        try { const r = await sf("/sets"); codes = {}; for (const z of r.data || []) codes[z.name.toLowerCase()] = z.code; } catch (e) {}
+      }
+      const want = usable.map(x => {
+        const set = x.set || (codes && codes[x.setName.toLowerCase()]) || "";
+        const ident = x.id ? { id: x.id } : set && x.num ? { set, collector_number: x.num } : x.name && set ? { name: x.name, set } : x.name ? { name: x.name } : null;
+        return ident ? Object.assign({}, x, { ident }) : null;
+      }).filter(Boolean);
+      const found = [], retry = [];
+      const lookup = async (list, label, out, miss) => {
+        for (let i = 0; i < list.length; i += 75) {
+          const chunk = list.slice(i, i + 75);
+          const r = await sf("/cards/collection", { identifiers: chunk.map(w => w.ident) });
+          for (const w of chunk) { const c = matchIdent(r.data || [], w.ident); if (c) out.push([c, w]); else miss.push(w); }
+          prog.textContent = `${label} ${Math.min(i + 75, list.length).toLocaleString()} of ${list.length.toLocaleString()}…`;
+        }
+      };
+      await lookup(want, "Matching cards:", found, retry);
+      const second = retry.filter(w => w.name && !(w.ident.name && !w.ident.set)).map(w => Object.assign({}, w, { ident: { name: w.name }, guessed: true }));
+      const missing = retry.filter(w => !second.includes(w) && !(w.name && !(w.ident.name && !w.ident.set)));
+      const stillMissing = [];
+      if (second.length) await lookup(second, "Retrying by name:", found, stillMissing);
+      missing.push(...stillMissing);
+      let cards = 0, guessed = 0, skipped = 0, where = "";
+      if (!isDeck) {
+        const newBinders = new Set();
+        for (const [c, w] of found) {
+          let b = st.dest;
+          if (b === "__file") { const before = Object.keys(S.binders).length; b = w.binder ? binderByName(w.binder) : "main"; if (Object.keys(S.binders).length > before) newBinders.add(S.binders[b].name); }
+          addToColl(slim(c), w.finish, w.qty, b, true); cards += w.qty; if (w.guessed) guessed++;
+        }
+        where = st.dest === "__file" ? (newBinders.size ? `New binders: ${[...newBinders].join(", ")}.` : "") : `Added to ${S.binders[st.dest].name}.`;
+      } else {
+        let d = S.decks[st.dest];
+        if (!d) { const id = uid(); d = S.decks[id] = { id, name: (st.newName || baseName).trim(), format: st.fmt, cmdr: [], cards: {}, created: Date.now(), updated: Date.now() }; st.dest = id; }
+        for (const [c, w] of found) {
+          if (/maybe|consider|token|acquire|wish/.test(w.board)) { skipped++; continue; }
+          const side = /side/.test(w.board), cmd = /command/.test(w.board);
+          addToDeck(d, c, Math.max(1, w.qty), side, true); cards += Math.max(1, w.qty); if (w.guessed) guessed++;
+          if (cmd) { d.format = "commander"; const k = c.id + "|0"; if (!d.cmdr.includes(k) && d.cmdr.length < 2) d.cmdr.push(k); }
+        }
+        where = `Added to ${d.name}.`;
+      }
+      save();
+      prog.textContent = "";
+      const missNames = missing.map(w => (w.qty > 1 ? w.qty + " " : "") + (w.name || [w.set, w.num].filter(Boolean).join(" #") || w.id));
+      res.innerHTML = `<div class="box ${missing.length ? "alert" : ""}">
+        <b>Imported ${cards.toLocaleString()} cards.</b>
+        <span class="small">${esc(where)}${guessed ? ` ${guessed} row${guessed > 1 ? "s" : ""} had a set or number Scryfall didn't recognize, so the newest printing was used.` : ""}${skipped ? ` Skipped ${skipped} maybeboard or token rows.` : ""}</span>
+        ${missing.length ? `<span class="small down">${missing.length} row${missing.length > 1 ? "s" : ""} couldn't be found:</span>
+          <textarea id="impMiss" readonly style="min-height:90px">${esc(missNames.join("\n"))}</textarea><button class="btn sm" id="impCopy" style="align-self:flex-start">Copy this list</button>` : ""}
+        <button class="btn primary" id="impDone">${isDeck ? "Open the deck" : "See my collection"}</button></div>`;
+      const cp = $("#impCopy"); if (cp) cp.onclick = async () => { try { await navigator.clipboard.writeText(missNames.join("\n")); toast("Copied"); } catch (e) { $("#impMiss").select(); toast("Select the text and copy it"); } };
+      $("#impDone").onclick = () => { closeSheet(); if (isDeck) go("decks", st.dest); else { cv.binder = st.dest !== "__file" && S.binders[st.dest] ? st.dest : "all"; go("coll"); } };
+    } catch (e) {
+      prog.textContent = "Import stopped: " + e.message + ". Nothing after that point was added; you can try again.";
+      st.running = false; $("#impGo").disabled = false; save();
     }
-    for (const [c, w] of found) { const b = w.bname ? binderByName(w.bname) : defaultBinder(); if (w.wishType) S.binders[b].wish = true; addToColl(slim(c), w.finish, w.qty, b); }
-    save(); closeSheet(); go("coll");
-    toast(`Imported ${found.reduce((a, [, w]) => a + w.qty, 0)} cards` + (missing.length ? `, ${missing.length} rows not found` : ""));
-    refreshPrices(true);
-  } catch (e) { toast("Import stopped: " + e.message); }
+  };
+  openSheet(`<div id="impBody"></div>`, () => render());
+  draw();
 }
 
 /* ================= SEARCH ================= */
@@ -1208,13 +1330,13 @@ function renderTrade() {
 const TYPES = ["Creature", "Planeswalker", "Battle", "Instant", "Sorcery", "Artifact", "Enchantment", "Land"];
 const typeOf = t => { for (const x of ["Land", "Creature", "Planeswalker", "Battle", "Instant", "Sorcery", "Artifact", "Enchantment"]) if ((t || "").split("//")[0].includes(x)) return x; return "Other"; };
 const DECK_FIELDS = ["id", "oid", "name", "set", "setName", "num", "rarity", "type", "cmc", "mana", "colors", "ci", "img", "imgN", "prices", "finishes", "uri", "leg", "cap", "basic", "canCmdr", "partner"];
-function addToDeck(d, card, qty, side) {
+function addToDeck(d, card, qty, side, noSave) {
   const s = isSlim(card) ? card : slim(card);
   const k = s.id + "|" + (side ? 1 : 0);
   if (d.cards[k]) d.cards[k].qty += qty;
   else { const c = { qty, side: !!side }; DECK_FIELDS.forEach(f => c[f] = s[f]); d.cards[k] = c; }
   if (d.cards[k].qty <= 0) { delete d.cards[k]; d.cmdr = d.cmdr.filter(x => x !== k); }
-  d.updated = Date.now(); save();
+  d.updated = Date.now(); if (!noSave) save();
 }
 function deckStats(d) {
   const main = Object.values(d.cards).filter(c => !c.side), side = Object.values(d.cards).filter(c => c.side);
@@ -1290,6 +1412,7 @@ function renderDecks() {
   $("#view").innerHTML = `<div class="stack">
     <form id="nd" class="stack" style="gap:8px"><input type="text" id="ndName" placeholder="New deck name, e.g. Atraxa Superfriends" maxlength="60">
       <div class="row"><select id="ndFmt" class="grow" aria-label="Format">${Object.entries(FORMATS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select><button class="btn primary">Create deck</button></div></form>
+    <button class="btn sm" id="ndImp" style="align-self:flex-start">Import a deck from CSV</button>
     ${decks.length ? decks.map(d => { const st = deckStats(d), ck = checkDeck(d); return `<button class="deck-card" data-d="${d.id}"><div style="min-width:0"><h3>${esc(d.name)}</h3>
       <div class="small muted num">${FORMATS[d.format] || "Casual"} · ${st.mainN} cards · ${money(st.value)}${st.missing ? ` · <span class="down">${st.missing} not owned</span>` : ""}</div>
       ${ck.checked && !ck.pending ? `<div style="margin-top:4px">${ck.issues.length ? `<span class="chip warn">${ck.issues.length} problem${ck.issues.length > 1 ? "s" : ""}</span>` : `<span class="chip ok">Legal</span>`}</div>` : ""}</div>
@@ -1297,6 +1420,7 @@ function renderDecks() {
     : `<div class="empty"><h2>No decks yet</h2><p>Name a deck and pick its format above, then add cards from Search or paste a list from Moxfield, Archidekt or MTG Arena.</p></div>`}</div>`;
   $("#nd").onsubmit = e => { e.preventDefault(); const nm = $("#ndName").value.trim(); if (!nm) { $("#ndName").focus(); return; } const id = uid(); S.decks[id] = { id, name: nm, format: $("#ndFmt").value, cmdr: [], cards: {}, created: Date.now(), updated: Date.now() }; save(); go("decks", id); };
   $("#view").querySelectorAll("[data-d]").forEach(b => b.onclick = () => go("decks", b.dataset.d));
+  $("#ndImp").onclick = () => pickCSV({ kind: "deck", id: "__new" });
 }
 function renderDeck(d) {
   const st = deckStats(d), max = Math.max(1, ...st.curve), ck = checkDeck(d), cmd = d.format === "commander";
@@ -1373,13 +1497,15 @@ function deckMenu(d) {
       <div class="box"><span class="label">Rename</span><div class="row"><input type="text" id="rn" class="grow" value="${esc(d.name)}" maxlength="60"><button class="btn sm" id="rnGo">Save</button></div></div>
       <div class="box"><span class="label">Paste a deck list</span>
         <textarea id="pl" placeholder="Commander&#10;1 Atraxa, Praetors' Voice&#10;&#10;Deck&#10;4 Lightning Bolt&#10;2 Counterspell (MH2) 267&#10;1x Sol Ring&#10;&#10;Sideboard&#10;2 Pyroblast"></textarea>
-        <button class="btn primary" id="plGo">Add these cards</button><div class="status small" id="plMsg"></div></div>
+        <button class="btn primary" id="plGo">Add these cards</button><div class="status small" id="plMsg"></div>
+        <button class="btn" id="dCsv">Or import a CSV file into this deck</button></div>
       <div class="box"><span class="label">Export</span><textarea id="ex" readonly>${esc(deckText(d))}</textarea><button class="btn" id="cp">Copy list</button></div>
       <div class="box"><span class="label">Missing cards</span><div class="row wrap"><button class="btn" id="miss">Copy the cards I don't own</button><button class="btn" id="missW">Add them to my wishlist</button></div></div>
       <div class="box"><button class="btn danger" id="del">Delete deck</button>
         <div class="row" id="delConfirm" hidden><span class="grow small">Delete “${esc(d.name)}” for good?</span><button class="btn sm danger" id="delYes">Delete</button><button class="btn sm" id="delNo">Keep</button></div></div>
     </div>`, () => render());
   $("#rnGo").onclick = () => { const v = $("#rn").value.trim(); if (v) { d.name = v; save(); toast("Renamed"); } };
+  $("#dCsv").onclick = () => pickCSV({ kind: "deck", id: d.id });
   const copy = async (text, el) => { try { await navigator.clipboard.writeText(text); toast("Copied"); } catch (e) { if (el) { el.select(); } toast("Select the text and copy it"); } };
   $("#cp").onclick = () => copy($("#ex").value, $("#ex"));
   const missingList = () => {
