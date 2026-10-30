@@ -128,12 +128,14 @@ details.box summary::after{content:" ▾"}
 
 .cam{position:relative;background:#000;border-radius:14px;overflow:hidden;height:min(58vh,540px)}
 .cam video{width:100%;height:100%;object-fit:cover;display:block}
-.cam .frame{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border:2px solid rgba(255,255,255,.9);border-radius:12px;box-shadow:0 0 0 2000px rgba(0,0,0,.38)}
+.cam .frame{position:absolute;border:2px dashed rgba(255,255,255,.8);border-radius:10px;box-shadow:0 0 0 2000px rgba(0,0,0,.38);pointer-events:none}
 .cam .band{position:absolute;left:3%;right:3%;border:1.5px dashed #ffd76a;border-radius:4px}
 .cam .band.name{top:3%;height:7.5%;right:20%}
 .cam .band.info{bottom:2.5%;height:8%;right:52%}
 .cam .hint{position:absolute;left:0;right:0;top:10px;text-align:left;color:#fff;font-size:14px;font-weight:600;text-shadow:0 1px 3px #000;padding:0 104px 0 12px;min-height:20px}
-.cam .frame{transition:border-color .15s}
+.cam .frame{transition:left .12s linear,top .12s linear,width .12s linear,height .12s linear,border-color .15s}
+.cam .frame.locked{border-style:solid;border-color:#fff}
+.cam .frame.locked .band{opacity:.45}
 .cam .frame.steady{border-color:#ffd76a}
 .cam .frame.good{border-color:#5cc489;border-width:3px}
 .cam .fprog{position:absolute;left:8%;right:8%;bottom:-10px;height:5px;background:#ffd76a;border-radius:3px;transform:scaleX(0);transform-origin:left}
@@ -1132,11 +1134,12 @@ function scanHead() {
   setHead("Scan", sc.session.length ? `${sc.session.reduce((a, x) => a + x.qty, 0)} added · ${money(val)}` : "");
 }
 function renderScan() {
+  if (!S.meta.usedScan) { S.meta.usedScan = true; save(); }
   scanHead();
   $("#view").innerHTML = `<div class="stack">
     <div class="cam" id="cam"><video id="vid" playsinline muted autoplay></video>
       <div class="frame" id="frame"><div class="band name"></div><div class="band info"></div><div class="fprog" id="fprog"></div></div>
-      <div class="hint" id="camHint">${sc.auto ? "Line up a card inside the frame" : manualHint}</div>
+      <div class="hint" id="camHint">${sc.auto ? "Show a card to the camera" : manualHint}</div>
       <div class="sbar" id="sbar" hidden><div class="strack"><div class="sfill" id="sfill"></div></div><span id="slabel">Reading…</span></div>
       <button class="pill" id="autoBtn" aria-pressed="${sc.auto}">Auto ${sc.auto ? "on" : "off"}</button>
       <div class="ctrl"><button class="round" id="torch" aria-pressed="${torchOn}" aria-label="Flashlight" hidden>
@@ -1165,7 +1168,7 @@ function renderScan() {
     sc.auto = !sc.auto; S.meta.autoCap = sc.auto; save(); unlockBeep();
     const b = $("#autoBtn"); b.setAttribute("aria-pressed", sc.auto); b.textContent = "Auto " + (sc.auto ? "on" : "off");
     camHint(sc.auto ? "Line up a card inside the frame" : manualHint);
-    if (sc.auto) startAuto(); else stopAuto();
+    ana.since = 0; setFrameState("", 0);
     if (!sc.match) scStatus(readyMsg());
   };
   $("#torch").onclick = toggleTorch;
@@ -1179,36 +1182,150 @@ function drawSession() {
 }
 function scStatus(t) { const el = $("#scStatus"); if (el) el.textContent = t; }
 function camHint(t) { const h = $("#camHint"); if (h && h.textContent !== t) h.textContent = t; }
-function layoutFrame() {
-  const cam = $("#cam"), fr = $("#frame"); if (!cam || !fr) return;
-  const W = cam.clientWidth, H = cam.clientHeight; let h = H * 0.86, w = h * 63 / 88;
-  if (w > W * 0.86) { w = W * 0.86; h = w * 88 / 63; }
-  fr.style.width = w + "px"; fr.style.height = h + "px";
+/* ---------- where the card is: guide frame, or the card's own edges once found ---------- */
+const det = { box: null, cand: null, seen: 0, cv: null, moved: 1, lastPOI: 0, lastRefocus: 0, blurSince: 0 };
+const camDev = { track: null, caps: {} };
+function camXform(vid) {
+  const cam = $("#cam"), W = cam.clientWidth, H = cam.clientHeight, vw = vid.videoWidth, vh = vid.videoHeight;
+  const sc_ = Math.max(W / vw, H / vh); return { s: sc_, ox: (W - vw * sc_) / 2, oy: (H - vh * sc_) / 2, W, H };
 }
-function frameRect(vid) {
-  const cam = $("#cam"), fr = $("#frame"); if (!cam || !fr || !vid.videoWidth) return null;
-  const W = cam.clientWidth, H = cam.clientHeight, vw = vid.videoWidth, vh = vid.videoHeight;
-  const scale = Math.max(W / vw, H / vh), ox = (W - vw * scale) / 2, oy = (H - vh * scale) / 2;
-  const fw = fr.clientWidth, fh = fr.clientHeight, fx = (W - fw) / 2, fy = (H - fh) / 2;
-  return { x: (fx - ox) / scale, y: (fy - oy) / scale, w: fw / scale, h: fh / scale };
+function guideScreen(cam) {
+  const W = cam.clientWidth, H = cam.clientHeight; let h = H * 0.82, w = h * 63 / 88;
+  if (w > W * 0.82) { w = W * 0.82; h = w * 88 / 63; }
+  return { x: (W - w) / 2, y: (H - h) / 2, w, h };
+}
+function guideBox(vid) { const g = guideScreen($("#cam")), t = camXform(vid); return { x: (g.x - t.ox) / t.s, y: (g.y - t.oy) / t.s, w: g.w / t.s, h: g.h / t.s }; }
+const cardLocked = () => !!det.box && performance.now() - det.seen < 450;
+function frameRect(vid) { if (!vid || !vid.videoWidth || !$("#cam")) return null; return cardLocked() ? det.box : guideBox(vid); }
+function placeFrame(vid) {
+  const fr = $("#frame"), cam = $("#cam"); if (!fr || !cam) return;
+  let r;
+  if (vid && vid.videoWidth) { const b = frameRect(vid), t = camXform(vid); r = { x: b.x * t.s + t.ox, y: b.y * t.s + t.oy, w: b.w * t.s, h: b.h * t.s }; }
+  else r = guideScreen(cam);
+  fr.style.left = r.x + "px"; fr.style.top = r.y + "px"; fr.style.width = r.w + "px"; fr.style.height = r.h + "px";
+  fr.classList.toggle("locked", cardLocked());
+}
+function layoutFrame() { placeFrame($("#vid")); }
+// Find an upright card: strong straight edges on all four sides with a card's 63:88 shape.
+const DET = { max: 200, minH: 0.27, aspLo: 0.62, aspHi: 0.82, minSide: 2.2 };
+function edgePeaks(P, n, sep) {
+  const L = P.length, S = new Float32Array(L);
+  for (let i = 0; i < L; i++) S[i] = (P[i - 1] || 0) + 2 * P[i] + (P[i + 1] || 0);
+  const c = []; for (let i = 1; i < L - 1; i++) if (S[i] > 0 && S[i] >= S[i - 1] && S[i] > S[i + 1]) c.push(i);
+  c.sort((a, b) => S[b] - S[a]);
+  const out = []; for (const i of c) { if (out.every(j => Math.abs(j - i) >= sep)) out.push(i); if (out.length >= n) break; }
+  return out;
+}
+function detectCore(G, w, h) {
+  const gx = new Float32Array(w * h), gy = new Float32Array(w * h); let sum = 0;
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const i = y * w + x, a = Math.abs(G[i + 1] - G[i - 1]), b = Math.abs(G[i + w] - G[i - w]); gx[i] = a; gy[i] = b; sum += a + b; }
+  const meanG = sum / (2 * (w - 2) * (h - 2)) + 0.5, thr = Math.max(8, meanG * 1.6);
+  const colP = new Float32Array(w), rowP = new Float32Array(h);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const i = y * w + x; if (gx[i] > thr) colP[x] += gx[i]; if (gy[i] > thr) rowP[y] += gy[i]; }
+  const cols = edgePeaks(colP, 9, 3), rows = edgePeaks(rowP, 9, 3);
+  const W1 = w + 1, H1 = h + 1, HP = new Float32Array(h * W1), VP = new Float32Array(w * H1);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) HP[y * W1 + x + 1] = HP[y * W1 + x] + gy[y * w + x];
+  for (let x = 0; x < w; x++) for (let y = 0; y < h; y++) VP[x * H1 + y + 1] = VP[x * H1 + y] + gx[y * w + x];
+  // edge strength along a side, in 3 pieces that may each sit up to 3px off (tolerates a slight tilt)
+  // edge strength along a side in 4 pieces, each allowed to sit up to 3px off (tolerates a slight tilt);
+  // "good" counts pieces with a clear edge, so a line that only covers part of the side doesn't pass
+  let good = 0;
+  const side = (P, stride, lim, at, a0, a1) => {
+    let tot = 0; const seg = (a1 - a0) / 4;
+    for (let k = 0; k < 4; k++) {
+      const s0 = Math.round(a0 + seg * k), s1 = Math.round(a0 + seg * (k + 1)); if (s1 <= s0) continue; let best = 0;
+      for (let d = -3; d <= 3; d++) { const q = at + d; if (q < 1 || q >= lim - 1) continue; const o = q * stride, v = (P[o + s1] - P[o + s0]) / (s1 - s0); if (v > best) best = v; }
+      tot += best; if (best / meanG >= 1.8) good++;
+    }
+    return tot / 4 / meanG;
+  };
+  let best = null;
+  for (const l of cols) for (const r of cols) {
+    const cw = r - l; if (cw < 6) continue;
+    for (const t of rows) for (const b of rows) {
+      const ch = b - t; if (ch < DET.minH * h) continue;
+      const asp = cw / ch; if (asp < DET.aspLo || asp > DET.aspHi) continue;
+      const ix = Math.round(cw * 0.1), iy = Math.round(ch * 0.1);
+      good = 0;
+      const sd = [side(HP, W1, h, t, l + ix, r - ix), side(HP, W1, h, b, l + ix, r - ix), side(VP, H1, w, l, t + iy, b - iy), side(VP, H1, w, r, t + iy, b - iy)];
+      const mn = Math.min(sd[0], sd[1], sd[2], sd[3]); if (mn < DET.minSide || good < 15) continue;
+      const score = mn + (sd[0] + sd[1] + sd[2] + sd[3]) / 8 + (ch / h) * 0.6 - Math.abs(asp - 0.716) * 4;
+      if (!best || score > best.score) best = { x: l, y: t, w: cw, h: ch, score };
+    }
+  }
+  return best;
+}
+function detectCard(vid) {
+  const vw = vid.videoWidth, vh = vid.videoHeight, k = DET.max / Math.max(vw, vh), w = Math.max(16, Math.round(vw * k)), h = Math.max(16, Math.round(vh * k));
+  const c = det.cv || (det.cv = document.createElement("canvas")); if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const g = c.getContext("2d", { willReadFrequently: true }); if (!g) return null;
+  g.drawImage(vid, 0, 0, w, h);
+  const d = g.getImageData(0, 0, w, h).data, G = new Float32Array(w * h);
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) G[j] = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+  const r = detectCore(G, w, h); if (!r) return null;
+  return { x: r.x / k, y: r.y / k, w: r.w / k, h: r.h / k };
+}
+function iou(a, b) {
+  const x0 = Math.max(a.x, b.x), y0 = Math.max(a.y, b.y), x1 = Math.min(a.x + a.w, b.x + b.w), y1 = Math.min(a.y + a.h, b.y + b.h);
+  const I = Math.max(0, x1 - x0) * Math.max(0, y1 - y0); return I / (a.w * a.h + b.w * b.h - I);
+}
+function updateBox(vid, r) {
+  if (!r) { det.moved = 1; return; }
+  const t = camXform(vid), cx = (r.x + r.w / 2) * t.s + t.ox, cy = (r.y + r.h / 2) * t.s + t.oy;
+  if (cx < 0 || cy < 0 || cx > t.W || cy > t.H) return;                       // off the visible screen
+  const b = det.box, now = performance.now();
+  if (!cardLocked()) {                                   // lock on only after two frames in a row agree
+    const c = det.cand; det.cand = r;
+    if (!c || iou(c, r) < 0.6) return;
+  }
+  if (b && cardLocked() && iou(b, r) > 0.55) {
+    det.moved = Math.hypot(r.x + r.w / 2 - (b.x + b.w / 2), r.y + r.h / 2 - (b.y + b.h / 2)) / b.h + Math.abs(r.h - b.h) / b.h;
+    const a = 0.5; det.box = { x: b.x + (r.x - b.x) * a, y: b.y + (r.y - b.y) * a, w: b.w + (r.w - b.w) * a, h: b.h + (r.h - b.h) * a };
+  } else { det.moved = 1; det.box = r; }
+  det.seen = now;
+}
+// Focus: point the camera's focus at the card, refocus when text stays blurry, tap to focus.
+function focusAt(nx, ny, once) {
+  const tr = camDev.track; if (!tr) return;
+  const fm = camDev.caps.focusMode || [], adv = { pointsOfInterest: [{ x: Math.max(0, Math.min(1, nx)), y: Math.max(0, Math.min(1, ny)) }] };
+  if (once && fm.includes("single-shot")) adv.focusMode = "single-shot"; else if (fm.includes("continuous")) adv.focusMode = "continuous";
+  tr.applyConstraints({ advanced: [adv] }).catch(() => {});
+  if (once && fm.includes("single-shot") && fm.includes("continuous")) setTimeout(() => { if (camDev.track) camDev.track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {}); }, 900);
+}
+function focusTick(vid) {
+  if (!cardLocked()) { det.blurSince = 0; return; }
+  const now = performance.now(), b = det.box, nx = (b.x + b.w / 2) / vid.videoWidth, ny = (b.y + b.h * 0.3) / vid.videoHeight;
+  if (det.moved > 0.08 && now - det.lastPOI > 700) { focusAt(nx, ny, false); det.lastPOI = now; }
+  const blurry = ana.last && ana.last.text >= AUTO.minText && ana.last.sharp < AUTO.minSharp;
+  if (!blurry) { det.blurSince = 0; return; }
+  if (!det.blurSince) det.blurSince = now;
+  if (now - det.blurSince > 1000 && now - det.lastRefocus > 2500) { focusAt(nx, ny, true); det.lastRefocus = now; det.blurSince = 0; }
+}
+function watchTick() {
+  if (tab !== "scan" || !stream || document.hidden) return;
+  const vid = $("#vid"); if (!vid || !vid.videoWidth) return;
+  if (!sc.busy) { try { updateBox(vid, detectCard(vid)); } catch (e) {} }
+  placeFrame(vid); focusTick(vid); autoTick();
 }
 async function startCamera() {
   const vid = $("#vid"); if (!vid) return;
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { scStatus("Camera isn't available here. Use the photo button instead. The page must be opened over https."); return; }
   try {
-    if (!stream) stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+    if (!stream) stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 2560 }, height: { ideal: 1440 } }, audio: false });
     if (tab !== "scan") { stopCamera(); return; }
     vid.srcObject = stream; await vid.play().catch(() => {});
     const track = stream.getVideoTracks()[0];
-    const caps = track.getCapabilities ? track.getCapabilities() : {};
-    if (caps.torch) $("#torch").hidden = false;
-    if (caps.focusMode && caps.focusMode.includes("continuous")) track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
+    camDev.track = track; camDev.caps = track.getCapabilities ? track.getCapabilities() : {};
+    if (camDev.caps.torch) $("#torch").hidden = false;
+    if ((camDev.caps.focusMode || []).includes("continuous")) track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
+    vid.onclick = e => { const t = camXform(vid), r = vid.getBoundingClientRect(); focusAt(((e.clientX - r.left) - t.ox) / t.s / vid.videoWidth, ((e.clientY - r.top) - t.oy) / t.s / vid.videoHeight, true); camHint("Focusing…"); };
     if (!sc.match) scStatus(readyMsg());
     getWorker().catch(() => {});
+    vid.onloadedmetadata = () => placeFrame(vid); placeFrame(vid);
     startAuto();
   } catch (e) { scStatus("Camera blocked. Allow camera access in Chrome's site settings, or use the photo button."); }
 }
-function stopCamera() { stopAuto(); if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; torchOn = false; } window.onresize = null; }
+function stopCamera() { stopAuto(); camDev.track = null; det.box = null; if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; torchOn = false; } window.onresize = null; }
 async function toggleTorch() {
   if (!stream) return; torchOn = !torchOn;
   try { await stream.getVideoTracks()[0].applyConstraints({ advanced: [{ torch: torchOn }] }); } catch (e) { torchOn = false; }
@@ -1216,9 +1333,9 @@ async function toggleTorch() {
 }
 
 /* ---------- auto-capture: watch the frame, shoot when a card is in focus and still ---------- */
-const AUTO = { W: 144, H: 200, still: 6, hold: 380, minStd: 20, minText: 12, minSharp: 2.5, rearm: 30, every: 140 };
+const AUTO = { W: 144, H: 200, still: 6, hold: 380, holdLocked: 280, minStd: 20, minText: 12, minSharp: 2.5, rearm: 30, every: 120 };
 const ana = { timer: null, prev: null, since: 0, armed: true, sig: null, fails: 0, cool: 0, cv: null, ac: null, failMsg: "" };
-function startAuto() { stopAuto(); if (!sc.auto) return; ana.prev = null; ana.since = 0; ana.timer = setInterval(autoTick, AUTO.every); }
+function startAuto() { stopAuto(); ana.prev = null; ana.since = 0; ana.timer = setInterval(watchTick, AUTO.every); }
 function stopAuto() { if (ana.timer) clearInterval(ana.timer); ana.timer = null; setFrameState("", 0); }
 function setFrameState(st, p) {
   const fr = $("#frame"); if (!fr) return;
@@ -1249,11 +1366,13 @@ function frameStats(L, W, H, mean) {
 }
 function diffL(a, b) { let s = 0, n = 0; for (let i = 0; i < a.length; i += 3) { s += Math.abs(a[i] - b[i]); n++; } return s / n; }
 function autoTick() {
-  if (tab !== "scan" || !stream || document.hidden || sc.busy) return;
+  if (!sc.auto || tab !== "scan" || !stream || document.hidden || sc.busy) return;
   const vid = $("#vid"); if (!vid || !vid.videoWidth) return;
   if (sc.match || sc.candidates.length) { ana.since = 0; setFrameState("", 0); camHint("Tap Add or Skip below, then show the next card"); return; }
   const s = sampleCard(vid); if (!s) return;
-  const now = performance.now(), moving = ana.prev ? diffL(s.L, ana.prev) : 99;
+  ana.last = s;
+  const locked = cardLocked(), boxMoving = locked && det.moved > 0.04;
+  const now = performance.now(), moving = ana.prev && !boxMoving ? diffL(s.L, ana.prev) : 99;
   ana.prev = s.L;
   const noCard = s.std < AUTO.minStd || s.text < AUTO.minText;
   if (!ana.armed) {
@@ -1262,11 +1381,12 @@ function autoTick() {
     else { setFrameState("", 0); camHint(ana.failMsg || "Got it. Show the next card"); return; }
   }
   if (now < ana.cool) return;
-  if (noCard) { ana.since = 0; setFrameState("", 0); camHint("Line up a card inside the frame"); return; }
-  if (s.sharp < AUTO.minSharp) { ana.since = 0; setFrameState("", 0); camHint("Move a little closer or wait for focus"); return; }
+  if (noCard) { ana.since = 0; setFrameState("", 0); camHint(locked ? "Hold the card flat and face-up" : "Show a card to the camera"); return; }
+  if (locked) { const t = camXform(vid); if (det.box.h * t.s < t.H * 0.32) { ana.since = 0; setFrameState("", 0); camHint("Move the card a little closer"); return; } }
+  if (s.sharp < AUTO.minSharp) { ana.since = 0; setFrameState("", 0); camHint("Focusing…"); return; }
   if (moving > AUTO.still) { ana.since = 0; setFrameState("steady", 0); camHint("Hold still…"); return; }
   if (!ana.since) ana.since = now;
-  const p = (now - ana.since) / AUTO.hold;
+  const p = (now - ana.since) / (locked ? AUTO.holdLocked : AUTO.hold);
   setFrameState("steady", p); camHint("Hold still…");
   if (p >= 1) { ana.since = 0; autoShoot(s); }
 }
@@ -1344,7 +1464,7 @@ async function captureFrom(kind, file) {
     let src, cx, cy, cw, ch;
     if (kind === "video") {
       const vid = $("#vid"), r = vid && frameRect(vid); if (!r) { scStatus("The camera isn't ready yet."); return false; }
-      src = document.createElement("canvas"); src.width = vid.videoWidth; src.height = vid.videoHeight; src.getContext("2d").drawImage(vid, 0, 0);
+      src = vid;
       cx = r.x; cy = r.y; cw = r.w; ch = r.h;
     } else {
       src = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => null);
@@ -1773,6 +1893,7 @@ function deckMenu(d) {
 /* ---------- start ---------- */
 go("coll");
 loadNames().catch(() => {});
+if (S.meta.usedScan) setTimeout(() => getWorkers().catch(() => {}), 2500);
 if (Object.keys(S.coll).length && (!S.meta.pricedAt || Date.now() - S.meta.pricedAt > 20 * 36e5)) setTimeout(() => refreshPrices(true), 1500);
 </script>
 </body>
