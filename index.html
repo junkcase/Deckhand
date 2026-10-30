@@ -1530,12 +1530,13 @@ function renderScan() {
       <span class="seg" id="scFin"><button data-f="nonfoil" aria-pressed="${sc.finish === "nonfoil"}">Normal</button><button data-f="foil" aria-pressed="${sc.finish === "foil"}">Foil</button></span>
       <select id="scBinder" class="grow" aria-label="Add scanned cards to">${binderOptions(defaultBinder())}</select></div>
     <label class="small" style="display:flex;flex-direction:column;gap:4px">After each scan
-      <select id="scMode"><option value="ask" ${sc.mode === "ask" ? "selected" : ""}>Keep scanning, I'll choose what to add from the list</option>
-        <option value="exact" ${sc.mode === "exact" ? "selected" : ""}>Add exact-printing matches, list the rest</option>
-        <option value="any" ${sc.mode === "any" ? "selected" : ""}>Add everything automatically</option></select></label>
+      <select id="scMode"><option value="ask" ${sc.mode === "ask" ? "selected" : ""}>Review: list every card, I'll choose what to add</option>
+        <option value="exact" ${sc.mode === "exact" ? "selected" : ""}>Bulk: add exact-printing matches, list the rest</option>
+        <option value="any" ${sc.mode === "any" ? "selected" : ""}>Bulk: add every confident match, list the rest</option></select></label>
     <div class="status" id="scStatus" aria-live="polite"></div>
     <div class="ac"><input type="search" id="scType" placeholder="Not recognized? Start typing the name" autocomplete="off" autocapitalize="off" spellcheck="false"><ul id="scAc" hidden></ul></div>
     <div id="scSession"></div>
+    <details class="box" id="scLogBox"${S.meta.logOpen ? " open" : ""}><summary class="label" style="cursor:pointer">Scan log and speed</summary><div id="scLog"></div></details>
   </div>`;
   layoutFrame(); window.onresize = layoutFrame;
   $("#shoot").onclick = () => { ana.armed = true; captureFrom("video"); };
@@ -1560,7 +1561,8 @@ function renderScan() {
       else setMatch(card, false, true);
     } catch (e) { scStatus(e.message); }
   });
-  drawSession(); startCamera();
+  drawSession(); drawLog(); startCamera();
+  $("#scLogBox").ontoggle = e => { S.meta.logOpen = e.target.open; save(); };
 }
 // The scanning session: everything scanned shows up here right away, newest first. Nothing waits
 // for you: decide later, card by card or all at once. Kept until you clear it (survives reloads).
@@ -1580,7 +1582,7 @@ function drawSession() {
     const c = it.card, pic = c ? `<img src="${esc(c.img)}" alt="">` : it.thumb ? `<img src="${it.thumb}" alt="Picture of the scanned card">` : `<img alt="">`;
     const fin = c && c.finishes.length > 1 && it.state === "review" ? `<button class="chip ${it.finish !== "nonfoil" ? "foil" : ""}" data-fin="${it.id}">${it.finish === "nonfoil" ? "normal" : it.finish} ▾</button>` : it.finish !== "nonfoil" ? `<span class="chip foil">${it.finish}</span>` : "";
     const meta = c ? `<div class="meta"><span>${setIcon(c.set, c.rarity)} ${esc(c.set.toUpperCase())} #${esc(c.num)}</span>${fin}<span class="num">${money(priceOf(c, it.finish))}</span><span class="num">${esc(clock(it.at))}</span></div>` : "";
-    if (it.state === "review") return `<div class="item">${pic}<button class="tap" data-pr="${it.id}"><div class="name">${esc(c.name)}</div>${meta}<div class="small ${it.exact ? "up" : "muted"}">${it.exact ? "Exact printing" : "Tap to check the printing"}</div></button>
+    if (it.state === "review") return `<div class="item">${pic}<button class="tap" data-pr="${it.id}"><div class="name">${esc(c.name)}</div>${meta}<div class="small ${it.exact ? "up" : it.conf === "medium" ? "gold" : "muted"}">${it.exact ? "Exact printing" : it.conf === "medium" ? "Likely match: please check" : "Name read clearly · tap to check the printing"}</div></button>
       <div class="right"><span class="stepper"><button data-dec="${it.id}" aria-label="One fewer">−</button><span class="num">${it.qty}</span><button data-inc="${it.id}" aria-label="One more">+</button></span>
       <span class="row" style="gap:4px"><button class="btn sm primary" data-add="${it.id}">Add</button><button class="btn sm ghost" data-skip="${it.id}">Skip</button></span></div></div>`;
     if (it.state === "added") return `<div class="item">${pic}<div style="min-width:0"><div class="name">${esc(c.name)}</div>${meta}<div class="small up">Added ${it.qty}× to ${esc((S.binders[it.binder] || S.binders.main).name)}</div></div>
@@ -1824,7 +1826,8 @@ function autoTick() {
     else { setFrameState("", 0); camHint(ana.failMsg || "Got it. Show the next card"); return; }
   }
   if (now < ana.cool) return;
-  if (noCard) { ana.since = 0; setFrameState("", 0); camHint(locked ? "Hold the card flat and face-up" : "Show a card to the camera"); return; }
+  if (noCard) { ana.since = 0; ana.seenAt = 0; setFrameState("", 0); camHint(locked ? "Hold the card flat and face-up" : "Show a card to the camera"); return; }
+  if (!ana.seenAt) ana.seenAt = performance.now();
   if (locked) { const t = camXform(vid); if (det.box.h * t.s < t.H * AUTO.tooSmall) { ana.since = 0; setFrameState("", 0); camHint("Move the card a little closer"); return; } }
   // No sharpness gate: as soon as a card is in view and steady, take a snapshot and try to read it.
   // If the read fails, a fresh snapshot is tried automatically (the read itself is the judge).
@@ -1857,13 +1860,16 @@ async function autoShoot(s) {
 async function shootAndRead(s) {
   setFrameState("good", 1);
   camHint(ana.fails ? `Trying again (${ana.fails + 1} of ${AUTO.tries})…` : "Reading…");
+  const t0 = performance.now();
+  sc.cur = { t0, wait: ana.seenAt ? t0 - ana.seenAt : 0, try: ana.fails + 1, ms: {} };
   const vid = $("#vid"), shot = vid && await grabBest(vid);
-  if (!shot) { setFrameState("", 0); return; }
+  if (!shot) { setFrameState("", 0); sc.cur = null; return; }
+  sc.cur.ms.capture = performance.now() - t0;
   try { const t = document.createElement("canvas"); t.width = 63; t.height = 88; t.getContext("2d").drawImage(shot.c, 0, 0, 63, 88); sc.lastThumb = t.toDataURL("image/jpeg", 0.7); } catch (e) { sc.lastThumb = ""; }
   const ok = await captureFrom("snap", shot.c, ana.fails % 2 === 1);    // every other retry uses stronger settings
   shot.c.width = shot.c.height = 0;                                       // the snapshot is deleted once read
   if (!sc.auto) return;
-  if (ok) { ana.armed = false; ana.sig = s.L; ana.fails = 0; ana.failMsg = ""; beep(); if (navigator.vibrate) navigator.vibrate(40); }
+  if (ok) { ana.armed = false; ana.sig = s.L; ana.fails = 0; ana.failMsg = ""; ana.seenAt = 0; beep(); if (navigator.vibrate) navigator.vibrate(40); }
   else {
     ana.fails++; ana.cool = performance.now() + 250;                      // quick automatic retry with a fresh snapshot
     if (ana.fails >= AUTO.tries) {
@@ -1931,6 +1937,9 @@ function prep(src, sx, sy, sw, sh, targetW = 1100, binarize = false) {
 async function captureFrom(kind, file, alt) {
   if (sc.busy) return false; sc.busy = true; scanning = true; ocrProg[0] = ocrProg[1] = 0;
   let ok = false;
+  if (kind !== "snap" || !sc.cur) sc.cur = { t0: performance.now(), wait: 0, try: 1, ms: {}, manual: kind !== "snap" };
+  const cur = sc.cur, mark = k => { cur.ms[k] = performance.now() - (cur._last || cur.t0) ; cur._last = performance.now(); };
+  cur._last = performance.now();
   try {
     scanProg(0.04, "Capturing…");
     let src, cx, cy, cw, ch;
@@ -1946,19 +1955,59 @@ async function captureFrom(kind, file, alt) {
     scStatus("Reading the card…");
     const nameImg = alt ? prep(src, cx + cw * 0.025, cy + ch * 0.012, cw * 0.82, ch * 0.115, 820, true) : prep(src, cx + cw * 0.03, cy + ch * 0.022, cw * 0.80, ch * 0.09, 760);
     const infoImg = alt ? prep(src, cx + cw * 0.02, cy + ch * 0.86, cw * 0.52, ch * 0.13, 700, true) : prep(src, cx + cw * 0.025, cy + ch * 0.885, cw * 0.48, ch * 0.095, 640);
+    mark("prep");
     scanProg(0.12, "Reading the card…");
     const [wn, wi] = await getWorkers();
     scanProg(0.18, "Reading the card…");
     const [nr, ir] = await Promise.all([wn.recognize(nameImg), wi.recognize(infoImg)]);
-    ok = await identify(nr.data.text || "", ir.data.text || "");
+    mark("ocr");
+    ok = await identify(nr.data.text || "", ir.data.text || "", nr.data.confidence);
     return ok;
-  } catch (e) { scStatus("Scan failed: " + (e.message || e)); return false; }
+  } catch (e) { cur.err = e.message || String(e); scStatus("Scan failed: " + (e.message || e)); return false; }
   finally {
     sc.busy = false; scanning = false;
+    cur.ms.total = performance.now() - cur.t0; cur.ok = ok; cur.at = Date.now(); delete cur._last;
+    logScan(cur); sc.cur = null;
     if (ok && sc.lastKind === "pick") scanProg(1, "Listed. Pick the right card later", "ok");
     else if (ok) scanProg(1, sc.lastKind || "Found", "ok");
     else scanProg(1, "Couldn't read that card", "fail");
   }
+}
+/* ---------- card lookups: everything needed for one scan in a single request, cached on the device ---------- */
+const CC = { map: null, p: null, dirty: false, t: null, miss: new Map() };
+const identKey = i => i.id ? "i:" + i.id : i.collector_number ? `c:${i.set}|${i.collector_number}` : i.set ? `ns:${i.name.toLowerCase()}|${i.set}` : "n:" + i.name.toLowerCase();
+async function cardCache() {
+  if (CC.map) return CC.map;
+  if (!CC.p) CC.p = (async () => { let m = null; try { m = idb.ok ? await idbGet("cardcache") : null; } catch (e) {} CC.map = new Map(m ? Object.entries(m) : []); return CC.map; })();
+  return CC.p;
+}
+function saveCardCache() {
+  clearTimeout(CC.t);
+  CC.t = setTimeout(() => {
+    if (!idb.ok || !CC.map) return;
+    const keys = [...CC.map.keys()]; if (keys.length > 3000) keys.slice(0, keys.length - 3000).forEach(k => CC.map.delete(k));
+    idbSet("cardcache", Object.fromEntries(CC.map)).catch(() => {});
+  }, 1500);
+}
+async function lookupCards(idents) {
+  const map = await cardCache(), out = {}, need = [], now = Date.now();
+  for (const i of idents) {
+    const k = identKey(i);
+    const hit = map.get(k);
+    if (hit && now - hit.t < 24 * 3600e3) out[k] = hit.c;                                  // prices are refreshed daily
+    else if (CC.miss.has(k) && now - CC.miss.get(k) < 10 * 60e3) out[k] = null;     // asked recently, wasn't found
+    else if (!need.some(n => identKey(n) === k)) need.push(i);
+  }
+  if (need.length) {
+    const r = await sf("/cards/collection", { identifiers: need.slice(0, 75) });
+    for (const i of need) {
+      const c = matchIdent(r.data || [], i), k = identKey(i);
+      if (c) { const sl = slim(c), v = { c: sl, t: now }; out[k] = sl; map.delete(k); map.set(k, v); map.set(identKey({ set: sl.set, collector_number: sl.num }), v); }
+      else { out[k] = null; CC.miss.set(k, now); }
+    }
+    saveCardCache();
+  }
+  return out;
 }
 function cleanName(t) {
   // digits and symbols the reader confuses with letters
@@ -1975,52 +2024,115 @@ function parseInfo(t) {
   const set = (u.match(/\b([A-Z0-9]{3,5})\s*[•·*.\-]?\s*(EN|ES|FR|DE|IT|PT|JA|JP|KO|RU|ZH)\b/) || [])[1];
   return { num, set: set && /[A-Z]/.test(set) ? set.toLowerCase() : null };
 }
-async function identify(nameTxt, infoTxt) {
+// Confidence:
+//   high   = set code + number agree with a close name match, or a very clean name read
+//            (similarity >= 0.9, clearly ahead of the next name, OCR confidence >= 60)
+//   medium = probably right (similarity >= 0.72 and ahead of the next name), or only the set code was read
+//   low    = several close names: you pick
+// Only "high" is ever added automatically; "medium" goes to the list marked "please check".
+async function identify(nameTxt, infoTxt, ocrConf) {
+  const cur = sc.cur || (sc.cur = { t0: performance.now(), ms: {} }), t1 = performance.now();
   const name = cleanName(nameTxt), info = parseInfo(infoTxt);
   sc.lastRead = name; sc.lastKind = "";
+  Object.assign(cur, { read: name, rawName: nameTxt.trim().slice(0, 60), set: info.set, num: info.num, ocrConf: ocrConf == null ? null : Math.round(ocrConf) });
   scanProg(0.8, "Finding the card…");
-  // look up the printing from the set code + number while the name is being matched
-  const codeP = info.set && info.num ? sf(`/cards/${info.set}/${encodeURIComponent(info.num)}`).catch(() => null) : Promise.resolve(null);
   if (!NAMES) await Promise.race([loadNames().catch(() => {}), sleep(1500)]);
   let cands = name.length >= 3 ? nameMatches(name) : [];
-  const byCode = await codeP;
-  scanProg(0.9, "Checking the printing…");
+  const top = cands && cands[0], second = cands && cands[1], margin = top ? top.score - (second ? second.score : 0) : 0;
+  cur.score = top ? +top.score.toFixed(2) : null; cur.margin = top ? +margin.toFixed(2) : null; cur.cand = top ? top.name : null;
+  cur.ms.match = performance.now() - t1;
+  // one request (or none, if cached) for every identifier we might need
+  const t2 = performance.now(), idents = [], close = (cands || []).filter(c => c.score >= 0.55).slice(0, 2);
+  const codeId = info.set && info.num ? { set: info.set, collector_number: info.num } : null;
+  if (codeId) idents.push(codeId);
+  for (const c of close) { if (info.set) idents.push({ name: c.name, set: info.set }); idents.push({ name: c.name }); }
+  let got = {}, fuzzy = null;
+  try {
+    if (cands === null && name.length >= 3) fuzzy = slim(await sf("/cards/named?fuzzy=" + encodeURIComponent(name)));    // name list not loaded yet
+    else if (idents.length) got = await lookupCards(idents);
+  } catch (e) { cur.err = "lookup: " + (e.message || e); }
+  cur.ms.lookup = performance.now() - t2;
+  scanProg(0.92, "Checking the printing…");
   const sameName = (c, n) => c && stripName(c.name.split(" // ")[0]) === stripName(n.split(" // ")[0]);
-  // 1. set code + number agree with something close to the name we read: exact printing
-  if (byCode && (cands || []).some(c => c.score >= 0.55 && sameName(byCode, c.name))) { setMatch(byCode, true); return true; }
-  if (byCode && !name && info.num) { setMatch(byCode, false); return true; }
-  // 2. a confident name match
-  if (cands === null && name.length >= 3) {                         // name list not loaded yet: ask Scryfall
-    try { const c = await sf("/cards/named?fuzzy=" + encodeURIComponent(name)); setMatch(c, sameName(byCode, c.name)); return true; } catch (e) { cands = []; }
+  const byCode = codeId ? got[identKey(codeId)] : null;
+  const done = (card, exact, conf) => { cur.conf = conf; cur.exact = exact; cur.result = card.name + ` (${card.set.toUpperCase()} #${card.num})`; setMatch(card, exact, false, conf); return true; };
+  if (byCode && close.some(c => sameName(byCode, c.name))) return done(byCode, true, "high");
+  const strong = top && top.score >= 0.9 && margin >= 0.1 && (ocrConf == null || ocrConf >= 60);
+  const likely = top && top.score >= 0.72 && (margin >= 0.08 || top.score >= 0.92);
+  if (strong || likely) {
+    const inSet = info.set ? got[identKey({ name: top.name, set: info.set })] : null, card = inSet || got[identKey({ name: top.name })];
+    if (card) return done(card, !!(inSet && info.num && inSet.num === info.num), strong ? "high" : "medium");
   }
-  const top = cands[0], second = cands[1];
-  const confident = top && top.score >= 0.72 && (!second || top.score - second.score >= 0.08 || top.score >= 0.92);
-  if (confident) {
-    let card = null;
-    if (info.set) card = await sf(`/cards/named?exact=${encodeURIComponent(top.name)}&set=${info.set}`).catch(() => null);
-    if (!card) card = await sf(`/cards/named?exact=${encodeURIComponent(top.name)}`).catch(() => null);
-    if (card) { setMatch(card, false); return true; }
-  }
-  // 3. close calls: let the person pick
+  if (fuzzy) return done(fuzzy, false, "medium");
+  if (byCode && !name) return done(byCode, false, "medium");
+  // low confidence: let the person pick
   let picks = (cands || []).filter(c => c.score >= 0.5).map(c => c.name);
   if (!picks.length && name.length >= 4) picks = (suggest(name, 5) || []).slice();   // only part of the name was read
   if (byCode && !picks.includes(byCode.name)) picks.unshift(byCode.name);
   if (picks.length) {
+    cur.conf = "low"; cur.result = "choices: " + picks.slice(0, 3).join(", ");
     sc.items.push({ id: uid(), state: "pick", cands: picks.slice(0, 5), read: name, thumb: sc.lastThumb, finish: sc.finish, qty: 1, at: Date.now() });
     sc.lastKind = "pick"; saveSession(); drawSession(); scanHead(); scStatus("Listed below: pick the right card when you're done scanning."); return true;
   }
+  cur.conf = "none"; cur.result = "not read";
   scStatus(name ? `Read “${name}” but couldn't match it. Hold steady with good light, or type the name below.` : "Couldn't read the name. Fill the frame, add light, and try again.");
   return false;
 }
+// Scan log: per-stage timings and what was read, for every attempt. Kept on the device (last 150).
+function logScan(c) {
+  sc.log = sc.log || S.scanLog || [];
+  const r = v => v == null ? null : Math.round(v);
+  sc.log.push({ at: c.at, try: c.try || 1, manual: !!c.manual, ok: !!c.ok, conf: c.conf || (c.ok ? "" : "none"), exact: !!c.exact, result: c.result || (c.err ? "error: " + c.err : "not read"),
+    read: c.read || "", raw: c.rawName || "", set: c.set || "", num: c.num || "", ocr: c.ocrConf, score: c.score, margin: c.margin, cand: c.cand || "",
+    ms: { wait: r(c.wait), capture: r(c.ms.capture), prep: r(c.ms.prep), ocr: r(c.ms.ocr), match: r(c.ms.match), lookup: r(c.ms.lookup), total: r(c.ms.total) } });
+  if (sc.log.length > 150) sc.log.splice(0, sc.log.length - 150);
+  S.scanLog = sc.log; save(); drawLog();
+}
+const pct = (arr, p) => { if (!arr.length) return null; const a = arr.slice().sort((x, y) => x - y); return a[Math.min(a.length - 1, Math.floor(p * a.length))]; };
+function scanStats(log) {
+  const ok = log.filter(e => e.ok), tot = ok.map(e => e.ms.total).filter(v => v != null), seen = ok.map(e => (e.ms.total || 0) + (e.ms.wait || 0));
+  const st = k => pct(log.map(e => e.ms[k]).filter(v => v != null), 0.5);
+  const span = ok.length > 1 ? (ok.at(-1).at - ok[0].at) / 60000 : 0;
+  return { n: log.length, ok: ok.length, rate: log.length ? ok.length / log.length : 0, med: pct(tot, 0.5), p95: pct(tot, 0.95), seenMed: pct(seen, 0.5),
+    perMin: span > 0.2 ? (ok.length - 1) / span : null, stage: { capture: st("capture"), prep: st("prep"), ocr: st("ocr"), match: st("match"), lookup: st("lookup") },
+    conf: { high: ok.filter(e => e.conf === "high").length, medium: ok.filter(e => e.conf === "medium").length, low: ok.filter(e => e.conf === "low").length } };
+}
+function drawLog() {
+  const el = $("#scLog"); if (!el) return;
+  const log = sc.log || S.scanLog || []; sc.log = log;
+  if (!log.length) { el.innerHTML = `<p class="small muted">Every scan attempt is recorded here with how long each step took. Scan a few cards, then check back.</p>`; return; }
+  const s = scanStats(log), ms = v => v == null ? "—" : v >= 1000 ? (v / 1000).toFixed(1) + " s" : v + " ms";
+  el.innerHTML = `<div class="stack" style="gap:8px;margin-top:8px">
+    <div class="summary"><div><span class="label">Read</span><b class="num">${s.ok}/${s.n}</b></div><div><span class="label">Median</span><b class="num">${ms(s.med)}</b></div><div><span class="label">Slowest 5%</span><b class="num">${ms(s.p95)}</b></div></div>
+    <div class="small">From card in view to result: <b class="num">${ms(s.seenMed)}</b> median${s.perMin ? ` · <b class="num">${s.perMin.toFixed(1)}</b> cards per minute` : ""}</div>
+    <div class="small muted">Steps (median): snapshot ${ms(s.stage.capture)} · prepare ${ms(s.stage.prep)} · read text ${ms(s.stage.ocr)} · match name ${ms(s.stage.match)} · look up card ${ms(s.stage.lookup)}</div>
+    <div class="small muted">Confidence: ${s.conf.high} high · ${s.conf.medium} medium · ${s.conf.low} low (choices)</div>
+    <div style="overflow-x:auto"><table class="ptable"><thead><tr><th>Time</th><th>Result</th><th>Read</th><th>OCR</th><th>Match</th><th>Set/#</th><th>Total</th></tr></thead><tbody>
+      ${log.slice(-15).reverse().map(e => `<tr><td class="num">${esc(clock(e.at))}${e.try > 1 ? ` <span class="muted">try ${e.try}</span>` : ""}</td>
+        <td><span class="chip ${e.conf === "high" ? "ok" : e.conf === "medium" ? "foil" : e.ok ? "" : "warn"}">${e.ok ? esc(e.conf) : "failed"}</span> ${esc(e.result)}</td>
+        <td>${esc(e.read || e.raw || "—")}</td><td class="num">${e.ocr ?? "—"}</td><td class="num">${e.score ?? "—"}</td><td>${esc((e.set || "").toUpperCase())}${e.num ? " #" + esc(e.num) : ""}</td><td class="num">${ms(e.ms.total)}</td></tr>`).join("")}
+    </tbody></table></div>
+    <div class="row wrap"><button class="btn sm" id="logCopy">Copy log</button><button class="btn sm ghost" id="logClear">Clear log</button></div></div>`;
+  $("#logCopy").onclick = async () => {
+    const st = scanStats(log), txt = [`Deckhand scan log · ${new Date().toLocaleString()} · ${navigator.userAgent}`,
+      `read ${st.ok}/${st.n}, median ${st.med} ms, p95 ${st.p95} ms, card-in-view→result median ${st.seenMed} ms, ${st.perMin ? st.perMin.toFixed(1) + "/min" : ""}`,
+      `stage medians: capture ${st.stage.capture}, prep ${st.stage.prep}, ocr ${st.stage.ocr}, match ${st.stage.match}, lookup ${st.stage.lookup}`,
+      "time | try | result | conf | read | raw | ocr | score | margin | set # | wait capture prep ocr match lookup total",
+      ...log.map(e => [new Date(e.at).toLocaleTimeString(), e.try, e.result, e.conf, e.read, e.raw, e.ocr, e.score, e.margin, `${e.set} ${e.num}`, Object.values(e.ms).join(" ")].join(" | "))].join("\n");
+    try { await navigator.clipboard.writeText(txt); toast("Log copied. Paste it to me in the chat"); } catch (er) { toast("Couldn't copy here"); }
+  };
+  $("#logClear").onclick = () => { sc.log = []; S.scanLog = []; save(); drawLog(); };
+}
 // A card was found: list it (or add it right away, depending on the setting) and keep scanning.
-function setMatch(card, exact, typed) {
-  const s = slim(card), fin = s.finishes.includes(sc.finish) ? sc.finish : s.finishes[0];
-  const auto = !typed && (sc.mode === "any" || (sc.mode === "exact" && exact));
+function setMatch(card, exact, typed, conf = "high") {
+  const s = isSlim(card) ? card : slim(card), fin = s.finishes.includes(sc.finish) ? sc.finish : s.finishes[0];
+  // only confident matches are ever added automatically; "medium" always waits in the list
+  const auto = !typed && conf === "high" && (sc.mode === "any" || (sc.mode === "exact" && exact));
   // the same printing scanned again while it's still waiting in the list: count it up instead of a new row
   const same = !auto && sc.items.find(i => i.state === "review" && i.card.id === s.id && i.finish === fin);
   let it;
   if (same) { same.qty++; same.at = Date.now(); sc.items = sc.items.filter(i => i !== same).concat(same); it = same; }
-  else { it = { id: uid(), state: "review", card: s, exact, finish: fin, qty: 1, at: Date.now() }; sc.items.push(it); }
+  else { it = { id: uid(), state: "review", card: s, exact, conf: typed ? "high" : conf, finish: fin, qty: 1, at: Date.now() }; sc.items.push(it); }
   if (auto) addItem(it, 1);
   sc.lastKind = (auto ? "Added " : "Listed ") + s.name;
   if (navigator.vibrate) navigator.vibrate(30);
