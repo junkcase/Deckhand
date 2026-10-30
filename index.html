@@ -1393,7 +1393,8 @@ function guideScreen(cam) {
   return { x: (W - w) / 2, y: (H - h) / 2, w, h };
 }
 function guideBox(vid) { const g = guideScreen($("#cam")), t = camXform(vid); return { x: (g.x - t.ox) / t.s, y: (g.y - t.oy) / t.s, w: g.w / t.s, h: g.h / t.s }; }
-const cardLocked = () => !!det.box && performance.now() - det.seen < 450;
+const TRACK = { lockHits: 3, switchHits: 3, hold: 800, same: 0.5, calm: 0.15, quick: 0.7 };
+const cardLocked = () => !!det.box && performance.now() - det.seen < TRACK.hold;
 function frameRect(vid) { if (!vid || !vid.videoWidth || !$("#cam")) return null; return cardLocked() ? det.box : guideBox(vid); }
 // The card's four corners (video pixels): the found card at any tilt, or the guide box.
 function frameQuad(vid) { if (!vid || !vid.videoWidth || !$("#cam")) return null; return cardLocked() && det.quad ? det.quad : rectQuad(guideBox(vid)); }
@@ -1652,21 +1653,39 @@ function iou(a, b) {
   const x0 = Math.max(a.x, b.x), y0 = Math.max(a.y, b.y), x1 = Math.min(a.x + a.w, b.x + b.w), y1 = Math.min(a.y + a.h, b.y + b.h);
   const I = Math.max(0, x1 - x0) * Math.max(0, y1 - y0); return I / (a.w * a.h + b.w * b.h - I);
 }
+// Tracking: follow one card smoothly instead of trusting every frame on its own.
+// - lock on after 3 frames that agree;
+// - while locked, small wobbles are averaged out heavily, real movement is followed quickly;
+// - a detection somewhere else must repeat 3 frames in a row before the outline moves there;
+// - missed frames are bridged for 0.8 s before falling back to the guide box.
+const meanShift = (a, b, size) => a.reduce((t, p, i) => t + Math.hypot(p.x - b[i].x, p.y - b[i].y), 0) / 4 / (size || 1);
 function updateBox(vid, found) {
-  if (!found) { det.moved = 1; return; }
+  if (!found) { det.moved = cardLocked() ? det.moved * 0.5 : 1; return; }
   const r = quadBBox(found.pts);
   const t = camXform(vid), cx = (r.x + r.w / 2) * t.s + t.ox, cy = (r.y + r.h / 2) * t.s + t.oy;
   if (cx < 0 || cy < 0 || cx > t.W || cy > t.H) return;                       // off the visible screen
-  const b = det.box, now = performance.now();
-  if (!cardLocked()) {                                   // lock on only after two frames in a row agree
-    const c = det.cand; det.cand = r;
-    if (!c || iou(c, r) < 0.6) return;
+  const now = performance.now();
+  // keep a candidate: consecutive detections that agree with each other
+  const c = det.cand;
+  if (c && iou(quadBBox(c.pts), r) > 0.6) { c.hits++; c.pts = c.pts.map((p, i) => ({ x: (p.x + found.pts[i].x) / 2, y: (p.y + found.pts[i].y) / 2 })); c.deg = found.deg; }
+  else det.cand = { pts: found.pts, deg: found.deg, hits: 1 };
+  if (!cardLocked()) {
+    if (det.cand.hits < TRACK.lockHits) return;
+    det.quad = det.cand.pts; det.deg = det.cand.deg; det.box = quadBBox(det.quad); det.seen = now; det.moved = 1; return;
   }
-  if (b && cardLocked() && iou(b, r) > 0.55) {
-    det.moved = Math.hypot(r.x + r.w / 2 - (b.x + b.w / 2), r.y + r.h / 2 - (b.y + b.h / 2)) / b.h + Math.abs(r.h - b.h) / b.h;
-    const a = 0.5; det.quad = det.quad.map((p, i) => ({ x: p.x + (found.pts[i].x - p.x) * a, y: p.y + (found.pts[i].y - p.y) * a }));
-  } else { det.moved = 1; det.quad = found.pts; }
-  det.box = quadBBox(det.quad); det.deg = found.deg; det.seen = now;
+  const b = det.box, size = b.h;
+  if (iou(b, r) > TRACK.same) {
+    // same card: smooth. Tiny shifts (jitter) barely move the outline; big ones (real motion) move it fast.
+    const d = meanShift(det.quad, found.pts, size);
+    if (d > 0.07 && det.cand.hits < 2) return;                                 // a sudden jump seen once: wait for the next frame to confirm it
+    const a = Math.max(TRACK.calm, Math.min(TRACK.quick, d * 9));
+    det.quad = det.quad.map((p, i) => ({ x: p.x + (found.pts[i].x - p.x) * a, y: p.y + (found.pts[i].y - p.y) * a }));
+    det.moved = d; det.deg = found.deg; det.seen = now;
+  } else if (det.cand.hits >= TRACK.switchHits) {
+    // somewhere else, and it's been there for several frames: the card really moved
+    det.quad = det.cand.pts; det.deg = det.cand.deg; det.moved = 1; det.seen = now;
+  } else return;                                                               // a stray detection: ignore it
+  det.box = quadBBox(det.quad);
 }
 // Focus: aim at the card once, then HOLD that focus for the next cards (a stack is scanned at the
 // same distance, so the camera shouldn't refocus on the table every time a card is swapped).
@@ -1740,7 +1759,7 @@ async function startCamera() {
     startAuto();
   } catch (e) { scStatus("Camera blocked. Allow camera access in Chrome's site settings, or use the photo button."); }
 }
-function stopCamera() { stopAuto(); camDev.track = null; camDev.held = false; det.box = null; det.quad = null; if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; torchOn = false; } window.onresize = null; }
+function stopCamera() { stopAuto(); camDev.track = null; camDev.held = false; det.box = null; det.quad = null; det.cand = null; if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; torchOn = false; } window.onresize = null; }
 // Several cameras (front/back, or a tablet's extra lenses): show a switch button and cycle through them.
 let cams = [];
 async function listCameras() {
