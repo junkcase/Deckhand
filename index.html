@@ -151,7 +151,7 @@ details.box summary::after{content:" ▾"}
 .cam .band.name{top:3%;height:7.5%;right:20%}
 .cam .band.info{bottom:2.5%;height:8%;right:52%}
 .cam .hint{position:absolute;left:0;right:0;top:10px;text-align:left;color:#fff;font-size:14px;font-weight:600;text-shadow:0 1px 3px #000;padding:0 104px 0 12px;min-height:20px}
-.cam .frame{transition:left .12s linear,top .12s linear,width .12s linear,height .12s linear,border-color .15s}
+.cam .frame{transition:left .12s linear,top .12s linear,width .12s linear,height .12s linear,transform .12s linear,border-color .15s}
 .cam .frame.locked{border-style:solid;border-color:#fff}
 .cam .frame.locked .band{opacity:.45}
 .cam .frame.steady{border-color:#ffd76a}
@@ -1642,13 +1642,27 @@ function guideScreen(cam) {
 }
 function guideBox(vid) { const g = guideScreen($("#cam")), t = camXform(vid); return { x: (g.x - t.ox) / t.s, y: (g.y - t.oy) / t.s, w: g.w / t.s, h: g.h / t.s }; }
 const cardLocked = () => !!det.box && performance.now() - det.seen < 450;
+// A box may be found in the frame turned by angle a (to straighten a tilted card): {x,y,w,h,a} lives in that turned frame.
+function boxCenter(vid, b) {
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2; if (!b.a) return { x: cx, y: cy };
+  const ox = vid.videoWidth / 2, oy = vid.videoHeight / 2, c = Math.cos(-b.a), s_ = Math.sin(-b.a), dx = cx - ox, dy = cy - oy;
+  return { x: ox + dx * c - dy * s_, y: oy + dx * s_ + dy * c };
+}
+// copy the box out of the frame, straightened, into a W x H canvas
+function drawBox(g, vid, b, W, H) {
+  if (!b.a) { g.drawImage(vid, b.x, b.y, b.w, b.h, 0, 0, W, H); return; }
+  const ox = vid.videoWidth / 2, oy = vid.videoHeight / 2;
+  g.save(); g.scale(W / b.w, H / b.h); g.translate(-b.x, -b.y); g.translate(ox, oy); g.rotate(b.a); g.translate(-ox, -oy); g.drawImage(vid, 0, 0); g.restore();
+}
 function frameRect(vid) { if (!vid || !vid.videoWidth || !$("#cam")) return null; return cardLocked() ? det.box : guideBox(vid); }
 function placeFrame(vid) {
   const fr = $("#frame"), cam = $("#cam"); if (!fr || !cam) return;
   let r;
-  if (vid && vid.videoWidth) { const b = frameRect(vid), t = camXform(vid); r = { x: b.x * t.s + t.ox, y: b.y * t.s + t.oy, w: b.w * t.s, h: b.h * t.s }; }
+  let ang = 0;
+  if (vid && vid.videoWidth) { const b = frameRect(vid), t = camXform(vid), c = boxCenter(vid, b); ang = b.a || 0; r = { x: (c.x - b.w / 2) * t.s + t.ox, y: (c.y - b.h / 2) * t.s + t.oy, w: b.w * t.s, h: b.h * t.s }; }
   else r = guideScreen(cam);
   fr.style.left = r.x + "px"; fr.style.top = r.y + "px"; fr.style.width = r.w + "px"; fr.style.height = r.h + "px";
+  fr.style.transform = ang ? `rotate(${(-ang).toFixed(3)}rad)` : "";
   fr.classList.toggle("locked", cardLocked());
 }
 function layoutFrame() { placeFrame($("#vid")); }
@@ -1676,16 +1690,26 @@ function detectCore(G, w, h) {
   // edge strength along a side in 4 pieces, each allowed to sit up to 3px off (tolerates a slight tilt);
   // "good" counts pieces with a clear edge, so a line that only covers part of the side doesn't pass
   let good = 0;
-  const side = (P, stride, lim, at, a0, a1) => {
+  const side = (P, stride, lim, at, a0, a1, offs) => {
     let tot = 0; const seg = (a1 - a0) / 4;
     for (let k = 0; k < 4; k++) {
-      const s0 = Math.round(a0 + seg * k), s1 = Math.round(a0 + seg * (k + 1)); if (s1 <= s0) continue; let best = 0;
-      for (let d = -3; d <= 3; d++) { const q = at + d; if (q < 1 || q >= lim - 1) continue; const o = q * stride, v = (P[o + s1] - P[o + s0]) / (s1 - s0); if (v > best) best = v; }
+      const s0 = Math.round(a0 + seg * k), s1 = Math.round(a0 + seg * (k + 1)); if (s1 <= s0) continue; let best = 0, bd = 0;
+      for (let d = -3; d <= 3; d++) { const q = at + d; if (q < 1 || q >= lim - 1) continue; const o = q * stride, v = (P[o + s1] - P[o + s0]) / (s1 - s0); if (v > best) { best = v; bd = d; } }
       tot += best; if (best / meanG >= 1.8) good++;
+      if (offs && best / meanG >= 1.8) offs.push([(s0 + s1) / 2, bd]);
     }
     return tot / 4 / meanG;
   };
-  let best = null;
+  // how far each side's pieces sit off the straight line → the card's remaining tilt (radians, clockwise +)
+  const slope = o => { if (o.length < 3) return null; const mx = o.reduce((a, p) => a + p[0], 0) / o.length, my = o.reduce((a, p) => a + p[1], 0) / o.length; let nu = 0, de = 0; for (const [x, y] of o) { nu += (x - mx) * (y - my); de += (x - mx) ** 2; } return de ? nu / de : null; };
+  const tiltOf = c => {
+    const ix = Math.round(c.w * 0.1), iy = Math.round(c.h * 0.1), ms = [];
+    for (const [P, st, lim, at, a0, a1, sg] of [[HP, W1, h, c.y, c.x + ix, c.x + c.w - ix, 1], [HP, W1, h, c.y + c.h, c.x + ix, c.x + c.w - ix, 1], [VP, H1, w, c.x, c.y + iy, c.y + c.h - iy, -1], [VP, H1, w, c.x + c.w, c.y + iy, c.y + c.h - iy, -1]]) {
+      const o = []; side(P, st, lim, at, a0, a1, o); const m = slope(o); if (m != null) ms.push(sg * m);
+    }
+    return ms.length >= 2 ? Math.atan(ms.reduce((a, b) => a + b, 0) / ms.length) : 0;
+  };
+  let best = null; const pass = [];
   for (const l of cols) for (const r of cols) {
     const cw = r - l; if (cw < 6) continue;
     for (const t of rows) for (const b of rows) {
@@ -1696,20 +1720,49 @@ function detectCore(G, w, h) {
       const sd = [side(HP, W1, h, t, l + ix, r - ix), side(HP, W1, h, b, l + ix, r - ix), side(VP, H1, w, l, t + iy, b - iy), side(VP, H1, w, r, t + iy, b - iy)];
       const mn = Math.min(sd[0], sd[1], sd[2], sd[3]); if (mn < DET.minSide || good < 15) continue;
       const score = mn + (sd[0] + sd[1] + sd[2] + sd[3]) / 8 + (ch / h) * 0.6 - Math.abs(asp - 0.716) * 4;
-      if (!best || score > best.score) best = { x: l, y: t, w: cw, h: ch, score };
+      const cand = { x: l, y: t, w: cw, h: ch, score, asp }; pass.push(cand);
+      if (!best || score > best.score) best = cand;
     }
   }
-  return best;
+  if (!best) return null;
+  // A card's frame has strong inner edges too (art box, frame color vs black border). The card itself is
+  // the OUTERMOST card-shaped rectangle that encloses the strongest one, so prefer that.
+  let out = best;
+  for (const c of pass) {
+    if (c.score < best.score * 0.55 || Math.abs(c.asp - 0.716) > 0.08) continue;
+    if (c.x > best.x + 1 || c.y > best.y + 1 || c.x + c.w < best.x + best.w - 1 || c.y + c.h < best.y + best.h - 1) continue;
+    if (c.w * c.h > out.w * out.h) out = c;
+  }
+  out.tilt = tiltOf(out);
+  return out;
 }
-function detectCard(vid) {
+// Tilted cards: the frame is turned to straighten the card before the edges are checked.
+// The card's leftover tilt is measured from its own edges, and the frame is turned by that much next time.
+// Big tilts the upright check can't see at all are found by also trying one other angle per frame.
+const DEG = Math.PI / 180, TILTS = [-8, 8, -14, 14].map(d => d * DEG);
+const roundA = a => Math.round(a / (0.5 * DEG)) * 0.5 * DEG;
+function detectAt(vid, a) {
   const vw = vid.videoWidth, vh = vid.videoHeight, k = DET.max / Math.max(vw, vh), w = Math.max(16, Math.round(vw * k)), h = Math.max(16, Math.round(vh * k));
   const c = det.cv || (det.cv = document.createElement("canvas")); if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
   const g = c.getContext("2d", { willReadFrequently: true }); if (!g) return null;
-  g.drawImage(vid, 0, 0, w, h);
+  if (a) { g.save(); g.fillStyle = "#808080"; g.fillRect(0, 0, w, h); g.translate(w / 2, h / 2); g.rotate(a); g.translate(-w / 2, -h / 2); g.drawImage(vid, 0, 0, w, h); g.restore(); }
+  else g.drawImage(vid, 0, 0, w, h);
   const d = g.getImageData(0, 0, w, h).data, G = new Float32Array(w * h);
   for (let i = 0, j = 0; i < d.length; i += 4, j++) G[j] = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
   const r = detectCore(G, w, h); if (!r) return null;
-  return { x: r.x / k, y: r.y / k, w: r.w / k, h: r.h / k };
+  return { x: r.x / k, y: r.y / k, w: r.w / k, h: r.h / k, a, score: r.score, tilt: r.tilt };
+}
+function straighten(vid, r) {
+  if (!r || Math.abs(r.tilt) < 0.75 * DEG) return r;
+  const a = roundA(Math.max(-16 * DEG, Math.min(16 * DEG, r.a - r.tilt))); if (a === r.a) return r;
+  const r2 = detectAt(vid, a); return r2 && r2.score >= r.score * 0.9 ? r2 : r;
+}
+function detectCard(vid) {
+  if (cardLocked()) { const r = detectAt(vid, det.box.a || 0); if (r) return straighten(vid, r); }
+  const r0 = straighten(vid, detectAt(vid, 0));
+  if (r0 && r0.score > 6) return r0;
+  const r1 = straighten(vid, detectAt(vid, TILTS[det.ti = ((det.ti || 0) + 1) % TILTS.length]));
+  return r1 && (!r0 || r1.score > r0.score) ? r1 : r0;
 }
 function iou(a, b) {
   const x0 = Math.max(a.x, b.x), y0 = Math.max(a.y, b.y), x1 = Math.min(a.x + a.w, b.x + b.w), y1 = Math.min(a.y + a.h, b.y + b.h);
@@ -1717,16 +1770,17 @@ function iou(a, b) {
 }
 function updateBox(vid, r) {
   if (!r) { det.moved = 1; return; }
-  const t = camXform(vid), cx = (r.x + r.w / 2) * t.s + t.ox, cy = (r.y + r.h / 2) * t.s + t.oy;
+  const t = camXform(vid), rc = boxCenter(vid, r), cx = rc.x * t.s + t.ox, cy = rc.y * t.s + t.oy;
   if (cx < 0 || cy < 0 || cx > t.W || cy > t.H) return;                       // off the visible screen
   const b = det.box, now = performance.now();
   if (!cardLocked()) {                                   // lock on only after two frames in a row agree
     const c = det.cand; det.cand = r;
-    if (!c || iou(c, r) < 0.6) return;
+    if (!c || Math.abs((c.a || 0) - (r.a || 0)) > 2.1 * DEG || iou(c, r) < 0.6) return;
   }
-  if (b && cardLocked() && iou(b, r) > 0.55) {
+  if (b && cardLocked() && Math.abs((b.a || 0) - (r.a || 0)) <= 2.1 * DEG && iou(b, r) > 0.55) {
     det.moved = Math.hypot(r.x + r.w / 2 - (b.x + b.w / 2), r.y + r.h / 2 - (b.y + b.h / 2)) / b.h + Math.abs(r.h - b.h) / b.h;
-    const a = 0.5; det.box = { x: b.x + (r.x - b.x) * a, y: b.y + (r.y - b.y) * a, w: b.w + (r.w - b.w) * a, h: b.h + (r.h - b.h) * a };
+    const a = 0.5; det.box = { x: b.x + (r.x - b.x) * a, y: b.y + (r.y - b.y) * a, w: b.w + (r.w - b.w) * a, h: b.h + (r.h - b.h) * a, a: r.a || 0 };
+    det.moved += Math.abs((r.a || 0) - (b.a || 0)) * 2;
   } else { det.moved = 1; det.box = r; }
   det.seen = now;
 }
@@ -1740,7 +1794,7 @@ function focusAt(nx, ny, once) {
 }
 function focusTick(vid) {
   if (!cardLocked()) { det.blurSince = 0; return; }
-  const now = performance.now(), b = det.box, nx = (b.x + b.w / 2) / vid.videoWidth, ny = (b.y + b.h * 0.3) / vid.videoHeight;
+  const now = performance.now(), b = det.box, bc = boxCenter(vid, b), nx = bc.x / vid.videoWidth, ny = (bc.y - b.h * 0.2) / vid.videoHeight;
   if (det.moved > 0.08 && now - det.lastPOI > 700) { focusAt(nx, ny, false); det.lastPOI = now; }
   const blurry = ana.last && ana.last.text >= AUTO.minText && ana.last.sharp < AUTO.minSharp;
   if (!blurry) { det.blurSince = 0; return; }
@@ -1793,7 +1847,7 @@ function sampleCard(vid) {
   const { W, H } = AUTO, c = ana.cv || (ana.cv = document.createElement("canvas"));
   c.width = W; c.height = H;
   const g = c.getContext("2d", { willReadFrequently: true });
-  g.drawImage(vid, r.x, r.y, r.w, r.h, 0, 0, W, H);
+  drawBox(g, vid, r, W, H);
   const d = g.getImageData(0, 0, W, H).data, L = new Float32Array(W * H);
   let sum = 0;
   for (let i = 0, j = 0; i < d.length; i += 4, j++) { const y = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114; L[j] = y; sum += y; }
@@ -1845,7 +1899,7 @@ async function grabBest(vid) {
     const r = frameRect(vid); if (!r) break;
     const smp = sampleCard(vid), k = Math.min(1, 1200 / r.h), c = document.createElement("canvas");
     c.width = Math.max(1, Math.round(r.w * k)); c.height = Math.max(1, Math.round(r.h * k));
-    c.getContext("2d").drawImage(vid, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
+    drawBox(c.getContext("2d"), vid, r, c.width, c.height);
     frames.push({ c, sharp: smp ? smp.sharp : 0 });
   }
   if (!frames.length) return null;
