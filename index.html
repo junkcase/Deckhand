@@ -806,7 +806,10 @@ function toast(msg, action) {
     if (row === cur) return;
     hide(); cur = row;
     const big = src.replace(/\/(small|normal)\//, "/normal/");
-    t = setTimeout(() => { if (cur !== row) return; pv.src = big; pv.hidden = false; place(); }, 220);
+    t = setTimeout(() => {
+      if (cur !== row) return;
+      const im2 = new Image(); im2.onload = () => { if (cur !== row) return; pv.src = big; pv.hidden = false; place(); }; im2.src = big;   // show only once this card's picture has loaded
+    }, 220);
   });
   document.addEventListener("mouseout", e => { if (cur && (!e.relatedTarget || !cur.contains(e.relatedTarget))) hide(); });
   document.addEventListener("scroll", () => { if (!pv.hidden) hide(); }, true); document.addEventListener("mousedown", hide, true);
@@ -1881,7 +1884,9 @@ function openCard(card, finish, binder, ctx) {
   };
   openSheet(`<div id="sheetBody"></div>`, () => render());
   draw();
+  const askedId = s.id;
   if (!full || !s.leg || (s.name.includes(" // ") && !s.layout)) sf("/cards/" + s.id).then(c => {
+    if (s.id !== askedId) return;           // you've picked another printing meanwhile: don't switch back to the old one
     full = c; s = slim(c);
     // a two-sided card saved before backs were kept: remember its back in the collection
     let changed = false; for (const e of Object.values(S.coll)) if (e.id === s.id && (e.imgB !== s.imgB || e.layout !== s.layout)) { e.imgB = s.imgB; e.layout = s.layout; changed = true; }
