@@ -747,8 +747,12 @@ function renderColl() {
       <div class="row wrap" style="justify-content:center">
         <button class="btn primary" id="eScan">Scan cards</button><button class="btn" id="eSearch">Search</button>
         <button class="btn" id="eImp">Import ManaBox CSV</button></div>
-      <p class="small">In ManaBox: Collection → ⋮ → Export → CSV, then choose that file here.</p></div>`;
+      <p class="small">In ManaBox: Collection → ⋮ → Export → CSV, then choose that file here.</p>
+      <div class="box" style="margin-top:14px;text-align:left"><b>Already use Deckhand on another device?</b>
+        <p class="small muted" style="margin:4px 0 8px">${syncCfg() && syncCfg().gist ? `Syncing with @${esc(syncCfg().login || "")}. ${SYNC.busy ? "Loading your cards…" : SYNC.err ? esc(SYNC.err) : "Your cards will appear here once the other device has synced."}` : "Connect Sync with the same GitHub token to bring your cards here, or restore a backup file."}</p>
+        <div class="row wrap"><button class="btn primary" id="eSync">Sync</button><button class="btn" id="eRest">Restore a backup</button></div></div></div>`;
     $("#eScan").onclick = () => go("scan"); $("#eSearch").onclick = () => go("search"); $("#eImp").onclick = () => pickCSV({ kind: "coll" });
+    $("#eSync").onclick = syncSheet; $("#eRest").onclick = ioSheet;
     return;
   }
   const counts = {}; for (const e of Object.values(S.coll)) counts[e.binder] = (counts[e.binder] || 0) + e.qty;
