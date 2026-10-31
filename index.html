@@ -350,17 +350,33 @@ try { navigator.storage && navigator.storage.persist && navigator.storage.persis
 /* ---------- Scryfall ---------- */
 const API = "https://api.scryfall.com";
 let queue = Promise.resolve();
-function sf(path, body) {
-  const run = async () => {
-    const r = await fetch(path.startsWith("http") ? path : API + path, {
-      method: body ? "POST" : "GET",
-      headers: body ? { "Accept": "application/json", "Content-Type": "application/json" } : { "Accept": "application/json" },
-      body: body ? JSON.stringify(body) : undefined
-    });
+// Scryfall requests take turns (Scryfall asks for ~10 per second at most). Something you're waiting on
+// (a card you picked, a search) can skip the line instead of waiting behind a long background price update.
+// A dropped connection or a "slow down" reply is retried before giving up.
+let sfLast = 0;
+function sf(path, body, opts = {}) {
+  const once = async () => {
+    const wait = sfLast + 110 - Date.now(); if (wait > 0) await sleep(wait); sfLast = Date.now();
+    let r;
+    try {
+      r = await fetch(path.startsWith("http") ? path : API + path, {
+        method: body ? "POST" : "GET",
+        headers: body ? { "Accept": "application/json", "Content-Type": "application/json" } : { "Accept": "application/json" },
+        body: body ? JSON.stringify(body) : undefined
+      });
+    } catch (e) { throw Object.assign(new Error(navigator.onLine === false ? "You're offline. Check your internet connection." : "Couldn't reach Scryfall. Check your connection; if it keeps happening, an ad blocker or privacy extension may be blocking api.scryfall.com."), { net: true }); }
     const j = await r.json().catch(() => null);
-    if (!r.ok) { const e = new Error((j && j.details) || ("Scryfall returned " + r.status)); e.status = r.status; e.data = j; throw e; }
+    if (!r.ok) { const e = new Error((j && j.details) || (r.status === 429 ? "Scryfall is busy, try again in a moment." : "Scryfall returned " + r.status)); e.status = r.status; e.data = j; throw e; }
     return j;
   };
+  const run = async () => {
+    for (let i = 0; ; i++) {
+      try { return await once(); }
+      catch (e) { if (i >= 2 || !(e.net || e.status === 429 || e.status >= 500)) throw e; await sleep(e.status === 429 ? 1200 * (i + 1) : 500 * (i + 1)); }
+    }
+  };
+  // single lookups go straight away (still spaced out by sfLast); bulk batches (price updates, imports, legality checks) take turns
+  if (opts.now || (!body && !opts.queue)) return run();
   const p = queue.then(run);
   queue = p.catch(() => {}).then(() => sleep(110));
   return p;
@@ -519,7 +535,8 @@ function hilite(name, q) {
   for (let i = 0; i < name.length; i++) { if (mark[i] !== on) { out += mark[i] ? "<b>" : "</b>"; on = mark[i]; } out += esc(name[i]); }
   return out + (on ? "</b>" : "");
 }
-function attachAutocomplete(inp, ul, onPick) {
+function attachAutocomplete(inp, ul, onPick, opts = {}) {
+  const enterPicks = opts.enterPicks !== false;          // the Search box keeps Enter for running the search
   let items = [], hl = -1;
   const show = (names, q) => {
     items = names; hl = -1;
@@ -527,7 +544,7 @@ function attachAutocomplete(inp, ul, onPick) {
     ul.hidden = !names.length;
   };
   const remote = debounce(async q => {
-    try { const r = await sf("/cards/autocomplete?q=" + encodeURIComponent(q)); if (inp.value.trim() === q) show((r.data || []).slice(0, 8), q); } catch (e) {}
+    try { const r = await sf("/cards/autocomplete?q=" + encodeURIComponent(q), null, { now: true }); if (inp.value.trim() === q) show((r.data || []).slice(0, 8), q); } catch (e) {}
   }, 220);
   const look = () => {
     const q = inp.value.trim();
@@ -539,11 +556,17 @@ function attachAutocomplete(inp, ul, onPick) {
   inp.addEventListener("focus", () => { loadNames().catch(() => {}); if (inp.value.trim().length >= 2) look(); });
   inp.addEventListener("blur", () => setTimeout(() => ul.hidden = true, 250));
   inp.addEventListener("keydown", e => {
+    // Enter with no list showing: look up exactly what was typed (closest match)
+    if (enterPicks && e.key === "Enter" && (ul.hidden || !items.length) && inp.value.trim().length >= 2 && !/[:<>=!"]/.test(inp.value)) {
+      e.preventDefault(); const q = inp.value.trim();
+      sf("/cards/named?fuzzy=" + encodeURIComponent(q), null, { now: true }).then(c => onPick(c.name)).catch(er => toast(`No card found for “${q}”${er.status === 404 ? "" : ": " + er.message}`));
+      return;
+    }
     if (ul.hidden || !items.length) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault(); hl = (hl + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
       ul.querySelectorAll("button").forEach((b, i) => b.classList.toggle("hl", i === hl));
-    } else if (e.key === "Enter" && hl >= 0) { e.preventDefault(); ul.hidden = true; onPick(items[hl]); }
+    } else if (e.key === "Enter" && (hl >= 0 || enterPicks)) { e.preventDefault(); ul.hidden = true; onPick(items[hl >= 0 ? hl : 0]); }
     else if (e.key === "Escape") ul.hidden = true;
   });
   ul.addEventListener("pointerdown", e => e.preventDefault());
@@ -1555,7 +1578,7 @@ function renderSearch() {
   $("#fClear").onclick = () => { sv.f = defaultF(); saveSearchPrefs(); const keep = sv.open; renderSearch(); sv.open = keep; if (inp.value.trim() || sv.ran) runSearch($("#sq").value); };
   $("#fApply").onclick = () => { sv.open = false; $("#fp").hidden = true; $("#fTog").setAttribute("aria-expanded", "false"); runSearch(inp.value); };
   const sx = $("#sx"); if (sx) sx.onclick = e => { const b = e.target.closest("button"); if (b) { inp.value = b.dataset.q; runSearch(b.dataset.q); } };
-  attachAutocomplete(inp, $("#sac"), name => { inp.value = `!"${name}"`; sv.prints = true; $("#sp").checked = true; saveSearchPrefs(); runSearch(inp.value); });
+  attachAutocomplete(inp, $("#sac"), name => { inp.value = `!"${name}"`; sv.prints = true; $("#sp").checked = true; saveSearchPrefs(); runSearch(inp.value); }, { enterPicks: false });
   drawResults();
 }
 async function runSearch(q) {
@@ -1672,15 +1695,7 @@ function openCard(card, finish, binder) {
         ${s.uri ? `<a class="btn sm ghost" href="${esc(s.uri)}" target="_blank" rel="noopener">Open on Scryfall</a>` : ""}</div>
       <div id="printBox"></div>`;
     const fc = $("#faces"); if (fc) fc.querySelectorAll("img").forEach((im, i) => im.onclick = () => { fc.dataset.solo = fc.dataset.solo === String(i) ? "" : String(i); });
-    // a two-sided card saved before backs were kept: look it up once and remember the back
-    if (!back && s.name.includes(" // ") && !s.layout && !s._looked) {
-      s._looked = true;
-      sf("/cards/" + s.id).then(c => {
-        const sl = slim(c); s.imgB = sl.imgB; s.layout = sl.layout; full = full || c;
-        for (const e of Object.values(S.coll)) if (e.id === s.id) { e.imgB = sl.imgB; e.layout = sl.layout; }
-        save(); if ($("#sheetBody") && backOf(s, full)) draw();
-      }).catch(() => {});
-    }
+
     const fs = $("#finSeg"); if (fs) fs.onclick = e => { const b = e.target.closest("button"); if (b) { fin = b.dataset.f; draw(); } };
     $("#bSel").onchange = e => { bsel = e.target.value; S.meta.binder = bsel; save(); draw(); };
     const body = $("#sheetBody");
@@ -1715,7 +1730,13 @@ function openCard(card, finish, binder) {
   };
   openSheet(`<div id="sheetBody"></div>`, () => render());
   draw();
-  if (!full || !s.leg) sf("/cards/" + s.id).then(c => { full = c; s = slim(c); if ($("#sheetBody")) draw(); }).catch(() => {});
+  if (!full || !s.leg || (s.name.includes(" // ") && !s.layout)) sf("/cards/" + s.id).then(c => {
+    full = c; s = slim(c);
+    // a two-sided card saved before backs were kept: remember its back in the collection
+    let changed = false; for (const e of Object.values(S.coll)) if (e.id === s.id && (e.imgB !== s.imgB || e.layout !== s.layout)) { e.imgB = s.imgB; e.layout = s.layout; changed = true; }
+    if (changed) save();
+    if ($("#sheetBody")) draw();
+  }).catch(() => {});
 }
 /* ---------- set symbols (from Scryfall's set list, cached on the device for a week) ---------- */
 let SETS = null, setsP = null;
@@ -1900,7 +1921,7 @@ function drawSession() {
   el.querySelectorAll("[data-type]").forEach(b => b.onclick = () => { sc.fixId = b.dataset.type; const i = $("#scType"); i.placeholder = "Type the name of that card"; i.focus(); });
   el.querySelectorAll("[data-pick]").forEach(b => b.onclick = async () => {
     const it = find(b.dataset.pick);
-    try { setItemCard(it, await sf("/cards/named?exact=" + encodeURIComponent(b.dataset.n)), false); it.state = "review"; redraw(); } catch (e) { toast(e.message); }
+    try { setItemCard(it, await sf("/cards/named?exact=" + encodeURIComponent(b.dataset.n), null, { now: true }), false); it.state = "review"; redraw(); } catch (e) { toast(e.message); }
   });
   el.querySelectorAll("[data-pr]").forEach(b => b.onclick = () => {
     const it = find(b.dataset.pr);
@@ -2527,7 +2548,7 @@ async function lookupCards(idents) {
     else if (!need.some(n => identKey(n) === k)) need.push(i);
   }
   if (need.length) {
-    const r = await sf("/cards/collection", { identifiers: need.slice(0, 75) });
+    const r = await sf("/cards/collection", { identifiers: need.slice(0, 75) }, { now: true });     // a scan you're waiting on
     for (const i of need) {
       const c = matchIdent(r.data || [], i), k = identKey(i);
       if (c) { const sl = slim(c), v = { c: sl, t: now }; out[k] = sl; map.delete(k); map.set(k, v); map.set(identKey({ set: sl.set, collector_number: sl.num }), v); }
@@ -2785,7 +2806,7 @@ function renderTrade() {
   gq.addEventListener("blur", () => setTimeout(() => gl.hidden = true, 250));
   gl.addEventListener("pointerdown", e => e.preventDefault());
   gl.onclick = e => { const b = e.target.closest("button"); if (b) { tradeAddGive(b.dataset.k); renderTrade(); } };
-  attachAutocomplete($("#tsq"), $("#tsl"), async name => { try { tradeAddGet(slim(await sf("/cards/named?exact=" + encodeURIComponent(name))), "nonfoil"); renderTrade(); } catch (e) { toast(e.message); } });
+  attachAutocomplete($("#tsq"), $("#tsl"), async name => { try { tradeAddGet(slim(await sf("/cards/named?exact=" + encodeURIComponent(name), null, { now: true })), "nonfoil"); renderTrade(); } catch (e) { toast(e.message); } });
   const tg = $("#tGive"); if (tg) tg.onclick = e => {
     const b = e.target.closest("button[data-d]"); if (!b) return; const i = +b.closest(".item").dataset.i, g = S.trade.give[i], max = S.coll[g.key].qty;
     g.qty = Math.min(max, g.qty + +b.dataset.d); if (g.qty <= 0) S.trade.give.splice(i, 1); save(); renderTrade();
@@ -2957,7 +2978,7 @@ function renderDeck(d) {
     const i = +sel.dataset.cmdr, next = d.cmdr.slice(); if (sel.value) next[i] = sel.value; else next.splice(i);
     d.cmdr = [...new Set(next.filter(Boolean))]; save(); renderDeck(d);
   });
-  attachAutocomplete($("#dAdd"), $("#dAc"), async name => { $("#dAdd").value = ""; try { addToDeck(d, await sf("/cards/named?exact=" + encodeURIComponent(name)), 1, false); renderDeck(d); toast("Added " + name); } catch (e) { toast(e.message); } });
+  attachAutocomplete($("#dAdd"), $("#dAc"), async name => { $("#dAdd").value = ""; try { addToDeck(d, await sf("/cards/named?exact=" + encodeURIComponent(name), null, { now: true }), 1, false); renderDeck(d); toast("Added " + name); } catch (e) { toast(`Couldn't add “${name}”: ${e.message}`); } });
   const hn = $("#hNew"); if (hn) { hn.onclick = () => { newHand(d); renderDeck(d); }; $("#hOne").onclick = () => { if (hand.lib.length) hand.cards.push(hand.lib.pop()); renderDeck(d); }; }
   $("#dl").onclick = e => {
     const b = e.target.closest("button"); if (!b) return;
