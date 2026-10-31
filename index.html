@@ -330,7 +330,7 @@ function idbOpen() {
 async function idbGet(k) { const db = await idbOpen(); return new Promise((res, rej) => { const q = db.transaction("kv").objectStore("kv").get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
 async function idbSet(k, v) { const db = await idbOpen(); return new Promise((res, rej) => { const tx = db.transaction("kv", "readwrite"); tx.objectStore("kv").put(v, k); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error || new Error("aborted")); }); }
 let saveT = null, saving = null, saveWarned = false;
-function save() { clearTimeout(saveT); saveT = setTimeout(flushSave, 250); }
+function save() { clearTimeout(saveT); saveT = setTimeout(flushSave, 250); if (typeof SYNC !== "undefined") { SYNC.dirty = true; scheduleSync(); } }
 async function flushSave() {
   clearTimeout(saveT); saveT = null;
   if (idb.ok) {
@@ -770,13 +770,13 @@ function renderColl() {
     ${cv.binder === "all" ? moversHTML() : ""}
     <div class="row"><input type="search" id="cq" class="grow" placeholder="Filter by name, set or type" value="${esc(cv.q)}">
       <select id="cs" aria-label="Sort"><option value="value">Value</option><option value="change">Price change</option><option value="name">Name</option><option value="set">Set</option><option value="scanned">Date scanned</option><option value="recent">Recently added</option></select></div>
-    <div class="row wrap"><button class="btn sm" id="cRefresh">Update prices</button><button class="btn sm" id="cImp">Import CSV</button><button class="btn sm" id="cVal">Value breakdown</button><button class="btn sm" id="cMore">Backup / export</button><button class="btn sm ${cv.select ? "primary" : ""}" id="cSel">${cv.select ? "Done selecting" : "Select"}</button></div>
+    <div class="row wrap"><button class="btn sm" id="cRefresh">Update prices</button><button class="btn sm" id="cImp">Import CSV</button><button class="btn sm" id="cVal">Value breakdown</button><button class="btn sm" id="cMore">Backup / export</button><button class="btn sm" id="cSync">Sync</button><button class="btn sm ${cv.select ? "primary" : ""}" id="cSel">${cv.select ? "Done selecting" : "Select"}</button></div>
     <div id="clist"></div></div>`;
   $("#cs").value = cv.sort; updRefreshBtn();
   $("#cq").oninput = debounce(e => { cv.q = e.target.value; drawCollList(); }, 150);
   $("#cs").onchange = e => { cv.sort = e.target.value; drawCollList(); };
   $("#cRefresh").onclick = () => refreshPrices(false);
-  $("#cMore").onclick = ioSheet;
+  $("#cMore").onclick = ioSheet; $("#cSync").onclick = syncSheet; syncBadge();
   $("#cImp").onclick = () => pickCSV({ kind: "coll" });
   $("#cVal").onclick = valueSheet;
   $("#cSel").onclick = () => { cv.select = !cv.select; cv.sel.clear(); renderColl(); };
@@ -922,6 +922,228 @@ function binderSheet() {
   openSheet(`<div id="bBody"></div>`, () => render()); draw();
 }
 
+/* ---------- sync across devices: a private GitHub gist ----------
+   Your collection, decks, binders, alerts, wants, price history and trade list are saved to a private gist
+   in your GitHub account; each device keeps a copy and syncs when opened, when it comes back on screen,
+   every 30 s while open, and a few seconds after a change. Changes from two devices are combined card by
+   card (counts are added up as changes, not overwritten), so cards added on the tablet and cards removed on
+   the phone both survive. Settings such as scan options stay per device. The token stays on this device. */
+const SYNC_KEYS = ["coll", "decks", "binders", "alerts", "ph", "hist", "trade", "marks"];
+const SYNC_DESC = "Deckhand sync (managed by the Deckhand app)";
+var SYNC = { cfg: undefined, busy: false, t: null, etag: null, base: undefined, dirty: true, err: "", at: 0, from: "", files: [], undo: null, poll: null, ask: null };
+function syncCfg() { if (SYNC.cfg === undefined) { try { SYNC.cfg = JSON.parse(localStorage.getItem("deckhand.sync") || "null"); } catch (e) { SYNC.cfg = null; } } return SYNC.cfg; }
+function setSyncCfg(c) { SYNC.cfg = c; try { c ? localStorage.setItem("deckhand.sync", JSON.stringify(c)) : localStorage.removeItem("deckhand.sync"); } catch (e) {} }
+const syncEmpty = k => k === "hist" ? [] : k === "trade" ? { give: [], get: [] } : {};
+const pickSync = st => { const o = {}; for (const k of SYNC_KEYS) o[k] = st && st[k] !== undefined ? st[k] : syncEmpty(k); return o; };
+// compare by content, whatever order the fields happen to be in
+const J_ = v => v === undefined ? "" : JSON.stringify(v, (k, x) => x && typeof x === "object" && !Array.isArray(x) ? Object.keys(x).sort().reduce((o, kk) => (o[kk] = x[kk], o), {}) : x);
+function devName() { const u = navigator.userAgent; return /iPad|Tablet/.test(u) || (/Android/.test(u) && !/Mobile/.test(u)) ? "tablet" : /Android|iPhone|Mobile/.test(u) ? "phone" : "computer"; }
+async function gh(path, opts = {}) {
+  const cfg = syncCfg();
+  const r = await fetch(path.startsWith("http") ? path : "https://api.github.com" + path, Object.assign({ cache: "no-store" }, opts,
+    { headers: Object.assign({ Authorization: "token " + cfg.token, Accept: "application/vnd.github+json" }, opts.body ? { "Content-Type": "application/json" } : {}, opts.headers || {}) }));
+  if (r.status === 401) throw Object.assign(new Error("GitHub didn't accept the token (it may have expired or been deleted). Paste a new one."), { auth: true });
+  if (!r.ok && r.status !== 304) throw new Error("GitHub returned " + r.status);
+  return r;
+}
+async function packState(o) {
+  const json = JSON.stringify(o);
+  if (typeof CompressionStream === "undefined") return "J" + json;
+  const cs = new CompressionStream("gzip"), w = cs.writable.getWriter(); w.write(new TextEncoder().encode(json)); w.close();
+  const buf = new Uint8Array(await new Response(cs.readable).arrayBuffer()); let bin = "";
+  for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+  return "G" + btoa(bin);
+}
+async function unpackState(t) {
+  if (t[0] === "J") return JSON.parse(t.slice(1));
+  const bin = atob(t.slice(1)), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  const ds = new DecompressionStream("gzip"), w = ds.writable.getWriter(); w.write(u); w.close();
+  return JSON.parse(await new Response(ds.readable).text());
+}
+// returns null when nothing changed on GitHub since the last look (a cheap "not modified" answer)
+async function readGist() {
+  const cfg = syncCfg(), r = await gh("/gists/" + cfg.gist, { headers: SYNC.etag ? { "If-None-Match": SYNC.etag } : {} });
+  if (r.status === 304) return null;
+  const j = await r.json(); SYNC.etag = r.headers.get("ETag"); SYNC.files = Object.keys(j.files || {});
+  const f = j.files || {}, info = f["deckhand-sync.json"] ? JSON.parse(f["deckhand-sync.json"].content || "{}") : {};
+  if (!info.chunks) return { info, state: null };
+  let text = "";
+  for (let i = 0; i < info.chunks; i++) { const x = f[`deckhand-data-${i}.txt`]; if (!x) throw new Error("The synced copy is incomplete"); text += x.truncated ? await (await fetch(x.raw_url, { cache: "no-store" })).text() : x.content; }
+  return { info, state: pickSync(await unpackState(text)) };
+}
+async function pushGist(state) {
+  const text = await packState(state), chunks = text.match(/[\s\S]{1,900000}/g) || [""], files = {};
+  files["deckhand-sync.json"] = { content: JSON.stringify({ v: 1, chunks: chunks.length, at: Date.now(), device: devName() }) };
+  chunks.forEach((c, i) => files[`deckhand-data-${i}.txt`] = { content: c });
+  for (const n of SYNC.files) if (/^deckhand-data-\d+\.txt$/.test(n) && !files[n]) files[n] = null;     // drop parts no longer used
+  await gh("/gists/" + syncCfg().gist, { method: "PATCH", body: JSON.stringify({ files }) });
+  SYNC.files = Object.keys(files).filter(n => files[n]); SYNC.etag = null;
+}
+// Combine three versions: B = last synced, L = this device, R = GitHub. Card counts merge as changes
+// (R + what this device added or removed since B); everything else takes whichever side changed.
+function mergeSync(B, L, R) {
+  const out = {};
+  const coll = {};
+  for (const k of new Set([...Object.keys(B.coll), ...Object.keys(L.coll), ...Object.keys(R.coll)])) {
+    const b = B.coll[k], l = L.coll[k], r = R.coll[k], q = (r ? r.qty : 0) + (l ? l.qty : 0) - (b ? b.qty : 0);
+    if (q <= 0) continue;
+    const src = l && (!b || J_(l) !== J_(b)) ? l : (r || l);
+    const o = Object.assign({}, src); o.qty = q; coll[k] = o;
+  }
+  out.coll = coll;
+  const stamp = x => (x && (x.updated || x.at)) || 0;
+  for (const key of ["decks", "binders", "alerts", "marks"]) {
+    const b = B[key] || {}, l = L[key] || {}, r = R[key] || {}, o = {};
+    for (const k of new Set([...Object.keys(b), ...Object.keys(l), ...Object.keys(r)])) {
+      const bs = J_(b[k]), ls = J_(l[k]), rs = J_(r[k]); let v;
+      if (ls === bs) v = r[k]; else if (rs === bs) v = l[k];
+      else if (l[k] === undefined || r[k] === undefined) v = l[k] === undefined ? r[k] : l[k];      // changed on one side, deleted on the other: keep it
+      else v = stamp(r[k]) > stamp(l[k]) ? r[k] : l[k];
+      if (v !== undefined) o[k] = v;
+    }
+    out[key] = o;
+  }
+  const ph = {};
+  for (const k of new Set([...Object.keys(L.ph), ...Object.keys(R.ph)])) {
+    const m = new Map(); for (const p of [...(R.ph[k] || []), ...(L.ph[k] || [])]) m.set(p[0], p);
+    ph[k] = [...m.values()].sort((a, b) => a[0] < b[0] ? -1 : 1);
+  }
+  out.ph = ph;
+  const hm = new Map(); for (const h of [...R.hist, ...L.hist]) hm.set(h.d, h);
+  out.hist = [...hm.values()].sort((a, b) => a.d < b.d ? -1 : 1).slice(-365);
+  out.trade = J_(L.trade) === J_(B.trade) ? R.trade : L.trade;
+  return out;
+}
+async function syncBase() { if (SYNC.base === undefined) { try { SYNC.base = idb.ok ? (await idbGet("syncBase")) || null : null; } catch (e) { SYNC.base = null; } } return SYNC.base; }
+async function setSyncBase(st) { SYNC.base = { state: JSON.parse(JSON.stringify(st)), at: Date.now() }; if (idb.ok) await idbSet("syncBase", SYNC.base).catch(() => {}); }
+function applySynced(st) {
+  SYNC.undo = pickSync(JSON.parse(JSON.stringify(S)));
+  for (const k of SYNC_KEYS) S[k] = st[k];
+  migrate(); save();
+  if (!$("#sheetRoot").innerHTML) render(); else if ($("#syBody")) drawSync();
+}
+const syncCount = st => Object.values(st.coll || {}).reduce((a, e) => a + (e.qty || 0), 0);
+async function syncNow(manual) {
+  const cfg = syncCfg(); if (!cfg || !cfg.gist || cfg.paused || SYNC.busy || SYNC.ask) return;
+  if (!manual && (sc.busy || sc.gridBusy || ana.shooting)) { scheduleSync(5000); return; }        // don't slow down a scan in progress
+  if (!navigator.onLine) { SYNC.err = "Offline: will sync when you're back online."; if ($("#syBody")) drawSync(); return; }
+  SYNC.busy = true; if ($("#syBody")) drawSync();
+  try {
+    if (saveT) await flushSave();
+    const base = await syncBase(), wasDirty = SYNC.dirty; SYNC.dirty = false;
+    const remote = await readGist();
+    if (!remote && !wasDirty && base) { SYNC.at = Date.now(); SYNC.err = ""; return; }            // nothing new anywhere
+    const local = pickSync(S);
+    if (!base) {                                                                                     // first sync on this device
+      const rs = remote && remote.state, lc = syncCount(local) + Object.keys(local.decks).length, rc = rs ? syncCount(rs) + Object.keys(rs.decks).length : 0;
+      if (!rs || !rc) { await pushGist(local); await setSyncBase(local); }
+      else if (!lc) { applySynced(rs); await setSyncBase(rs); toast(`Loaded ${syncCount(rs).toLocaleString()} cards from your other device`); }
+      else { SYNC.ask = { local, remote: rs }; syncSheet(); return; }
+    } else {
+      const R = remote ? remote.state : base.state, merged = mergeSync(base.state, local, R);
+      const ms = J_(merged), changedHere = SYNC_KEYS.some(k => J_(merged[k]) !== J_(local[k]));
+      if (changedHere) { applySynced(merged); if (remote) { SYNC.from = remote.info.device || ""; toast(`Updated from your ${SYNC.from || "other device"}`, { label: "Undo", fn: undoSync }); } }
+      if (ms !== J_(R)) await pushGist(merged);
+      await setSyncBase(merged);
+    }
+    SYNC.at = Date.now(); SYNC.err = "";
+  } catch (e) {
+    SYNC.err = e.message || String(e); SYNC.dirty = true;
+    if (manual) toast("Sync failed: " + SYNC.err);
+  } finally { SYNC.busy = false; if ($("#syBody")) drawSync(); syncBadge(); }
+}
+function undoSync() { if (!SYNC.undo) return; for (const k of SYNC_KEYS) S[k] = SYNC.undo[k]; SYNC.undo = null; migrate(); save(); render(); toast("Put back how it was before the last sync"); }
+function scheduleSync(ms = 5000) { if (!syncCfg()) return; clearTimeout(SYNC.t); SYNC.t = setTimeout(() => syncNow(), ms); }
+function startSyncLoop() {
+  if (!syncCfg()) return;
+  clearInterval(SYNC.poll); SYNC.poll = setInterval(() => { if (!document.hidden) syncNow(); }, 30000);
+  syncNow();
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleSync(300); });
+window.addEventListener("online", () => scheduleSync(500));
+function syncBadge() { const b = $("#cSync"); if (b) b.textContent = !syncCfg() ? "Sync" : SYNC.err ? "Sync ⚠" : SYNC.busy ? "Syncing…" : "Synced ✓"; }
+async function connectSync(token) {
+  setSyncCfg({ token });
+  try {
+    const me = await (await gh("/user")).json();
+    let gist = null;
+    for (let page = 1; page <= 5 && !gist; page++) {
+      const list = await (await gh(`/gists?per_page=100&page=${page}`)).json();
+      gist = list.find(g => g.description === SYNC_DESC); if (list.length < 100) break;
+    }
+    if (!gist) gist = await (await gh("/gists", { method: "POST", body: JSON.stringify({ description: SYNC_DESC, public: false, files: { "deckhand-sync.json": { content: JSON.stringify({ v: 1, chunks: 0, at: 0 }) } } }) })).json();
+    setSyncCfg({ token, gist: gist.id, login: me.login }); SYNC.base = undefined; SYNC.etag = null; SYNC.dirty = true; SYNC.err = "";
+    if (idb.ok) await idbSet("syncBase", null).catch(() => {}); SYNC.base = null;
+    startSyncLoop();
+    return true;
+  } catch (e) { setSyncCfg(null); throw e; }
+}
+function drawSync() {
+  const el = $("#syBody"); if (!el) return;
+  const cfg = syncCfg(), ago = t => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? "just now" : m < 60 ? m + " min ago" : Math.round(m / 60) + " h ago"; };
+  if (SYNC.ask) {
+    const a = SYNC.ask;
+    el.innerHTML = `<h2>Sync across devices</h2>
+      <p>Both this ${devName()} and your synced copy already have cards. Which should Deckhand keep?</p>
+      <div class="summary"><div><span class="label">This ${devName()}</span><b class="num">${syncCount(a.local).toLocaleString()}</b><span class="small muted">cards · ${Object.keys(a.local.decks).length} decks</span></div>
+        <div><span class="label">Synced copy</span><b class="num">${syncCount(a.remote).toLocaleString()}</b><span class="small muted">cards · ${Object.keys(a.remote.decks).length} decks</span></div></div>
+      <div class="menu" style="margin-top:10px">
+        <button class="btn primary" id="syComb">Combine them</button><span class="small muted">Every card from both. A card on both counts once, at the larger quantity.</span>
+        <button class="btn" id="syTheirs">Use the synced copy on this ${devName()}</button><span class="small muted">Replaces what's on this ${devName()}.</span>
+        <button class="btn" id="syMine">Use this ${devName()}'s cards everywhere</button><span class="small muted">Replaces the synced copy (and your other devices next time they sync).</span>
+        <button class="btn ghost" id="syLater">Decide later (sync stays paused)</button></div>`;
+    const finish = async st => {
+      SYNC.ask = null; SYNC.undo = pickSync(JSON.parse(JSON.stringify(S)));
+      try { applySynced(st); await pushGist(pickSync(S)); await setSyncBase(pickSync(S)); SYNC.at = Date.now(); SYNC.err = ""; toast("Synced", { label: "Undo", fn: undoSync }); }
+      catch (e) { SYNC.err = e.message; } drawSync(); syncBadge();
+    };
+    $("#syComb").onclick = () => {
+      const B = pickSync({}); B.coll = {};
+      for (const k in a.local.coll) if (a.remote.coll[k]) B.coll[k] = Object.assign({}, a.local.coll[k], { qty: Math.min(a.local.coll[k].qty, a.remote.coll[k].qty) });
+      finish(mergeSync(B, a.local, a.remote));
+    };
+    $("#syTheirs").onclick = () => finish(a.remote);
+    $("#syMine").onclick = () => finish(a.local);
+    $("#syLater").onclick = () => { SYNC.ask = null; setSyncCfg(Object.assign({}, cfg, { paused: true })); clearInterval(SYNC.poll); closeSheet(); };
+    return;
+  }
+  if (!cfg || !cfg.gist) {
+    el.innerHTML = `<h2>Sync across devices</h2>
+      <p class="small">Deckhand can keep your collection, decks, binders and wants the same on all your devices by saving them to a private gist (a private file) in your GitHub account.</p>
+      <ol class="small" style="padding-left:18px;margin:8px 0">
+        <li><a href="https://github.com/settings/tokens/new?scopes=gist&description=Deckhand%20sync" target="_blank" rel="noopener">Open GitHub's token page</a> and sign in.</li>
+        <li>Leave only <b>gist</b> ticked. Pick an expiration (“No expiration”, or a date you'll remember to renew).</li>
+        <li>Tap <b>Generate token</b> and copy it.</li>
+        <li>Paste it below, then do the same on your other device.</li></ol>
+      <form class="row" id="syForm"><input type="password" id="syTok" class="grow" placeholder="Paste your token (ghp_…)" autocomplete="off" spellcheck="false"><button class="btn primary">Connect</button></form>
+      <p class="small muted">The token stays on this device and can only read and write your gists. You can delete it on GitHub at any time to cut off access.</p>
+      <div class="status" id="syMsg"></div>`;
+    $("#syForm").onsubmit = async e => {
+      e.preventDefault(); const t = $("#syTok").value.trim(); if (!t) return;
+      $("#syMsg").textContent = "Connecting…";
+      try { await connectSync(t); drawSync(); } catch (er) { $("#syMsg").textContent = er.auth ? "GitHub didn't accept that token. Check you copied all of it." : "Couldn't connect: " + (er.message || er); }
+    };
+    return;
+  }
+  el.innerHTML = `<h2>Sync across devices</h2>
+    <div class="box stack" style="gap:6px">
+      <div class="kv"><span>Account</span><b>@${esc(cfg.login || "")}</b></div>
+      <div class="kv"><span>Status</span><b class="${SYNC.err ? "down" : "up"}">${cfg.paused ? "Paused" : SYNC.busy ? "Syncing…" : SYNC.err ? "Problem" : SYNC.at ? "Synced " + ago(SYNC.at) : "Waiting"}</b></div>
+      ${SYNC.err ? `<div class="small down">${esc(SYNC.err)}</div>` : ""}
+      ${SYNC.from ? `<div class="small muted">Last change came from your ${esc(SYNC.from)}.</div>` : ""}</div>
+    <p class="small muted">Syncs when Deckhand opens, when you come back to it, every 30 seconds while it's open, and a few seconds after you change something. Scan settings stay separate on each device.</p>
+    <div class="menu">
+      <button class="btn primary" id="syNow">${cfg.paused ? "Resume and sync now" : "Sync now"}</button>
+      ${SYNC.undo ? `<button class="btn" id="syUndo">Undo the last sync on this device</button>` : ""}
+      ${SYNC.err && /token/.test(SYNC.err) ? `<form class="row" id="syForm"><input type="password" id="syTok" class="grow" placeholder="Paste a new token" autocomplete="off"><button class="btn">Use token</button></form>` : ""}
+      <button class="btn ghost" id="syOff">Stop syncing on this device</button></div>`;
+  $("#syNow").onclick = () => { if (cfg.paused) { setSyncCfg(Object.assign({}, cfg, { paused: false })); startSyncLoop(); } else syncNow(true); };
+  const u = $("#syUndo"); if (u) u.onclick = () => { undoSync(); drawSync(); };
+  const f = $("#syForm"); if (f) f.onsubmit = e => { e.preventDefault(); const t = $("#syTok").value.trim(); if (t) { setSyncCfg(Object.assign({}, cfg, { token: t })); SYNC.err = ""; syncNow(true); } };
+  $("#syOff").onclick = () => { setSyncCfg(null); clearInterval(SYNC.poll); SYNC.err = ""; SYNC.base = null; if (idb.ok) idbSet("syncBase", null).catch(() => {}); drawSync(); syncBadge(); toast("Sync stopped on this device. Your cards stay here."); };
+}
+function syncSheet() { openSheet(`<div id="syBody"></div>`, () => { if (SYNC.ask) { SYNC.ask = null; } render(); }); drawSync(); }
+
 /* ---------- import / export ---------- */
 function pickFile(accept, fn) { const f = $("#fileIn"); f.accept = accept; f.value = ""; f.onchange = () => f.files[0] && fn(f.files[0]); f.click(); }
 function download(name, text, type) {
@@ -930,7 +1152,7 @@ function download(name, text, type) {
 }
 function ioSheet() {
   openSheet(`<h2>Import and export</h2>
-    <p class="muted small">Your collection lives on this phone only. Export a backup now and then so you never lose it.</p>
+    <p class="muted small">${syncCfg() ? "Your collection syncs to your GitHub account. A backup file now and then is still a good idea." : "Your collection lives on this device only. Export a backup now and then, or turn on Sync to keep your devices the same."}</p>
     <div class="menu">
       <button class="btn" id="ioBack">Export full backup (everything)</button>
       <button class="btn" id="ioRest">Restore from a backup file</button>
@@ -2829,6 +3051,7 @@ async function boot() {
   loadNames().catch(() => {});
   loadSets().then(() => { if (tab === "coll" && $("#clist")) drawCollList(); else if (tab === "scan") drawSession(); }).catch(() => {});
   if (S.meta.usedScan) setTimeout(() => getWorkers().catch(() => {}), 2500);
+  const sc_ = syncCfg(); if (sc_ && sc_.gist && !sc_.paused) setTimeout(startSyncLoop, 600);
   if (Object.keys(S.coll).length && (!S.meta.pricedAt || Date.now() - S.meta.pricedAt > 20 * 36e5)) setTimeout(() => refreshPrices(true), 1500);
 }
 boot();
