@@ -1706,7 +1706,9 @@ function openCard(card, finish, binder) {
       $("#eMove").onclick = () => { const to = $("#eBin").value; if (to === e.binder) { toast("Already in " + S.binders[to].name); return; } const c = n(); editing = takeCopies(k, c, { binder: to }); toast(`Moved ${c} to ${S.binders[to].name}`); draw(); };
       const ef = $("#eFin"); if (ef) ef.onclick = () => { const to = e.finish === "nonfoil" ? (e.finishes.includes("foil") ? "foil" : e.finishes.find(f => f !== "nonfoil")) : "nonfoil", c = n(); editing = takeCopies(k, c, { finish: to }); toast(`Changed ${c} to ${to === "nonfoil" ? "normal" : to}`); draw(); };
       $("#eDel").onclick = () => { const c = n(), back = Object.assign({}, e); e.qty -= c; if (e.qty <= 0) delete S.coll[k]; save(); editing = S.coll[k] ? k : null; draw(); toast(`Removed ${c} ${e.name}`, { label: "Undo", fn: () => { S.coll[k] = back; save(); draw(); } }); };
-      $("#ePrint").onclick = () => showPrints(e, picked => { const c = n(); editing = takeCopies(k, c, { card: picked }); toast(`Changed ${c} to ${picked.set.toUpperCase()} #${picked.collector_number}`); draw(); }, $("#ePrintBox"));
+      $("#ePrint").onclick = () => showPrints(e, picked => { const c = n(); editing = takeCopies(k, c, { card: picked });
+        s = slim(picked); full = picked; fin = s.finishes.includes(fin) ? fin : s.finishes[0] || "nonfoil";      // show the printing just picked: picture, set, prices
+        toast(`Changed ${c} to ${picked.set.toUpperCase()} #${picked.collector_number}`); draw(); }, $("#ePrintBox"));
     }
     const bump = n => { addToColl(s, fin, n, bsel); draw(); toast(`${n > 0 ? "Added" : "Removed"} ${Math.abs(n)} ${s.name} ${n > 0 ? "to" : "from"} ${S.binders[bsel].name}`); };
     $("#cPlus").onclick = () => bump(1); $("#cPlus4").onclick = () => bump(4); $("#cMinus").onclick = () => bump(-1);
