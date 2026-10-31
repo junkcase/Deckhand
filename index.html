@@ -186,6 +186,7 @@ details.box summary::after{content:" ▾"}
 .sheet h2{margin:0;font:700 24px/1.15 var(--f-display);text-wrap:balance}
 .baltable{padding:6px 10px}.balrow{display:grid;grid-template-columns:minmax(0,1fr) 26px 52px 50px 50px;align-items:center;gap:6px;padding:7px 0;border-top:1px solid var(--line)}
 .balrow.head{border-top:0;padding-top:2px}.balrow .bn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.balrow .btn{padding:4px 10px}
+#pv{position:fixed;z-index:1000;width:250px;aspect-ratio:63/88;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.35);pointer-events:none;background:var(--sunk)}
 .seg.wide{display:flex}
 .swap{border-top:1px solid var(--line);padding:10px 0;display:flex;flex-direction:column;gap:6px}.swap.over{opacity:.6}
 .swapcards{display:grid;grid-template-columns:1fr 18px 1fr;gap:6px;align-items:center}.swapcards .arrow{text-align:center;color:var(--muted)}
@@ -781,6 +782,34 @@ function toast(msg, action) {
   if (action) $("#toastAct").onclick = () => { root.innerHTML = ""; action.fn(); };
   toastT = setTimeout(() => root.innerHTML = "", action ? 6000 : 3200);
 }
+
+/* ---------- hover preview: on a computer with a mouse, resting on a card shows it full size ---------- */
+(function hoverPreview() {
+  if (!window.matchMedia || !matchMedia("(hover: hover) and (pointer: fine)").matches) return;      // phones and tablets: tap opens the card
+  const pv = document.createElement("img"); pv.id = "pv"; pv.alt = ""; pv.hidden = true; document.body.appendChild(pv);
+  let t = null, cur = null, mx = 0, my = 0;
+  const place = () => {
+    const w = 250, h = w * 88 / 63, pad = 18, vw = innerWidth, vh = innerHeight;
+    let x = mx + pad, y = my - h / 2;
+    if (x + w > vw - 8) x = mx - pad - w;                      // not enough room on the right: show it on the left
+    y = Math.max(8, Math.min(vh - h - 8, y));
+    pv.style.left = x + "px"; pv.style.top = y + "px";
+  };
+  const hide = () => { clearTimeout(t); t = null; cur = null; pv.hidden = true; };
+  document.addEventListener("mousemove", e => { mx = e.clientX; my = e.clientY; if (!pv.hidden) place(); }, { passive: true });
+  document.addEventListener("mouseover", e => {
+    const row = e.target.closest && e.target.closest(".item, .ctile, .sc, .tile, .prints button, .hand img, .faces img, [data-pv]");
+    const im = row && (row.matches("img") ? row : row.querySelector("img"));
+    const src = row && (row.dataset.pv || (im && im.getAttribute("src")) || "");
+    if (!src || !/^https:\/\/cards\.scryfall\.io\//.test(src) || row.closest("#sheetBody > .faces")) { if (cur && !(row && row === cur)) hide(); return; }
+    if (row === cur) return;
+    hide(); cur = row;
+    const big = src.replace(/\/(small|normal)\//, "/normal/");
+    t = setTimeout(() => { if (cur !== row) return; pv.src = big; pv.hidden = false; place(); }, 220);
+  });
+  document.addEventListener("mouseout", e => { if (cur && (!e.relatedTarget || !cur.contains(e.relatedTarget))) hide(); });
+  document.addEventListener("scroll", () => { if (!pv.hidden) hide(); }, true); document.addEventListener("mousedown", hide, true);
+})();
 
 /* ---------- routing ---------- */
 let tab = "coll", deckOpen = null;
@@ -3244,7 +3273,7 @@ function drawBalance(d) {
       ${g.avg > 3.6 ? `<p class="small">That's on the high side; cheaper cards help you get going sooner.</p>` : ""}
       ${g.crowded.length ? `<p class="small">Lots of cards at mana value ${g.crowded.map(([i, v]) => `${i === 7 ? "7+" : i} (${v})`).join(", ")}. Too many at one cost can leave turns where you can't use your mana well.</p>` : ""}</div>
     <div class="box stack" style="gap:6px"><span class="label">Roles of each card</span><span class="small muted">Worked out from the card's rules text. Tap a card to fix its roles; fixes apply in every deck.</span>
-      <div class="list">${main.filter(c => typeOf(c.type) !== "Land").sort((a, b) => a.name.localeCompare(b.name)).map(c => `<button class="item tap" data-roles="${esc(c.name)}" style="text-align:left"><div class="name">${esc(c.name)}</div><div class="meta">${rolesOf(c).filter(r => r !== "Creature").map(r => `<span class="chip">${esc(r)}</span>`).join("") || `<span class="small muted">no role found</span>`}${S.roles && S.roles[c.name] ? `<span class="small muted">(your fix)</span>` : ""}</div></button>`).join("")}</div></div>`;
+      <div class="list">${main.filter(c => typeOf(c.type) !== "Land").sort((a, b) => a.name.localeCompare(b.name)).map(c => `<button class="item tap" data-roles="${esc(c.name)}" data-pv="${esc(c.imgN || c.img || "")}" style="text-align:left"><div class="name">${esc(c.name)}</div><div class="meta">${rolesOf(c).filter(r => r !== "Creature").map(r => `<span class="chip">${esc(r)}</span>`).join("") || `<span class="small muted">no role found</span>`}${S.roles && S.roles[c.name] ? `<span class="small muted">(your fix)</span>` : ""}</div></button>`).join("")}</div></div>`;
   el.querySelectorAll("[data-fill]").forEach(b => b.onclick = () => { const rs = recState[d.id] = recState[d.id] || {}; Object.assign(rs, { role: b.dataset.fill, sort: "best", own: rs.own || "all", type: "", mv: "" }); deckTab[d.id] = "suggest"; renderDeck(d); });
   el.querySelectorAll("[data-roles]").forEach(b => b.onclick = () => roleSheet(d, Object.values(d.cards).find(c => c.name === b.dataset.roles)));
 }
