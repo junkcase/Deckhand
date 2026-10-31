@@ -184,6 +184,8 @@ details.box summary::after{content:" ▾"}
   padding:8px max(16px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));max-width:720px;margin:0 auto}
 .sheet .grab{width:44px;height:5px;border-radius:3px;background:var(--line);margin:4px auto 10px}
 .sheet h2{margin:0;font:700 24px/1.15 var(--f-display);text-wrap:balance}
+.meter{height:6px;border-radius:3px;background:var(--sunk);overflow:hidden}.meter>div{height:100%;background:var(--accent);border-radius:3px}.meter.sm{height:4px;margin-top:6px}
+.chip .x{border:0;background:none;padding:0 0 0 4px;font:inherit;cursor:pointer;color:inherit}
 .faces{display:grid;grid-template-columns:1fr 1fr;gap:8px;max-width:620px;margin:0 auto}
 .faces img{width:100%;border-radius:10px;aspect-ratio:63/88;object-fit:cover;background:var(--sunk);cursor:zoom-in}
 .faces img.turned{transform:rotate(180deg)}
@@ -300,7 +302,7 @@ function migrate() {
   S.coll = S.coll || {}; S.decks = S.decks || {}; S.meta = S.meta || {};
   if (!S.binders) S.binders = {
     main: { id: "main", name: "Collection" }, trade: { id: "trade", name: "Trade binder" }, wish: { id: "wish", name: "Wishlist", wish: true } };
-  S.alerts = S.alerts || {}; S.ph = S.ph || {}; S.hist = S.hist || []; S.trade = S.trade || { give: [], get: [] };
+  S.settings = S.settings || {}; S.alerts = S.alerts || {}; S.ph = S.ph || {}; S.hist = S.hist || []; S.trade = S.trade || { give: [], get: [] };
   const nc = {};
   for (const k in S.coll) {
     const e = S.coll[k]; if (!e || !e.id) continue;
@@ -636,6 +638,17 @@ function deckUse() {
   return m;
 }
 const deckChips = (uses, max = 2) => !uses || !uses.length ? "" : uses.slice(0, max).map(u => `<span class="chip deck" title="In the deck ${esc(u.name)}">In ${esc(u.name)}${u.qty > 1 ? " ×" + u.qty : ""}</span>`).join("") + (uses.length > max ? `<span class="chip deck">+${uses.length - max} deck${uses.length - max > 1 ? "s" : ""}</span>` : "");
+// Copies of a card for one deck: owned, used by other decks, free. With "share copies between decks" on
+// (the default), a copy can count toward several decks, so nothing is "taken"; with it off, each copy
+// belongs to one deck and copies used elsewhere aren't available.
+const shareCopies = () => !S.settings || S.settings.shareCopies !== false;
+function allocFor(name, deckId) {
+  const own = ownedByName(name); let other = 0; const where = [];
+  for (const d of Object.values(S.decks)) { if (d.id === deckId) continue; let q = 0; for (const c of Object.values(d.cards)) if (c.name === name) q += c.qty; if (q) { other += q; where.push({ id: d.id, name: d.name, qty: q }); } }
+  const need = deckId && S.decks[deckId] ? Object.values(S.decks[deckId].cards).filter(c => c.name === name).reduce((a, c) => a + c.qty, 0) : 0;
+  const free = Math.max(0, own - other), usable = shareCopies() ? own : free;
+  return { own, other, where, free, need, usable, missing: Math.max(0, need - usable) };
+}
 function ownedByName(name) { let n = 0; for (const k in S.coll) { const e = S.coll[k]; if (e.name === name && !isWish(e.binder)) n += e.qty; } return n; }
 function collTotals(filter) {
   let cards = 0, value = 0; const uniq = new Set();
@@ -955,7 +968,7 @@ function binderSheet() {
    every 30 s while open, and a few seconds after a change. Changes from two devices are combined card by
    card (counts are added up as changes, not overwritten), so cards added on the tablet and cards removed on
    the phone both survive. Settings such as scan options stay per device. The token stays on this device. */
-const SYNC_KEYS = ["coll", "decks", "binders", "alerts", "ph", "hist", "trade", "marks"];
+const SYNC_KEYS = ["coll", "decks", "binders", "alerts", "ph", "hist", "trade", "marks", "settings", "roles"];
 const SYNC_DESC = "Deckhand sync (managed by the Deckhand app)";
 var SYNC = { cfg: undefined, busy: false, t: null, etag: null, base: undefined, dirty: true, err: "", at: 0, from: "", files: [], undo: null, poll: null, ask: null };
 function syncCfg() { if (SYNC.cfg === undefined) { try { SYNC.cfg = JSON.parse(localStorage.getItem("deckhand.sync") || "null"); } catch (e) { SYNC.cfg = null; } } return SYNC.cfg; }
@@ -1019,7 +1032,7 @@ function mergeSync(B, L, R) {
   }
   out.coll = coll;
   const stamp = x => (x && (x.updated || x.at)) || 0;
-  for (const key of ["decks", "binders", "alerts", "marks"]) {
+  for (const key of ["decks", "binders", "alerts", "marks", "settings", "roles"]) {
     const b = B[key] || {}, l = L[key] || {}, r = R[key] || {}, o = {};
     for (const k of new Set([...Object.keys(b), ...Object.keys(l), ...Object.keys(r)])) {
       const bs = J_(b[k]), ls = J_(l[k]), rs = J_(r[k]); let v;
@@ -2857,8 +2870,9 @@ function deckStats(d) {
   for (const c of main) { if (typeOf(c.type) !== "Land") curve[Math.min(7, Math.floor(c.cmc))] += c.qty; for (const col of c.colors || []) colors[col] = (colors[col] || 0) + c.qty; }
   let missing = 0; const need = {};
   for (const c of Object.values(d.cards)) need[c.name] = (need[c.name] || 0) + c.qty;
-  for (const nm in need) missing += Math.max(0, need[nm] - ownedByName(nm));
-  return { main, side, mainN: n(main), sideN: n(side), value, curve, colors, missing };
+  for (const nm in need) missing += Math.max(0, need[nm] - (shareCopies() ? ownedByName(nm) : allocFor(nm, d.id).free));
+  const target = d.format === "commander" ? 100 : d.format === "casual" ? 0 : 60;
+  return { main, side, mainN: n(main), sideN: n(side), value, curve, colors, missing, target, done: target ? Math.min(1, n(main) / target) : null };
 }
 function cmdrCI(d) { const s = new Set(); for (const k of d.cmdr) { const c = d.cards[k]; if (c) (c.ci || []).forEach(x => s.add(x)); } return [..."WUBRG"].filter(x => s.has(x)); }
 function checkDeck(d) {
@@ -2917,6 +2931,7 @@ async function fillDeck(d) {
     save(); if (tab === "decks" && deckOpen === d.id) renderDeck(d);
   } catch (e) {} finally { filling.delete(d.id); }
 }
+const THEMES = ["Aristocrats", "Artifacts", "Blink", "Burn", "Cascade", "Control", "Counters (+1/+1)", "Dragons", "Elves", "Enchantments", "Equipment", "Goblins", "Graveyard", "Group Hug", "Infect", "Landfall", "Lifegain", "Mill", "Proliferate", "Reanimator", "Sacrifice", "Spellslinger", "Stax", "Superfriends", "Tokens", "Treasure", "Tribal", "Vampires", "Voltron", "Wheels", "Wizards", "Zombies"];
 function renderDecks() {
   setHead("Decks", Object.keys(S.decks).length ? Object.keys(S.decks).length + " decks" : "");
   const decks = Object.values(S.decks).sort((a, b) => b.updated - a.updated);
@@ -2925,7 +2940,9 @@ function renderDecks() {
       <div class="row"><select id="ndFmt" class="grow" aria-label="Format">${Object.entries(FORMATS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select><button class="btn primary">Create deck</button></div></form>
     <button class="btn sm" id="ndImp" style="align-self:flex-start">Import a deck from CSV</button>
     ${decks.length ? decks.map(d => { const st = deckStats(d), ck = checkDeck(d); return `<button class="deck-card" data-d="${d.id}"><div style="min-width:0"><h3>${esc(d.name)}</h3>
-      <div class="small muted num">${FORMATS[d.format] || "Casual"} · ${st.mainN} cards · ${money(st.value)}${st.missing ? ` · <span class="down">${st.missing} not owned</span>` : ""}</div>
+      <div class="small muted num">${FORMATS[d.format] || "Casual"} · ${st.mainN}${st.target ? "/" + st.target : ""} cards · ${money(st.value)}${st.missing ? ` · <span class="down">${st.missing} not owned</span>` : ""}</div>
+      ${(d.themes || []).length ? `<div class="small" style="margin-top:2px">${d.themes.map(esc).join(" · ")}</div>` : ""}
+      ${st.target ? `<div class="meter sm"><div style="width:${Math.round(st.done * 100)}%"></div></div>` : ""}<div class="small muted">Changed ${esc(dayLabel(d.updated))}</div>
       ${ck.checked && !ck.pending ? `<div style="margin-top:4px">${ck.issues.length ? `<span class="chip warn">${ck.issues.length} problem${ck.issues.length > 1 ? "s" : ""}</span>` : `<span class="chip ok">Legal</span>`}</div>` : ""}</div>
       <span style="flex:none">${d.format === "commander" && d.cmdr.length ? ciPips(cmdrCI(d)) : "WUBRG".split("").filter(c => st.colors[c]).map(c => `<i class="pip p${c}">${c}</i>`).join("")}</span></button>`; }).join("")
     : `<div class="empty"><h2>No decks yet</h2><p>Name a deck and pick its format above, then add cards from Search or paste a list from Moxfield, Archidekt or MTG Arena.</p></div>`}</div>`;
@@ -2937,9 +2954,13 @@ function renderDeck(d) {
   const st = deckStats(d), max = Math.max(1, ...st.curve), ck = checkDeck(d), cmd = d.format === "commander";
   if (ck.pending) fillDeck(d);
   setHead(d.name, `${st.mainN} cards · ${money(st.value)}`);
-  const row = c => { const k = c.id + "|" + (c.side ? 1 : 0), own = ownedByName(c.name), fl = ck.pending ? null : ck.flags[k]; return `
+  const row = c => { const k = c.id + "|" + (c.side ? 1 : 0), al = allocFor(c.name, d.id), fl = ck.pending ? null : ck.flags[k];
+    const ownChip = al.own === 0 ? `<span class="chip warn">not owned</span>`
+      : al.missing ? `<span class="chip warn" title="${esc(al.where.map(w => w.qty + " in " + w.name).join(", "))}">${al.usable} of ${al.need} free${al.other ? " · rest in other decks" : ""}</span>`
+      : al.other ? `<span class="chip ok" title="${esc(al.where.map(w => w.qty + " in " + w.name).join(", "))}">owned · also in ${al.where.length} other deck${al.where.length > 1 ? "s" : ""}</span>` : `<span class="chip ok">owned</span>`;
+    return `
       <div class="item ${fl ? "flagged" : ""}"><img loading="lazy" src="${esc(c.img)}" alt=""><button class="tap" data-open="${esc(k)}"><div class="name">${esc(c.name)}</div>
-        <div class="meta"><span>${pips(c.mana)}</span>${own < c.qty ? `<span class="chip">own ${own}</span>` : ""}<span class="num">${money(priceOf(c))}</span>${fl ? fl.map(f => `<span class="chip warn">${esc(f)}</span>`).join("") : ""}</div></button>
+        <div class="meta"><span>${pips(c.mana)}</span>${ownChip}<span class="num">${money(priceOf(c))}</span>${fl ? fl.map(f => `<span class="chip warn">${esc(f)}</span>`).join("") : ""}</div></button>
         <div class="right"><span class="stepper"><button data-dec="${esc(k)}" aria-label="Remove one">−</button><span class="num">${c.qty}</span><button data-inc="${esc(k)}" aria-label="Add one">+</button></span></div></div>`; };
   const group = (cards, title) => {
     if (!cards.length) return "";
@@ -2954,8 +2975,13 @@ function renderDeck(d) {
     ${choices.map(c => { const k = c.id + "|0"; return `<option value="${esc(k)}" ${d.cmdr[i] === k ? "selected" : ""}>${esc(c.name)}</option>`; }).join("")}</select>`;
   $("#view").innerHTML = `<div class="stack">
     <div class="row"><button class="btn sm ghost" id="back">← All decks</button><span class="grow"></span><button class="btn sm" id="dMenu">Deck options</button></div>
-    <div class="summary"><div><span class="label">Main</span><b class="num">${st.mainN}</b></div><div><span class="label">Value</span><b class="num gold">${money(st.value)}</b></div>
-      <div><span class="label">Not owned</span><b class="num ${st.missing ? "down" : ""}">${st.missing}</b></div></div>
+    <div class="summary"><div><span class="label">Main</span><b class="num">${st.mainN}${st.target ? `<span class="small muted">/${st.target}</span>` : ""}</b></div><div><span class="label">Value</span><b class="num gold">${money(st.value)}</b></div>
+      <div><span class="label">${shareCopies() ? "Not owned" : "Not owned or free"}</span><b class="num ${st.missing ? "down" : ""}">${st.missing}</b></div></div>
+    ${st.target ? `<div class="meter" title="${Math.round(st.done * 100)}% complete"><div style="width:${Math.round(st.done * 100)}%"></div></div>` : ""}
+    <div class="box stack" style="gap:6px"><div class="row"><span class="label grow">Themes</span><span class="small muted">Started ${esc(dayLabel(d.created || d.updated))} · changed ${esc(dayLabel(d.updated))}</span></div>
+      <div class="chips" id="dThemes">${(d.themes || []).map(t => `<span class="chip acc">${esc(t)} <button class="x" data-untheme="${esc(t)}" aria-label="Remove theme ${esc(t)}">×</button></span>`).join("")}
+        <button class="chip" id="dThemeAdd">＋ Add theme</button></div>
+      <div class="row" id="dThemeBox" hidden><input type="text" id="dThemeIn" class="grow" list="themeList" placeholder="Pick or type a theme, e.g. Tokens" maxlength="30"><datalist id="themeList">${THEMES.map(t => `<option value="${esc(t)}">`).join("")}</datalist><button class="btn sm primary" id="dThemeGo">Add</button></div></div>
     <div class="box ${ck.checked && !ck.pending && ck.issues.length ? "bad" : ""}">
       <div class="row"><span class="label grow">Format</span><select id="dFmt" aria-label="Format">${Object.entries(FORMATS).map(([k, v]) => `<option value="${k}" ${d.format === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
       ${cmd ? `<div class="row wrap">${cmdSel(0)}${d.cmdr[0] ? cmdSel(1) : ""}</div>${cmdCards.length ? `<div class="kv small"><span class="muted">Color identity</span><span>${ciPips(cmdrCI(d))}</span></div>` : ""}
@@ -2974,13 +3000,17 @@ function renderDeck(d) {
     <div class="list" id="dl">${cmdCards.length ? `<div class="group-h"><span>Commander</span><span class="num">${cmdCards.length}</span></div>${cmdCards.map(row).join("")}` : ""}
       ${group(mainRest, "") || (cmdCards.length ? "" : `<div class="empty" style="border:0"><p>No cards yet. Type above, or use Deck options → Paste a deck list.</p></div>`)}${group(st.side, "Side")}</div></div>`;
   $("#back").onclick = () => go("decks");
+  $("#dThemeAdd").onclick = () => { $("#dThemeBox").hidden = false; $("#dThemeIn").focus(); };
+  const addTheme = () => { const t = $("#dThemeIn").value.trim(); if (!t) return; d.themes = [...new Set([...(d.themes || []), t])]; d.updated = Date.now(); save(); renderDeck(d); };
+  $("#dThemeGo").onclick = addTheme; $("#dThemeIn").onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); addTheme(); } };
+  $("#view").querySelectorAll("[data-untheme]").forEach(b => b.onclick = () => { d.themes = (d.themes || []).filter(t => t !== b.dataset.untheme); d.updated = Date.now(); save(); renderDeck(d); });
   $("#dMenu").onclick = () => deckMenu(d);
   $("#dFmt").onchange = e => { d.format = e.target.value; d.updated = Date.now(); save(); renderDeck(d); };
   $("#view").querySelectorAll("[data-cmdr]").forEach(sel => sel.onchange = () => {
     const i = +sel.dataset.cmdr, next = d.cmdr.slice(); if (sel.value) next[i] = sel.value; else next.splice(i);
     d.cmdr = [...new Set(next.filter(Boolean))]; save(); renderDeck(d);
   });
-  attachAutocomplete($("#dAdd"), $("#dAc"), async name => { $("#dAdd").value = ""; try { addToDeck(d, await sf("/cards/named?exact=" + encodeURIComponent(name), null, { now: true }), 1, false); renderDeck(d); toast("Added " + name); } catch (e) { toast(`Couldn't add “${name}”: ${e.message}`); } });
+  attachAutocomplete($("#dAdd"), $("#dAc"), async name => { $("#dAdd").value = ""; try { addToDeck(d, await sf("/cards/named?exact=" + encodeURIComponent(name), null, { now: true }), 1, false); renderDeck(d); const al = allocFor(name, d.id); toast(`Added ${name} · ${al.own ? `you own ${al.own}${al.other ? `, ${al.other} in other decks` : ""}` : "not in your collection"}`); } catch (e) { toast(`Couldn't add “${name}”: ${e.message}`); } });
   const hn = $("#hNew"); if (hn) { hn.onclick = () => { newHand(d); renderDeck(d); }; $("#hOne").onclick = () => { if (hand.lib.length) hand.cards.push(hand.lib.pop()); renderDeck(d); }; }
   $("#dl").onclick = e => {
     const b = e.target.closest("button"); if (!b) return;
@@ -3006,6 +3036,10 @@ function deckMenu(d) {
   openSheet(`<h2>${esc(d.name)}</h2>
     <div class="stack" style="margin-top:12px">
       <div class="box"><span class="label">Rename</span><div class="row"><input type="text" id="rn" class="grow" value="${esc(d.name)}" maxlength="60"><button class="btn sm" id="rnGo">Save</button></div></div>
+      <div class="box stack" style="gap:8px"><button class="btn" id="dDup">Duplicate this deck</button>
+        <label class="toggle"><input type="checkbox" id="dShare" ${shareCopies() ? "checked" : ""}> Let one copy of a card count toward several decks</label>
+        <span class="small muted">Off: each copy belongs to one deck, and copies used in other decks show as not available. Applies to all decks.</span>
+        <span class="small muted">Started ${esc(dayLabel(d.created || d.updated))} · last changed ${esc(dayLabel(d.updated))}</span></div>
       <div class="box"><span class="label">Paste a deck list</span>
         <textarea id="pl" placeholder="Commander&#10;1 Atraxa, Praetors' Voice&#10;&#10;Deck&#10;4 Lightning Bolt&#10;2 Counterspell (MH2) 267&#10;1x Sol Ring&#10;&#10;Sideboard&#10;2 Pyroblast"></textarea>
         <button class="btn primary" id="plGo">Add these cards</button><div class="status small" id="plMsg"></div>
@@ -3015,7 +3049,9 @@ function deckMenu(d) {
       <div class="box"><button class="btn danger" id="del">Delete deck</button>
         <div class="row" id="delConfirm" hidden><span class="grow small">Delete “${esc(d.name)}” for good?</span><button class="btn sm danger" id="delYes">Delete</button><button class="btn sm" id="delNo">Keep</button></div></div>
     </div>`, () => render());
-  $("#rnGo").onclick = () => { const v = $("#rn").value.trim(); if (v) { d.name = v; save(); toast("Renamed"); } };
+  $("#rnGo").onclick = () => { const v = $("#rn").value.trim(); if (v) { d.name = v; d.updated = Date.now(); save(); toast("Renamed"); } };
+  $("#dDup").onclick = () => { const id = uid(), now = Date.now(), c = JSON.parse(JSON.stringify(d)); Object.assign(c, { id, name: d.name + " (copy)", created: now, updated: now }); S.decks[id] = c; save(); closeSheet(); go("decks", id); toast("Made a copy: " + c.name); };
+  $("#dShare").onchange = e => { S.settings.shareCopies = e.target.checked; save(); };
   $("#dCsv").onclick = () => pickCSV({ kind: "deck", id: d.id });
   const copy = async (text, el) => { try { await navigator.clipboard.writeText(text); toast("Copied"); } catch (e) { if (el) { el.select(); } toast("Select the text and copy it"); } };
   $("#cp").onclick = () => copy($("#ex").value, $("#ex"));
