@@ -184,6 +184,13 @@ details.box summary::after{content:" ▾"}
   padding:8px max(16px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));max-width:720px;margin:0 auto}
 .sheet .grab{width:44px;height:5px;border-radius:3px;background:var(--line);margin:4px auto 10px}
 .sheet h2{margin:0;font:700 24px/1.15 var(--f-display);text-wrap:balance}
+.baltable{padding:6px 10px}.balrow{display:grid;grid-template-columns:minmax(0,1fr) 26px 52px 50px 50px;align-items:center;gap:6px;padding:7px 0;border-top:1px solid var(--line)}
+.balrow.head{border-top:0;padding-top:2px}.balrow .bn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.balrow .btn{padding:4px 10px}
+.seg.wide{display:flex}.seg.wide button{flex:1}
+.cgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}
+.ctile{display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--surface);cursor:pointer;font:inherit;color:inherit}
+.ctile img{width:100%;aspect-ratio:63/88;object-fit:cover;border-radius:6px;background:var(--sunk)}.ctile .nm{font-size:12px;text-align:center;line-height:1.2}
+.linkbtn{border:0;background:none;padding:0;color:var(--accent);font:inherit;text-decoration:underline;cursor:pointer}
 .meter{height:6px;border-radius:3px;background:var(--sunk);overflow:hidden}.meter>div{height:100%;background:var(--accent);border-radius:3px}.meter.sm{height:4px;margin-top:6px}
 .chip .x{border:0;background:none;padding:0 0 0 4px;font:inherit;cursor:pointer;color:inherit}
 .faces{display:grid;grid-template-columns:1fr 1fr;gap:8px;max-width:620px;margin:0 auto}
@@ -386,6 +393,24 @@ function sf(path, body, opts = {}) {
 const imgOf = (c, size = "small") => (c.image_uris && c.image_uris[size]) || (c.card_faces && c.card_faces[0] && c.card_faces[0].image_uris && c.card_faces[0].image_uris[size]) || "";
 const FORMATS = { casual: "Casual", commander: "Commander", standard: "Standard", pioneer: "Pioneer", modern: "Modern", legacy: "Legacy", vintage: "Vintage", pauper: "Pauper" };
 const WORDNUM = { two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+// What a card does in a deck, from its rules text (you can correct it per card; corrections are kept in S.roles)
+const ROLES = ["Land", "Ramp", "Card draw", "Removal", "Board wipe", "Protection", "Counterspell", "Tutor", "Recursion", "Creature"];
+function cardRoles(text, type) {
+  const t = (text || "").toLowerCase().replace(/\([^)]*\)/g, ""), ty = (type || "").split("//")[0], r = [];
+  const land = /\bLand\b/.test(ty);
+  if (land) r.push("Land");
+  if (!land && (/\badd (\{|one mana|two mana|three mana|x mana|an amount of)|adds? .{0,30}mana of any|search your library for (a|up to \w+|two) (basic )?(land|forest|plains|island|swamp|mountain)|create (a|two|\w+) treasure|put (a|up to \w+) land cards? .{0,40}onto the battlefield|additional land/.test(t))) r.push("Ramp");
+  if (/(?<!(opponent|player|players|opponents) )\bdraws? (a|an additional|two|three|four|x|\w+) cards?|draw cards equal|investigate|connives?/.test(t)) r.push("Card draw");     // not "an opponent draws a card"
+  if (/(destroy|exile) (up to \w+ )?target (\w+ )?(creature|artifact|enchantment|planeswalker|permanent|nonland|battle)|deals? (\w+|x) damage to (any target|target (creature|planeswalker|player or planeswalker))|target creature (an opponent controls )?gets -\d|fights? (up to one )?target|return target (creature|nonland permanent|permanent) to its owner's hand|target (player|opponent) sacrifices/.test(t)) r.push("Removal");
+  if (/(destroy|exile) (all|each) (other )?(creatures|nonland|artifacts|enchantments|permanents|nontoken)|all (other )?creatures get -|deals? (\w+|x) damage to each creature|return all (nonland|creatures)|each (player|opponent) sacrifices (all|a creature)/.test(t)) r.push("Board wipe");
+  if (/counter target (spell|activated|triggered|noncreature|creature|instant|artifact)/.test(t)) r.push("Counterspell");
+  if (/(you control|target creature you control|creatures you control|permanents you control|equipped creature|enchanted creature) (gain|gains|have|has|get|gets) [^.]{0,40}(hexproof|indestructible|protection from|shroud|ward)|phases? out|can't be countered|prevent all (combat )?damage/.test(t)) r.push("Protection");
+  if (/search your library for (a|an|up to \w+) (card|creature|artifact|enchantment|instant|sorcery|planeswalker|legendary|equipment|aura)(?![^.]*land)/.test(t)) r.push("Tutor");
+  if (/return [^.]{0,60}from your graveyard to (your hand|the battlefield)|cast [^.]{0,30}from your graveyard/.test(t)) r.push("Recursion");
+  if (/\bCreature\b/.test(ty)) r.push("Creature");
+  return r;
+}
+const rolesOf = c => (S.roles && S.roles[c.name]) || c.roles || [];
 function slim(c) {
   const f = c.card_faces || [];
   const text = [c.oracle_text || "", ...f.map(x => x.oracle_text || "")].join("\n");
@@ -401,10 +426,11 @@ function slim(c) {
     num: c.collector_number, rarity: c.rarity, type,
     cmc: c.cmc || 0, mana: c.mana_cost != null ? c.mana_cost : f.map(x => x.mana_cost).filter(Boolean).join(" // "),
     colors: c.colors || (f[0] && f[0].colors) || [], ci: c.color_identity || [], img: imgOf(c, "small"), imgN: imgOf(c, "normal"),
-    imgB: (f[1] && f[1].image_uris && f[1].image_uris.normal) || "", layout: c.layout || "",
+    imgB: (f[1] && f[1].image_uris && f[1].image_uris.normal) || "", layout: c.layout || "", roles: cardRoles(text, type),
     prices: c.prices || {}, finishes: c.finishes || ["nonfoil"], uri: c.scryfall_uri || "", lang: c.lang || "en",
     leg: c.legalities ? leg : undefined, cap, basic: /\bBasic\b/.test(front),
     canCmdr: (/Legendary/.test(front) && /Creature/.test(front)) || /can be your commander/i.test(text),
+    text: (/Legendary/.test(front) ? text.slice(0, 600) : undefined),
     partner: /\bPartner\b|Friends forever|Choose a Background|Doctor's companion/i.test(text) || /Background/.test(front)
   };
 }
@@ -2853,7 +2879,7 @@ function renderTrade() {
 /* ================= DECKS ================= */
 const TYPES = ["Creature", "Planeswalker", "Battle", "Instant", "Sorcery", "Artifact", "Enchantment", "Land"];
 const typeOf = t => { for (const x of ["Land", "Creature", "Planeswalker", "Battle", "Instant", "Sorcery", "Artifact", "Enchantment"]) if ((t || "").split("//")[0].includes(x)) return x; return "Other"; };
-const DECK_FIELDS = ["id", "oid", "name", "set", "setName", "num", "rarity", "type", "cmc", "mana", "colors", "ci", "img", "imgN", "imgB", "layout", "prices", "finishes", "uri", "leg", "cap", "basic", "canCmdr", "partner"];
+const DECK_FIELDS = ["id", "oid", "name", "set", "setName", "num", "rarity", "type", "cmc", "mana", "colors", "ci", "img", "imgN", "imgB", "layout", "roles", "prices", "finishes", "uri", "leg", "cap", "basic", "canCmdr", "partner", "text"];
 function addToDeck(d, card, qty, side, noSave) {
   const s = isSlim(card) ? card : slim(card);
   const k = s.id + "|" + (side ? 1 : 0);
@@ -2922,15 +2948,269 @@ function checkDeck(d) {
 const filling = new Set();
 async function fillDeck(d) {
   if (filling.has(d.id)) return;
-  const need = Object.values(d.cards).filter(c => !c.leg).map(c => c.id);
+  const need = Object.values(d.cards).filter(c => !c.leg || !c.roles).map(c => c.id);
   if (!need.length) return; filling.add(d.id);
   try {
     const { found } = await cardsByIdentifiers([...new Set(need)].map(id => ({ id })));
     const map = {}; for (const c of found) map[c.id] = slim(c);
-    for (const c of Object.values(d.cards)) { const s = map[c.id]; if (s) DECK_FIELDS.forEach(f => c[f] = s[f]); else if (!c.leg) c.leg = {}; }
+    for (const c of Object.values(d.cards)) { const s = map[c.id]; if (s) DECK_FIELDS.forEach(f => c[f] = s[f]); else { if (!c.leg) c.leg = {}; if (!c.roles) c.roles = []; } }
     save(); if (tab === "decks" && deckOpen === d.id) renderDeck(d);
   } catch (e) {} finally { filling.delete(d.id); }
 }
+/* ---------- EDHREC: community deck statistics (no official API, so kept behind this one provider) ----------
+   EDHREC's public data files: commanders/<name>, tags/<theme>, commanders/<name>/<theme>. Each card has the number
+   of decks that play it (num_decks), the decks that could (potential_decks) and a synergy score. Cached on the
+   device for a week. If this browser can't load them, the lists fall back to Scryfall's overall EDHREC popularity
+   ranking and say so; no statistics are made up. */
+const EDH = { mem: new Map(), blocked: null };
+const edhSlug = n => (n || "").split(" // ")[0].toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\+/g, "plus").replace(/['’,.:!?"()]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+function compactEdh(j) {
+  const cards = new Map(), cl = (j && j.container && j.container.json_dict && j.container.json_dict.cardlists) || [];
+  let pot = 0;
+  for (const list of cl) {
+    if (/commanders$/.test(list.tag || "")) continue;                       // "Top Commanders" on theme pages: not cards to play
+    for (const v of list.cardviews || []) {
+      if (!v.name || cards.has(v.name)) continue;
+      cards.set(v.name, { name: v.name, num: v.num_decks ?? null, pot: v.potential_decks ?? null, syn: typeof v.synergy === "number" ? v.synergy : null, list: list.header || "" });
+      if (v.potential_decks > pot) pot = v.potential_decks;
+    }
+  }
+  const themes = ((j && j.panels && j.panels.taglinks) || []).map(t => ({ name: t.value, slug: t.slug, count: t.count }));
+  return { cards: [...cards.values()], themes, decks: pot || null };
+}
+async function edhGet(path) {
+  const key = "edh:" + path; if (EDH.mem.has(key) && Date.now() - EDH.mem.get(key).at < 7 * 864e5) return EDH.mem.get(key);
+  let c = null; try { c = idb.ok ? await idbGet(key) : null; } catch (e) {}
+  if (c && Date.now() - c.at < 7 * 864e5) { EDH.mem.set(key, c); return c; }
+  let r;
+  try { r = await fetch(`https://json.edhrec.com/pages/${path}.json`); }
+  catch (e) {                                                                   // blocked by the browser or offline
+    if (c) return Object.assign({ stale: true }, c);
+    EDH.blocked = true; throw Object.assign(new Error("EDHREC's statistics can't be loaded in this browser."), { blocked: true });
+  }
+  if (!r.ok) { if (c) return Object.assign({ stale: true }, c); throw Object.assign(new Error(r.status === 404 || r.status === 403 ? "EDHREC has no page for this yet." : "EDHREC returned " + r.status), { notFound: r.status === 404 || r.status === 403 }); }
+  const v = { at: Date.now(), data: compactEdh(await r.json()) }; EDH.blocked = false;
+  EDH.mem.set(key, v); if (idb.ok) idbSet(key, v).catch(() => {});
+  return v;
+}
+// Fallback when EDHREC can't be reached: Scryfall's own ordering by EDHREC popularity (all decks, not per commander)
+const THEME_Q = { "Aristocrats": `(o:"whenever" o:"dies") or o:"sacrifice a creature"`, "Artifacts": `t:artifact or o:"artifact you control"`, "Blink": `o:"exile" o:"return" o:"to the battlefield"`,
+  "Burn": `o:"damage to each opponent" or o:"deals damage to target player"`, "Cascade": `o:cascade`, "Control": `o:"counter target" or o:"destroy all"`, "Counters (+1/+1)": `o:"+1/+1 counter"`,
+  "Enchantments": `t:enchantment or o:"enchantment spell"`, "Equipment": `t:equipment or o:equipped`, "Graveyard": `o:"from your graveyard"`, "Group Hug": `o:"each player draws" or o:"each player may"`,
+  "Infect": `o:infect or o:poison`, "Landfall": `o:landfall or o:"land enters"`, "Lifegain": `o:"gain life" or o:"you gain"`, "Mill": `o:mill or o:"cards from the top of their library into their graveyard"`,
+  "Proliferate": `o:proliferate`, "Reanimator": `o:"from a graveyard onto the battlefield" or o:"from your graveyard to the battlefield"`, "Sacrifice": `o:"sacrifice a"`, "Spellslinger": `o:"instant or sorcery"`,
+  "Stax": `o:"can't" o:"opponents"`, "Superfriends": `t:planeswalker or o:loyalty`, "Tokens": `o:"create" o:token`, "Treasure": `o:treasure`, "Voltron": `t:equipment or t:aura or o:"equipped creature"`, "Wheels": `o:"discards their hand" or o:"each player discards"` };
+function themeQuery(theme) {
+  if (THEME_Q[theme]) return `(${THEME_Q[theme]})`;
+  const tribe = theme.replace(/s$/, "").replace(/ves$/, "f").replace(/ie$/, "y");          // Elves → Elf, Zombies → Zombie
+  return `(t:"${tribe}" or o:"${tribe}")`;
+}
+async function scryfallTop(q, n = 50) {
+  const out = []; let url = `/cards/search?q=${encodeURIComponent(q + " f:commander -t:basic")}&order=edhrec&unique=cards`;
+  while (url && out.length < n) { const r = await sf(url, null, { now: true }); out.push(...(r.data || [])); url = r.has_more ? r.next_page : null; }
+  return out.slice(0, n);
+}
+
+/* ---------- recommendations: three Top 50 lists, scored and filtered ---------- */
+const REC_W = { synergy: 30, theme: 25, popularity: 20, gap: 15, curve: 10 };
+const recState = {};          // per deck: { list, sort, filters, theme }
+function deckCI(d) { return d.format === "commander" && d.cmdr.length ? cmdrCI(d) : null; }
+function deckCommanderName(d) { const c = d.cmdr.map(k => d.cards[k]).filter(Boolean)[0]; return c ? c.name : null; }
+const EDH_THEME = { "Counters (+1/+1)": "plus-1-plus-1-counters", "Group Hug": "group-hug" };
+function themeSlugOf(d, t) { return (d.themeSlugs && d.themeSlugs[t]) || EDH_THEME[t] || edhSlug(t); }
+async function loadRecs(d, which) {
+  const cmd = deckCommanderName(d), theme = (recState[d.id] || {}).theme || (d.themes || [])[0] || null, ci = deckCI(d);
+  const res = { which, source: "", note: "", rows: [], at: null };
+  let edh = null;
+  try {
+    if (which === "commander") { if (!cmd) throw Object.assign(new Error("Choose a commander first."), { need: true }); edh = await edhGet("commanders/" + edhSlug(cmd)); }
+    else if (which === "theme") { if (!theme) throw Object.assign(new Error("Add a theme to this deck first."), { need: true }); edh = await edhGet("tags/" + themeSlugOf(d, theme)); }
+    else { if (!cmd || !theme) throw Object.assign(new Error("Needs both a commander and a theme."), { need: true }); edh = await edhGet(`commanders/${edhSlug(cmd)}/${themeSlugOf(d, theme)}`); }
+  } catch (e) { if (e.need) { res.note = e.message; return res; } res.edhErr = e; }
+  let names = [], stats = new Map();
+  if (edh) {
+    res.source = "EDHREC"; res.at = edh.at; res.decks = edh.data.decks; if (edh.stale) res.note = "Showing saved statistics; EDHREC couldn't be reached just now.";
+    const list = edh.data.cards.slice().sort((a, b) => (b.syn ?? -2) - (a.syn ?? -2) || (b.num || 0) - (a.num || 0));
+    for (const c of list) stats.set(c.name, c);
+    names = list.map(c => c.name);
+  } else {
+    // fallback: Scryfall's popularity order, filtered by colors and theme rules text
+    res.source = "Scryfall"; res.note = (res.edhErr && res.edhErr.notFound ? "EDHREC has no page for this yet" : "EDHREC's statistics couldn't be loaded in this browser") + ", so this list is ranked by overall popularity in Commander decks (via Scryfall), not by this commander. Inclusion and synergy aren't shown because they aren't known.";
+    const id = ci ? `id<=${ci.join("") || "c"}` : "";
+    const q = which === "commander" ? id : which === "theme" ? `${themeQuery(theme)} ${id}` : `${themeQuery(theme)} ${id}`;
+    try { const cards = await scryfallTop(q.trim() || "f:commander", 80); names = cards.map(c => c.name); for (const c of cards) cacheSlim(slim(c)); } catch (e) { res.note = "Couldn't load suggestions: " + e.message; return res; }
+  }
+  // card details (picture, cost, type, colors, price, legality) from Scryfall, cached on the device
+  const inDeck = new Set(Object.values(d.cards).map(c => c.name));
+  names = names.filter(n => !inDeck.has(n)).slice(0, 75);                        // one Scryfall request
+  const got = await lookupCards(names.map(n => ({ name: n }))).catch(() => ({}));
+  const gaps = deckGaps(d), curveN = deckStats(d).curve;
+  for (const n of names) {
+    const c = got[identKey({ name: n })]; if (!c) continue;
+    if (ci && (c.ci || []).some(x => !ci.includes(x))) continue;                 // outside the commander's colors
+    if (d.format !== "casual" && c.leg && c.leg[d.format] && c.leg[d.format] !== "l" && !(c.basic)) continue;   // banned / not legal
+    const st = stats.get(n) || {}, al = allocFor(n, d.id), roles = rolesOf(c);
+    res.rows.push({ card: c, name: n, num: st.num ?? null, pot: st.pot ?? null, incl: st.num != null && st.pot ? st.num / st.pot : null, syn: st.syn ?? null,
+      own: al.own, free: shareCopies() ? al.own : al.free, roles, price: priceOf(c),
+      gap: roles.some(r => gaps.low.includes(r)), curveFit: typeOf(c.type) === "Land" ? 1 : 1 - Math.min(1, (curveN[Math.min(7, Math.floor(c.cmc || 0))] || 0) / 18) });
+    if (res.rows.length >= 50) break;
+  }
+  // theme relevance: is the card in the deck's theme statistics (when loaded)?
+  let themeSet = null;
+  if (theme && which !== "theme") { try { const t = await edhGet("tags/" + themeSlugOf(d, theme)); themeSet = new Map(t.data.cards.map(c => [c.name, c.num && c.pot ? c.num / c.pot : 0.5])); } catch (e) {} }
+  for (const r of res.rows) r.score = recScore(r, which === "theme" ? (r.incl ?? 0.5) : themeSet ? (themeSet.get(r.name) || 0) : null);
+  return res;
+}
+function recScore(r, themeRel) {
+  const parts = [["synergy", r.syn == null ? null : (r.syn + 1) / 2], ["theme", themeRel], ["popularity", r.incl], ["gap", r.gap ? 1 : 0], ["curve", r.curveFit]];
+  let w = 0, v = 0; for (const [k, x] of parts) if (x != null) { w += REC_W[k]; v += REC_W[k] * Math.max(0, Math.min(1, x)); }   // missing data: left out, weights rescaled
+  return w ? v / w : 0;
+}
+function cacheSlim(sl) { cardCache().then(m => { const v = { c: sl, t: Date.now() }; m.set(identKey({ name: sl.name }), v); }).catch(() => {}); }
+
+/* ---------- deck balance: roles against suggested ranges (suggestions, not rules) ---------- */
+const BALANCE = { commander: [["Land", 35, 38], ["Ramp", 9, 12], ["Card draw", 9, 12], ["Removal", 7, 10], ["Board wipe", 2, 4], ["Protection", 2, 6], ["Counterspell", 0, 6], ["Tutor", 0, 5], ["Recursion", 0, 5], ["Creature", 0, 99]] };
+function deckGaps(d) {
+  const main = Object.values(d.cards).filter(c => !c.side && !d.cmdr.some(k => d.cards[k] === c)), n = {};
+  for (const c of main) for (const r of rolesOf(c)) n[r] = (n[r] || 0) + c.qty;
+  const ranges = BALANCE[d.format] || null, low = [], high = [];
+  if (ranges) for (const [r, lo, hi] of ranges) { if ((n[r] || 0) < lo) low.push(r); else if ((n[r] || 0) > hi) high.push(r); }
+  const spells = main.filter(c => typeOf(c.type) !== "Land"), cnt = spells.reduce((a, c) => a + c.qty, 0);
+  const avg = cnt ? spells.reduce((a, c) => a + (c.cmc || 0) * c.qty, 0) / cnt : 0;
+  const curve = deckStats(d).curve, crowded = curve.map((v, i) => [i, v]).filter(([, v]) => v >= 16);
+  return { n, low, high, ranges, avg, crowded, spells: cnt };
+}
+
+/* ---------- deck screen panels: commander picker, suggestions, balance ---------- */
+async function drawCmdrPicker(d, box, partner) {
+  const st = box._st || (box._st = { q: "", res: [], more: null, busy: false });
+  box.innerHTML = `<div class="row"><span class="label grow">${partner ? "Add a partner or background" : "Choose your commander"}</span>${partner ? `<button class="btn sm ghost" id="cpX">Not now</button>` : ""}</div>
+    <input type="search" id="cpQ" placeholder="${partner ? "Search partners…" : "Search commanders, e.g. Atraxa"}" value="${esc(st.q)}" autocomplete="off">
+    <div class="small muted" id="cpMsg">${st.busy ? "Searching…" : st.q ? "" : "Most popular commanders:"}</div>
+    <div class="cgrid">${st.res.map((c, i) => `<button class="ctile" data-ci="${i}"><img loading="lazy" src="${esc(c.img)}" alt=""><span class="nm">${esc(c.name)}</span><span>${ciPips(c.ci)}</span></button>`).join("")}</div>
+    ${st.more ? `<button class="btn sm" id="cpMore">Show more</button>` : ""}`;
+  const run = async () => {
+    st.busy = true; const q = st.q.trim();
+    const cmdName = deckCommanderName(d), ci = deckCI(d);
+    const query = `${partner ? `((is:commander (o:partner or o:"friends forever" or o:"doctor's companion")) or t:background) -!"${cmdName}"` : "is:commander"} ${q ? q.split(/\s+/).map(w => `name:${JSON.stringify(w)}`).join(" ") : ""}`;
+    try { const r = await sf(`/cards/search?q=${encodeURIComponent(query)}&order=edhrec&unique=cards`, null, { now: true }); st.res = (r.data || []).slice(0, 24).map(slim); st.more = null; }
+    catch (e) { st.res = []; st.err = e.status === 404 ? "No commanders found." : e.message; }
+    st.busy = false; if (box.isConnected) { drawCmdrPicker(d, box, partner); const m = $("#cpMsg"); if (m && st.err) { m.textContent = st.err; st.err = ""; } }
+  };
+  const q = $("#cpQ"); q.oninput = debounce(() => { st.q = q.value; run(); }, 350);
+  if (!st.res.length && !st.busy && !st.ran) { st.ran = true; run(); }
+  const x = $("#cpX"); if (x) x.onclick = () => { d.noPartner = true; save(); renderDeck(d); };
+  box.querySelectorAll("[data-ci]").forEach(b => b.onclick = () => {
+    const c = st.res[+b.dataset.ci]; addToDeck(d, c, 1, false); const k = c.id + "|0";
+    d.cmdr = [...new Set([...(partner ? d.cmdr : []), k])].slice(0, 2); d.updated = Date.now(); box._st = null; save();
+    toast(`${c.name} is your ${partner ? "partner" : "commander"}`); renderDeck(d); loadThemeSuggestions(d);
+  });
+}
+async function loadThemeSuggestions(d) {
+  const cmd = deckCommanderName(d); if (!cmd) return null;
+  const ts = themeSug[d.id] = { list: [], local: false, cmd };
+  try { const e = await edhGet("commanders/" + edhSlug(cmd)); ts.list = e.data.themes.slice(0, 10); }
+  catch (er) { ts.list = suggestThemesLocally(d); ts.local = true; }
+  if (tab === "decks" && deckOpen === d.id && $("#dThemeSug")) drawThemeSug(d);
+  return ts.list;
+}
+const themeSug = {};          // per deck, this session only (not saved)
+// without EDHREC: themes guessed from the commander's own rules text and creature types
+function suggestThemesLocally(d) {
+  const c = d.cmdr.map(k => d.cards[k]).filter(Boolean)[0]; if (!c) return [];
+  const t = (c.type || "") + " " + (c.text || ""), out = [];
+  for (const th of THEMES) { const q = THEME_Q[th]; if (!q) { const tribe = th.replace(/s$/, "").replace(/ves$/, "f"); if (new RegExp("\\b" + tribe + "\\b", "i").test(t)) out.push({ name: th }); } }
+  return out.slice(0, 6);
+}
+function drawThemeSug(d) {
+  const el = $("#dThemeSug"); if (!el) return;
+  const ts = themeSug[d.id] || { list: [] }, sug = ts.list.filter(t => !(d.themes || []).includes(t.name));
+  el.innerHTML = sug.length ? `<span class="small muted">${ts.local ? "Ideas from your commander's card:" : "Popular with this commander (EDHREC):"}</span> ${sug.map(t => `<button class="chip" data-addtheme="${esc(t.name)}" data-slug="${esc(t.slug || "")}">＋ ${esc(t.name)}${t.count ? ` <span class="muted num">${t.count.toLocaleString()}</span>` : ""}</button>`).join(" ")}` : "";
+  el.querySelectorAll("[data-addtheme]").forEach(b => b.onclick = () => {
+    const t = b.dataset.addtheme; d.themes = [...new Set([...(d.themes || []), t])]; if (b.dataset.slug) { d.themeSlugs = d.themeSlugs || {}; d.themeSlugs[t] = b.dataset.slug; }
+    d.updated = Date.now(); save(); renderDeck(d);
+  });
+}
+const ROLE_ICON = { "Land": "⛰", "Ramp": "⤴", "Card draw": "✚", "Removal": "✕", "Board wipe": "☄", "Protection": "⛨", "Counterspell": "⊘", "Tutor": "⌕", "Recursion": "↺", "Creature": "♟" };
+async function drawSuggest(d) {
+  const el = $("#dPane"); if (!el) return;
+  const rs = recState[d.id] = recState[d.id] || { which: deckCommanderName(d) ? "commander" : "theme", sort: "best", own: "all", type: "", role: "", mv: "", theme: (d.themes || [])[0] || "" };
+  if (rs.theme && !(d.themes || []).includes(rs.theme)) rs.theme = (d.themes || [])[0] || "";
+  const theme = rs.theme;
+  el.innerHTML = `<div class="seg wide" id="rWhich">
+      <button data-w="commander" aria-pressed="${rs.which === "commander"}">Commander</button><button data-w="theme" aria-pressed="${rs.which === "theme"}">Theme</button><button data-w="both" aria-pressed="${rs.which === "both"}">Both</button></div>
+    ${(d.themes || []).length > 1 ? `<label class="small row" style="gap:6px">Theme <select id="rTheme">${d.themes.map(t => `<option ${t === theme ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>` : ""}
+    <div class="row wrap" style="gap:6px">
+      <select id="rSort" aria-label="Sort"><option value="best">Best match</option><option value="syn">Highest synergy</option><option value="incl">Highest inclusion rate</option><option value="pop">Most decks</option><option value="own">Owned first</option><option value="free">Free copies first</option><option value="cheap">Lowest price</option><option value="dear">Highest price</option></select>
+      <select id="rOwn" aria-label="Ownership"><option value="all">All cards</option><option value="own">I own</option><option value="free">I have a free copy</option><option value="not">I don't own</option></select>
+      <select id="rType" aria-label="Card type"><option value="">Any type</option>${TYPES.map(t => `<option>${t}</option>`).join("")}</select>
+      <select id="rRole" aria-label="Role"><option value="">Any role</option>${ROLES.map(r => `<option>${r}</option>`).join("")}</select>
+      <select id="rMv" aria-label="Mana value"><option value="">Any mana value</option>${[0, 1, 2, 3, 4, 5, 6].map(v => `<option value="${v}">${v}</option>`).join("")}<option value="7">7+</option></select></div>
+    <div id="rList"><p class="small muted">Loading suggestions…</p></div>`;
+  for (const [id, k] of [["rSort", "sort"], ["rOwn", "own"], ["rType", "type"], ["rRole", "role"], ["rMv", "mv"]]) { const s_ = $("#" + id); s_.value = rs[k]; s_.onchange = () => { rs[k] = s_.value; drawRecList(d); }; }
+  $("#rWhich").onclick = e => { const b = e.target.closest("button"); if (b) { rs.which = b.dataset.w; rs.data = null; drawSuggest(d); } };
+  const rt = $("#rTheme"); if (rt) rt.onchange = () => { rs.theme = rt.value; rs.data = null; drawSuggest(d); };
+  const key = rs.which + "|" + theme + "|" + deckCommanderName(d) + "|" + Object.keys(d.cards).length;
+  if (!rs.data || rs.key !== key) { rs.key = key; rs.data = await loadRecs(d, rs.which); }
+  drawRecList(d);
+}
+function drawRecList(d) {
+  const el = $("#rList"), rs = recState[d.id]; if (!el || !rs || !rs.data) return;
+  const R = rs.data, pct = x => x == null ? "—" : Math.round(x * 100) + "%";
+  let rows = R.rows.slice();
+  if (rs.own === "own") rows = rows.filter(r => r.own); else if (rs.own === "free") rows = rows.filter(r => r.free); else if (rs.own === "not") rows = rows.filter(r => !r.own);
+  if (rs.type) rows = rows.filter(r => typeOf(r.card.type) === rs.type);
+  if (rs.role) rows = rows.filter(r => r.roles.includes(rs.role));
+  if (rs.mv !== "") rows = rows.filter(r => rs.mv === "7" ? (r.card.cmc || 0) >= 7 : Math.floor(r.card.cmc || 0) === +rs.mv);
+  const by = { best: r => -r.score, syn: r => -(r.syn ?? -2), incl: r => -(r.incl ?? -1), pop: r => -(r.num ?? -1), own: r => -(r.own > 0) * 10 - r.score, free: r => -(r.free > 0) * 10 - r.score, cheap: r => r.price ?? 1e9, dear: r => -(r.price ?? -1) }[rs.sort];
+  rows.sort((a, b) => by(a) - by(b));
+  const gaps = deckGaps(d);
+  el.innerHTML = `${R.note ? `<p class="small ${R.source === "Scryfall" ? "gold" : "muted"}">${esc(R.note)}</p>` : ""}
+    ${R.source === "EDHREC" ? `<p class="small muted">EDHREC data${R.decks ? ` from ${R.decks.toLocaleString()} decks` : ""}, saved ${esc(dayLabel(R.at))}. <button class="linkbtn" id="rRefresh">Refresh</button></p>` : ""}
+    ${gaps.low.length ? `<p class="small">Cards that fill a gap in this deck (${gaps.low.map(esc).join(", ")}) rank higher.</p>` : ""}
+    ${rows.length ? `<div class="list">${rows.map((r, i) => { const c = r.card; return `<div class="item"><img loading="lazy" src="${esc(c.img)}" alt="">
+      <button class="tap" data-rinfo="${i}"><div class="name">${esc(c.name)}</div>
+        <div class="meta"><span>${pips(c.mana)}</span><span class="small muted">${esc(typeOf(c.type))}</span><span>${ciPips(c.ci)}</span><span class="num">${money(r.price)}</span>
+          ${r.own ? `<span class="chip ok">own ${r.own}${!shareCopies() && r.free < r.own ? `, ${r.free} free` : ""}</span>` : ""}${r.roles.filter(x => x !== "Creature" && x !== "Land").slice(0, 2).map(x => `<span class="chip ${r.gap && gaps.low.includes(x) ? "acc" : ""}">${esc(x)}</span>`).join("")}</div>
+        ${R.source === "EDHREC" ? `<div class="small muted num">In ${pct(r.incl)} of ${r.pot ? r.pot.toLocaleString() : "?"} decks${r.syn != null ? ` · synergy ${r.syn >= 0 ? "+" : ""}${Math.round(r.syn * 100)}%` : ""}</div>` : ""}</button>
+      <div class="right"><button class="btn sm primary" data-radd="${i}" aria-label="Add ${esc(c.name)} to the deck">＋</button></div></div>`; }).join("")}</div>`
+      : `<p class="small muted">${R.rows.length ? "No suggestions match these filters." : R.note ? "" : "No suggestions."}</p>`}`;
+  el.querySelectorAll("[data-radd]").forEach(b => b.onclick = () => {
+    const r = rows[+b.dataset.radd]; addToDeck(d, r.card, 1, false); R.rows = R.rows.filter(x => x !== r);
+    const al = allocFor(r.name, d.id); toast(`Added ${r.name} · ${al.own ? `you own ${al.own}` : "not in your collection"}`); renderDeck(d);
+  });
+  el.querySelectorAll("[data-rinfo]").forEach(b => b.onclick = () => openCard(rows[+b.dataset.rinfo].card));
+  const rf = $("#rRefresh"); if (rf) rf.onclick = async () => { for (const k of [...EDH.mem.keys()]) EDH.mem.delete(k); const cmd = deckCommanderName(d), t = rs.theme;
+    for (const p of [cmd && "commanders/" + edhSlug(cmd), t && "tags/" + themeSlugOf(d, t), cmd && t && `commanders/${edhSlug(cmd)}/${themeSlugOf(d, t)}`]) if (p && idb.ok) await idbSet("edh:" + p, null).catch(() => {});
+    rs.data = null; drawSuggest(d); };
+}
+function drawBalance(d) {
+  const el = $("#dPane"); if (!el) return;
+  const g = deckGaps(d), main = Object.values(d.cards).filter(c => !c.side);
+  el.innerHTML = `${g.ranges ? `<p class="small muted">Suggested ranges for a Commander deck, from common deck-building guidance. They're a starting point, not rules: tune them to your deck.</p>` : `<p class="small muted">Card roles in this deck.</p>`}
+    <div class="box baltable"><div class="balrow head small muted"><span>Role</span><span>Now</span><span>Suggested</span><span></span><span></span></div>${(g.ranges || ROLES.map(r => [r, null, null])).map(([r, lo, hi]) => { const v = g.n[r] || 0, st = lo == null ? "" : v < lo ? "low" : v > hi ? "high" : "ok";
+      return `<div class="balrow"><span class="bn">${ROLE_ICON[r] || ""} ${esc(r)}</span><b class="num">${v}</b>
+        <span class="small muted">${lo != null && hi < 99 ? `${lo}–${hi}` : ""}</span>
+        <span>${st === "low" ? `<span class="chip warn">low</span>` : st === "high" ? `<span class="chip">more than usual</span>` : st === "ok" && hi < 99 ? `<span class="chip ok">ok</span>` : ""}</span>
+        <span>${st === "low" ? `<button class="btn sm" data-fill="${esc(r)}">Find</button>` : ""}</span></div>`; }).join("")}</div>
+    <div class="box"><div class="kv"><span>Average mana value (spells)</span><b class="num">${g.avg.toFixed(2)}</b></div>
+      ${g.avg > 3.6 ? `<p class="small">That's on the high side; cheaper cards help you get going sooner.</p>` : ""}
+      ${g.crowded.length ? `<p class="small">Lots of cards at mana value ${g.crowded.map(([i, v]) => `${i === 7 ? "7+" : i} (${v})`).join(", ")}. Too many at one cost can leave turns where you can't use your mana well.</p>` : ""}</div>
+    <div class="box stack" style="gap:6px"><span class="label">Roles of each card</span><span class="small muted">Worked out from the card's rules text. Tap a card to fix its roles; fixes apply in every deck.</span>
+      <div class="list">${main.filter(c => typeOf(c.type) !== "Land").sort((a, b) => a.name.localeCompare(b.name)).map(c => `<button class="item tap" data-roles="${esc(c.name)}" style="text-align:left"><div class="name">${esc(c.name)}</div><div class="meta">${rolesOf(c).filter(r => r !== "Creature").map(r => `<span class="chip">${esc(r)}</span>`).join("") || `<span class="small muted">no role found</span>`}${S.roles && S.roles[c.name] ? `<span class="small muted">(your fix)</span>` : ""}</div></button>`).join("")}</div></div>`;
+  el.querySelectorAll("[data-fill]").forEach(b => b.onclick = () => { const rs = recState[d.id] = recState[d.id] || {}; Object.assign(rs, { role: b.dataset.fill, sort: "best", own: rs.own || "all", type: "", mv: "" }); deckTab[d.id] = "suggest"; renderDeck(d); });
+  el.querySelectorAll("[data-roles]").forEach(b => b.onclick = () => roleSheet(d, Object.values(d.cards).find(c => c.name === b.dataset.roles)));
+}
+function roleSheet(d, c) {
+  if (!c) return; const cur = new Set(rolesOf(c));
+  openSheet(`<h2>${esc(c.name)}</h2><p class="small muted">What does this card do in your decks? Tick every role that fits.</p>
+    <div class="stack" style="gap:6px" id="roBody">${ROLES.filter(r => r !== "Land").map(r => `<label class="toggle"><input type="checkbox" value="${esc(r)}" ${cur.has(r) ? "checked" : ""}> ${esc(r)}</label>`).join("")}</div>
+    <div class="row" style="margin-top:10px"><button class="btn primary" id="roSave">Save</button>${S.roles && S.roles[c.name] ? `<button class="btn ghost" id="roReset">Use the automatic roles</button>` : ""}</div>`, () => renderDeck(d));
+  $("#roSave").onclick = () => { S.roles = S.roles || {}; S.roles[c.name] = [...document.querySelectorAll("#roBody input:checked")].map(i => i.value).concat(typeOf(c.type) === "Land" ? ["Land"] : []); save(); closeSheet(); };
+  const rr = $("#roReset"); if (rr) rr.onclick = () => { delete S.roles[c.name]; save(); closeSheet(); };
+}
+const deckTab = {};
+
 const THEMES = ["Aristocrats", "Artifacts", "Blink", "Burn", "Cascade", "Control", "Counters (+1/+1)", "Dragons", "Elves", "Enchantments", "Equipment", "Goblins", "Graveyard", "Group Hug", "Infect", "Landfall", "Lifegain", "Mill", "Proliferate", "Reanimator", "Sacrifice", "Spellslinger", "Stax", "Superfriends", "Tokens", "Treasure", "Tribal", "Vampires", "Voltron", "Wheels", "Wizards", "Zombies"];
 function renderDecks() {
   setHead("Decks", Object.keys(S.decks).length ? Object.keys(S.decks).length + " decks" : "");
@@ -2952,7 +3232,7 @@ function renderDecks() {
 }
 function renderDeck(d) {
   const st = deckStats(d), max = Math.max(1, ...st.curve), ck = checkDeck(d), cmd = d.format === "commander";
-  if (ck.pending) fillDeck(d);
+  if (ck.pending || Object.values(d.cards).some(c => !c.roles)) fillDeck(d);
   setHead(d.name, `${st.mainN} cards · ${money(st.value)}`);
   const row = c => { const k = c.id + "|" + (c.side ? 1 : 0), al = allocFor(c.name, d.id), fl = ck.pending ? null : ck.flags[k];
     const ownChip = al.own === 0 ? `<span class="chip warn">not owned</span>`
@@ -2981,7 +3261,12 @@ function renderDeck(d) {
     <div class="box stack" style="gap:6px"><div class="row"><span class="label grow">Themes</span><span class="small muted">Started ${esc(dayLabel(d.created || d.updated))} · changed ${esc(dayLabel(d.updated))}</span></div>
       <div class="chips" id="dThemes">${(d.themes || []).map(t => `<span class="chip acc">${esc(t)} <button class="x" data-untheme="${esc(t)}" aria-label="Remove theme ${esc(t)}">×</button></span>`).join("")}
         <button class="chip" id="dThemeAdd">＋ Add theme</button></div>
+      <div id="dThemeSug" class="chips"></div>
       <div class="row" id="dThemeBox" hidden><input type="text" id="dThemeIn" class="grow" list="themeList" placeholder="Pick or type a theme, e.g. Tokens" maxlength="30"><datalist id="themeList">${THEMES.map(t => `<option value="${esc(t)}">`).join("")}</datalist><button class="btn sm primary" id="dThemeGo">Add</button></div></div>
+    ${(() => { const dt = deckTab[d.id] || "cards"; return `<div class="seg wide" id="dTabs"><button data-t="cards" aria-pressed="${dt === "cards"}">Cards</button><button data-t="suggest" aria-pressed="${dt === "suggest"}">Suggestions</button><button data-t="balance" aria-pressed="${dt === "balance"}">Balance</button></div>
+    <div id="dPane" class="stack" ${dt === "cards" ? "hidden" : ""}></div>`; })()}
+    <div id="dCards" class="stack" ${(deckTab[d.id] || "cards") !== "cards" ? "hidden" : ""}>
+    ${cmd && !d.cmdr.length ? `<div class="box stack" id="dPick" style="gap:8px"></div>` : cmd && d.cmdr.length === 1 && (d.cards[d.cmdr[0]] || {}).partner && !d.noPartner ? `<div class="box stack" id="dPick2" style="gap:8px"></div>` : ""}
     <div class="box ${ck.checked && !ck.pending && ck.issues.length ? "bad" : ""}">
       <div class="row"><span class="label grow">Format</span><select id="dFmt" aria-label="Format">${Object.entries(FORMATS).map(([k, v]) => `<option value="${k}" ${d.format === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
       ${cmd ? `<div class="row wrap">${cmdSel(0)}${d.cmdr[0] ? cmdSel(1) : ""}</div>${cmdCards.length ? `<div class="kv small"><span class="muted">Color identity</span><span>${ciPips(cmdrCI(d))}</span></div>` : ""}
@@ -2998,7 +3283,7 @@ function renderDeck(d) {
       <div class="box"><div class="row"><span class="label grow">Sample hand</span><button class="btn sm" id="hNew">Draw 7</button><button class="btn sm" id="hOne" ${hand.deck === d.id && hand.cards.length ? "" : "disabled"}>Draw 1</button></div>
         <div class="hand" id="hand">${hand.deck === d.id ? hand.cards.map(c => `<img src="${esc(c.imgN || c.img)}" alt="${esc(c.name)}">`).join("") : ""}</div></div>` : ""}
     <div class="list" id="dl">${cmdCards.length ? `<div class="group-h"><span>Commander</span><span class="num">${cmdCards.length}</span></div>${cmdCards.map(row).join("")}` : ""}
-      ${group(mainRest, "") || (cmdCards.length ? "" : `<div class="empty" style="border:0"><p>No cards yet. Type above, or use Deck options → Paste a deck list.</p></div>`)}${group(st.side, "Side")}</div></div>`;
+      ${group(mainRest, "") || (cmdCards.length ? "" : `<div class="empty" style="border:0"><p>No cards yet. Type above, or use Deck options → Paste a deck list.</p></div>`)}${group(st.side, "Side")}</div></div></div>`;
   $("#back").onclick = () => go("decks");
   $("#dThemeAdd").onclick = () => { $("#dThemeBox").hidden = false; $("#dThemeIn").focus(); };
   const addTheme = () => { const t = $("#dThemeIn").value.trim(); if (!t) return; d.themes = [...new Set([...(d.themes || []), t])]; d.updated = Date.now(); save(); renderDeck(d); };
@@ -3011,6 +3296,11 @@ function renderDeck(d) {
     d.cmdr = [...new Set(next.filter(Boolean))]; save(); renderDeck(d);
   });
   attachAutocomplete($("#dAdd"), $("#dAc"), async name => { $("#dAdd").value = ""; try { addToDeck(d, await sf("/cards/named?exact=" + encodeURIComponent(name), null, { now: true }), 1, false); renderDeck(d); const al = allocFor(name, d.id); toast(`Added ${name} · ${al.own ? `you own ${al.own}${al.other ? `, ${al.other} in other decks` : ""}` : "not in your collection"}`); } catch (e) { toast(`Couldn't add “${name}”: ${e.message}`); } });
+  $("#dTabs").onclick = e => { const b = e.target.closest("button"); if (!b) return; deckTab[d.id] = b.dataset.t; renderDeck(d); };
+  const dt = deckTab[d.id] || "cards";
+  if (dt === "suggest") drawSuggest(d); else if (dt === "balance") drawBalance(d);
+  const pk = $("#dPick"), pk2 = $("#dPick2"); if (pk) drawCmdrPicker(d, pk, false); else if (pk2) drawCmdrPicker(d, pk2, true);
+  if (cmd && d.cmdr.length && (!themeSug[d.id] || themeSug[d.id].cmd !== deckCommanderName(d))) loadThemeSuggestions(d); else drawThemeSug(d);
   const hn = $("#hNew"); if (hn) { hn.onclick = () => { newHand(d); renderDeck(d); }; $("#hOne").onclick = () => { if (hand.lib.length) hand.cards.push(hand.lib.pop()); renderDeck(d); }; }
   $("#dl").onclick = e => {
     const b = e.target.closest("button"); if (!b) return;
