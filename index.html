@@ -187,6 +187,7 @@ details.box summary::after{content:" ▾"}
 .baltable{padding:6px 10px}.balrow{display:grid;grid-template-columns:minmax(0,1fr) 26px 52px 50px 50px;align-items:center;gap:6px;padding:7px 0;border-top:1px solid var(--line)}
 .balrow.head{border-top:0;padding-top:2px}.balrow .bn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.balrow .btn{padding:4px 10px}
 #pv{position:fixed;z-index:1000;width:250px;aspect-ratio:63/88;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.35);pointer-events:none;background:var(--sunk)}
+.addpr{display:flex;gap:10px;align-items:center}.addpr img{width:40px;aspect-ratio:63/88;object-fit:cover;border-radius:4px;background:var(--sunk);flex:none}.addpr>div{flex:1}
 .seg.wide{display:flex}
 .swap{border-top:1px solid var(--line);padding:10px 0;display:flex;flex-direction:column;gap:6px}.swap.over{opacity:.6}
 .swapcards{display:grid;grid-template-columns:1fr 18px 1fr;gap:6px;align-items:center}.swapcards .arrow{text-align:center;color:var(--muted)}
@@ -1758,7 +1759,7 @@ function setDeckPrinting(d, k, picked) {
   d.updated = Date.now(); save(); return nk;
 }
 function openCard(card, finish, binder, ctx) {
-  let s = isSlim(card) ? card : slim(card), editing = null;
+  let s = isSlim(card) ? card : slim(card), editing = null, addQty = 1;
   let full = card.oracle_text !== undefined || card.card_faces ? card : null;
   let fin = finish && s.finishes.includes(finish) ? finish : s.finishes[0] || "nonfoil";
   let bsel = binder && S.binders[binder] ? binder : (cv.binder !== "all" && S.binders[cv.binder] ? cv.binder : defaultBinder());
@@ -1796,12 +1797,16 @@ function openCard(card, finish, binder, ctx) {
             <div class="row wrap"><button class="btn sm" id="ePrint">Change printing</button>${(e.finishes || []).length > 1 ? `<button class="btn sm" id="eFin">Make ${e.finish === "nonfoil" ? (e.finishes.includes("foil") ? "foil" : e.finishes.find(f => f !== "nonfoil")) : "normal"}</button>` : ""}<button class="btn sm danger" id="eDel">Remove</button></div>
             <div id="ePrintBox"></div></div>` : ""}
         </div>`).join("")}
+        <div class="addpr"><img src="${esc(s.img)}" alt=""><div style="min-width:0"><span class="small muted">Printing to add</span><div>${setIcon(s.set, s.rarity)} <b>${esc(s.set.toUpperCase())} #${esc(s.num)}</b> <span class="small muted">${esc(s.setName || "")}</span></div></div>
+          <button class="btn sm" id="cPickPr">Choose printing</button></div>
+        <div id="cPickBox"></div>
         <div class="row wrap">
           ${s.finishes.length > 1 ? `<span class="seg" id="finSeg">${s.finishes.map(f => `<button data-f="${f}" aria-pressed="${f === fin}">${f === "nonfoil" ? "Normal" : f[0].toUpperCase() + f.slice(1)}</button>`).join("")}</span>` : `<span class="chip">${s.finishes[0] === "nonfoil" ? "Normal only" : s.finishes[0] + " only"}</span>`}
           <select id="bSel" aria-label="Binder">${binderOptions(bsel)}</select></div>
         <div class="row wrap"><span class="grow"></span>
           <button class="btn sm" id="cMinus" ${S.coll[ckey(s.id, fin, bsel)] ? "" : "disabled"}>−1</button>
-          <button class="btn sm primary" id="cPlus">Add 1</button><button class="btn sm" id="cPlus4">+4</button></div>
+          <span class="stepper"><button id="qDec" aria-label="Fewer">−</button><span class="num" id="qN">${addQty}</span><button id="qInc" aria-label="More">+</button></span>
+          <button class="btn sm primary" id="cPlus">Add ${addQty} · ${esc(s.set.toUpperCase())} #${esc(s.num)}${fin !== "nonfoil" ? " " + fin : ""}</button></div>
       </div>
       <div class="box ${al && al.hitAt ? "alert" : ""}" style="margin-top:10px">
         <span class="label">Price alert ${fin !== "nonfoil" ? "(" + fin + ")" : ""}</span>
@@ -1818,7 +1823,7 @@ function openCard(card, finish, binder, ctx) {
       </div>
       ${ctx && ctx.deck && ctx.deck.cards[ctx.key] ? (() => { const dc = ctx.deck.cards[ctx.key]; return `<div class="box stack" style="margin-top:10px;gap:6px"><div class="kv"><span class="label">In ${esc(ctx.deck.name)}</span><span class="small">${dc.qty}× ${setIcon(dc.set, dc.rarity)} ${esc((dc.set || "").toUpperCase())} #${esc(dc.num || "")}</span></div>
         <div class="row wrap" style="gap:6px"><span class="stepper"><button id="cDeckDec" aria-label="One less">−</button><span class="num">${dc.qty}</span><button id="cDeckInc" aria-label="One more">+</button></span>
-          <button class="btn sm" id="cDeckPrint">Change printing in this deck</button>${ctx.deck.format !== "commander" ? `<button class="btn sm" id="cDeckSide">${dc.side ? "Move to main deck" : "Move to sideboard"}</button>` : ""}<button class="btn sm danger" id="cDeckDel">Remove from deck</button></div>
+          ${s.id !== dc.id ? `<button class="btn sm primary" id="cDeckAddPr">Add ${esc(s.set.toUpperCase())} #${esc(s.num)} to this deck</button>` : ""}<button class="btn sm" id="cDeckPrint">Change printing in this deck</button>${ctx.deck.format !== "commander" ? `<button class="btn sm" id="cDeckSide">${dc.side ? "Move to main deck" : "Move to sideboard"}</button>` : ""}<button class="btn sm danger" id="cDeckDel">Remove from deck</button></div>
         <div id="cDeckPrintBox"></div></div>`; })() : ctx && ctx.deck ? `<div class="box" style="margin-top:10px"><span class="small muted">Removed from ${esc(ctx.deck.name)}.</span> <button class="linkbtn" id="cDeckBack">Put it back</button></div>` : ""}
       <div class="row wrap" style="margin-top:10px"><button class="btn sm" id="cTrade">Add to trade</button><button class="btn sm" id="cPrints">Other printings</button>
         ${s.uri ? `<a class="btn sm ghost" href="${esc(s.uri)}" target="_blank" rel="noopener">Open on Scryfall</a>` : ""}</div>
@@ -1840,7 +1845,9 @@ function openCard(card, finish, binder, ctx) {
         toast(`Changed ${c} to ${picked.set.toUpperCase()} #${picked.collector_number}`); draw(); }, $("#ePrintBox"));
     }
     const bump = n => { addToColl(s, fin, n, bsel); draw(); toast(`${n > 0 ? "Added" : "Removed"} ${Math.abs(n)} ${s.name} ${n > 0 ? "to" : "from"} ${S.binders[bsel].name}`); };
-    $("#cPlus").onclick = () => bump(1); $("#cPlus4").onclick = () => bump(4); $("#cMinus").onclick = () => bump(-1);
+    $("#cPlus").onclick = () => bump(addQty); $("#cMinus").onclick = () => bump(-1);
+    $("#qInc").onclick = () => { addQty = Math.min(99, addQty + 1); draw(); }; $("#qDec").onclick = () => { addQty = Math.max(1, addQty - 1); draw(); };
+    $("#cPickPr").onclick = () => showPrints(s, picked => { s = slim(picked); full = picked; fin = s.finishes.includes(fin) ? fin : s.finishes[0]; draw(); }, $("#cPickBox"));
     $("#aSave").onclick = () => {
       const b = parseFloat($("#aBelow").value), a = parseFloat($("#aAbove").value);
       if (isNaN(b) && isNaN(a)) { toast("Enter a price to watch for"); return; }
@@ -1861,6 +1868,7 @@ function openCard(card, finish, binder, ctx) {
       const D = ctx.deck, dc = () => D.cards[ctx.key];
       const inc = $("#cDeckInc"); if (inc) inc.onclick = () => { dc().qty++; D.updated = Date.now(); save(); draw(); };
       const dec = $("#cDeckDec"); if (dec) dec.onclick = () => { if (dc().qty > 1) { dc().qty--; D.updated = Date.now(); save(); draw(); } else $("#cDeckDel").click(); };
+      const ap = $("#cDeckAddPr"); if (ap) ap.onclick = () => { addToDeck(D, s, 1, !!(dc() && dc().side)); toast(`Added ${s.name} (${s.set.toUpperCase()} #${s.num}) to ${D.name}`); draw(); };
       const sd = $("#cDeckSide"); if (sd) sd.onclick = () => { const c = dc(), nk = c.id + "|" + (c.side ? 0 : 1); delete D.cards[ctx.key]; c.side = !c.side; if (D.cards[nk]) D.cards[nk].qty += c.qty; else D.cards[nk] = c; ctx.key = nk; D.updated = Date.now(); save(); draw(); };
       const del = $("#cDeckDel"); if (del) del.onclick = () => { ctx.removed = Object.assign({}, dc()); ctx.wasCmdr = D.cmdr.includes(ctx.key); delete D.cards[ctx.key]; D.cmdr = D.cmdr.filter(x => x !== ctx.key); D.updated = Date.now(); save(); draw(); };
       const back = $("#cDeckBack"); if (back) back.onclick = () => { D.cards[ctx.key] = ctx.removed; if (ctx.wasCmdr) D.cmdr.push(ctx.key); D.updated = Date.now(); save(); draw(); };
