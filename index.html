@@ -1817,7 +1817,9 @@ function openCard(card, finish, binder, ctx) {
           <button class="btn sm" id="dMain">Main</button><button class="btn sm" id="dSide">Side</button></div>` : `<p class="small muted" style="margin:0">Create a deck in the Decks tab first.</p>`}
       </div>
       ${ctx && ctx.deck && ctx.deck.cards[ctx.key] ? (() => { const dc = ctx.deck.cards[ctx.key]; return `<div class="box stack" style="margin-top:10px;gap:6px"><div class="kv"><span class="label">In ${esc(ctx.deck.name)}</span><span class="small">${dc.qty}× ${setIcon(dc.set, dc.rarity)} ${esc((dc.set || "").toUpperCase())} #${esc(dc.num || "")}</span></div>
-        <button class="btn sm" id="cDeckPrint" style="align-self:flex-start">Change printing in this deck</button><div id="cDeckPrintBox"></div></div>`; })() : ""}
+        <div class="row wrap" style="gap:6px"><span class="stepper"><button id="cDeckDec" aria-label="One less">−</button><span class="num">${dc.qty}</span><button id="cDeckInc" aria-label="One more">+</button></span>
+          <button class="btn sm" id="cDeckPrint">Change printing in this deck</button>${ctx.deck.format !== "commander" ? `<button class="btn sm" id="cDeckSide">${dc.side ? "Move to main deck" : "Move to sideboard"}</button>` : ""}<button class="btn sm danger" id="cDeckDel">Remove from deck</button></div>
+        <div id="cDeckPrintBox"></div></div>`; })() : ctx && ctx.deck ? `<div class="box" style="margin-top:10px"><span class="small muted">Removed from ${esc(ctx.deck.name)}.</span> <button class="linkbtn" id="cDeckBack">Put it back</button></div>` : ""}
       <div class="row wrap" style="margin-top:10px"><button class="btn sm" id="cTrade">Add to trade</button><button class="btn sm" id="cPrints">Other printings</button>
         ${s.uri ? `<a class="btn sm ghost" href="${esc(s.uri)}" target="_blank" rel="noopener">Open on Scryfall</a>` : ""}</div>
       <div id="printBox"></div>`;
@@ -1855,6 +1857,14 @@ function openCard(card, finish, binder, ctx) {
       if (own) tradeAddGive(own[0]); else tradeAddGet(s, fin);
       toast(own ? "Added to what you give" : "Added to what you get", { label: "Open trade", fn: () => { closeSheet(); go("trade"); } });
     };
+    if (ctx && ctx.deck) {
+      const D = ctx.deck, dc = () => D.cards[ctx.key];
+      const inc = $("#cDeckInc"); if (inc) inc.onclick = () => { dc().qty++; D.updated = Date.now(); save(); draw(); };
+      const dec = $("#cDeckDec"); if (dec) dec.onclick = () => { if (dc().qty > 1) { dc().qty--; D.updated = Date.now(); save(); draw(); } else $("#cDeckDel").click(); };
+      const sd = $("#cDeckSide"); if (sd) sd.onclick = () => { const c = dc(), nk = c.id + "|" + (c.side ? 0 : 1); delete D.cards[ctx.key]; c.side = !c.side; if (D.cards[nk]) D.cards[nk].qty += c.qty; else D.cards[nk] = c; ctx.key = nk; D.updated = Date.now(); save(); draw(); };
+      const del = $("#cDeckDel"); if (del) del.onclick = () => { ctx.removed = Object.assign({}, dc()); ctx.wasCmdr = D.cmdr.includes(ctx.key); delete D.cards[ctx.key]; D.cmdr = D.cmdr.filter(x => x !== ctx.key); D.updated = Date.now(); save(); draw(); };
+      const back = $("#cDeckBack"); if (back) back.onclick = () => { D.cards[ctx.key] = ctx.removed; if (ctx.wasCmdr) D.cmdr.push(ctx.key); D.updated = Date.now(); save(); draw(); };
+    }
     const dp = $("#cDeckPrint"); if (dp) dp.onclick = () => showPrints(s, picked => {
       ctx.key = setDeckPrinting(ctx.deck, ctx.key, picked); s = slim(picked); full = picked;
       toast(`${ctx.deck.name} now uses ${picked.set.toUpperCase()} #${picked.collector_number}`); draw();
@@ -3579,6 +3589,11 @@ function compareSheet(d, s, U) {
 const deckTab = {};
 
 const THEMES = ["Aristocrats", "Artifacts", "Blink", "Burn", "Cascade", "Control", "Counters (+1/+1)", "Dragons", "Elves", "Enchantments", "Equipment", "Goblins", "Graveyard", "Group Hug", "Infect", "Landfall", "Lifegain", "Mill", "Proliferate", "Reanimator", "Sacrifice", "Spellslinger", "Stax", "Superfriends", "Tokens", "Treasure", "Tribal", "Vampires", "Voltron", "Wheels", "Wizards", "Zombies"];
+// after adding a card from the deck's add box, open its card screen for this deck (Deck options can turn this off)
+function openAfterAdd(d, card) {
+  if (S.settings && S.settings.openAfterAdd === false) return;
+  const key = card.id + "|0"; if (d.cards[key]) openCard(d.cards[key], null, null, { deck: d, key });
+}
 function parseAddLine(t) {
   let s_ = t.trim(), qty = 1, set = null, num = null;
   const q = s_.match(/^(\d+)\s*x?\s+(.+)$/i); if (q) { qty = Math.max(1, Math.min(99, +q[1])); s_ = q[2].trim(); }
@@ -3685,10 +3700,10 @@ function renderDeck(d) {
       const c = P.num ? await sf(`/cards/${encodeURIComponent(P.set)}/${encodeURIComponent(P.num)}`, null, { now: true }) : await sf(`/cards/named?exact=${encodeURIComponent(P.name)}&set=${encodeURIComponent(P.set)}`, null, { now: true });
       if (P.name && P.num && !nameEq(c, P.name)) { toast(`${P.set.toUpperCase()} #${P.num} is ${c.name}, not ${P.name}. Check the number.`); return; }
       $("#dAdd").value = ""; addToDeck(d, c, P.qty, false); renderDeck(d);
-      toast(`Added ${P.qty > 1 ? P.qty + "× " : ""}${c.name} (${c.set.toUpperCase()} #${c.collector_number})`);
+      toast(`Added ${P.qty > 1 ? P.qty + "× " : ""}${c.name} (${c.set.toUpperCase()} #${c.collector_number})`); openAfterAdd(d, c);
     } catch (er) { toast(er.status === 404 ? `No card found for ${P.set.toUpperCase()}${P.num ? " #" + P.num : ""}${P.name && !P.num ? " named " + P.name : ""}` : `Couldn't add it: ${er.message}`); }
   });
-  attachAutocomplete($("#dAdd"), $("#dAc"), async name => { const qty = parseAddLine($("#dAdd").value).qty; $("#dAdd").value = ""; try { addToDeck(d, await sf("/cards/named?exact=" + encodeURIComponent(name), null, { now: true }), qty, false); renderDeck(d); const al = allocFor(name, d.id); toast(`Added ${qty > 1 ? qty + "× " : ""}${name} · ${al.own ? `you own ${al.own}${al.other ? `, ${al.other} in other decks` : ""}` : "not in your collection"}`); } catch (e) { toast(`Couldn't add “${name}”: ${e.message}`); } }, { qty: true });
+  attachAutocomplete($("#dAdd"), $("#dAc"), async name => { const qty = parseAddLine($("#dAdd").value).qty; $("#dAdd").value = ""; try { const c_ = await sf("/cards/named?exact=" + encodeURIComponent(name), null, { now: true }); addToDeck(d, c_, qty, false); renderDeck(d); openAfterAdd(d, c_); const al = allocFor(name, d.id); toast(`Added ${qty > 1 ? qty + "× " : ""}${name} · ${al.own ? `you own ${al.own}${al.other ? `, ${al.other} in other decks` : ""}` : "not in your collection"}`); } catch (e) { toast(`Couldn't add “${name}”: ${e.message}`); } }, { qty: true });
   $("#dTabs").onclick = e => { const b = e.target.closest("button"); if (!b) return; deckTab[d.id] = b.dataset.t; renderDeck(d); };
   const dt = deckTab[d.id] || "cards";
   if (dt === "suggest") drawSuggest(d); else if (dt === "balance") drawBalance(d); else if (dt === "upgrade") drawUpgrade(d);
@@ -3720,6 +3735,7 @@ function deckMenu(d) {
     <div class="stack" style="margin-top:12px">
       <div class="box"><span class="label">Rename</span><div class="row"><input type="text" id="rn" class="grow" value="${esc(d.name)}" maxlength="60"><button class="btn sm" id="rnGo">Save</button></div></div>
       <div class="box stack" style="gap:8px"><button class="btn" id="dDup">Duplicate this deck</button>
+        <label class="toggle"><input type="checkbox" id="dOpenAdd" ${S.settings.openAfterAdd !== false ? "checked" : ""}> Open a card's screen after adding it from the deck's search box</label>
         <label class="toggle"><input type="checkbox" id="dShare" ${shareCopies() ? "checked" : ""}> Let one copy of a card count toward several decks</label>
         <span class="small muted">Off: each copy belongs to one deck, and copies used in other decks show as not available. Applies to all decks.</span>
         <span class="small muted">Started ${esc(dayLabel(d.created || d.updated))} · last changed ${esc(dayLabel(d.updated))}</span></div>
@@ -3735,6 +3751,7 @@ function deckMenu(d) {
   $("#rnGo").onclick = () => { const v = $("#rn").value.trim(); if (v) { d.name = v; d.updated = Date.now(); save(); toast("Renamed"); } };
   $("#dDup").onclick = () => { const id = uid(), now = Date.now(), c = JSON.parse(JSON.stringify(d)); Object.assign(c, { id, name: d.name + " (copy)", created: now, updated: now }); S.decks[id] = c; save(); closeSheet(); go("decks", id); toast("Made a copy: " + c.name); };
   $("#dShare").onchange = e => { S.settings.shareCopies = e.target.checked; save(); };
+  $("#dOpenAdd").onchange = e => { S.settings.openAfterAdd = e.target.checked; save(); };
   $("#dCsv").onclick = () => pickCSV({ kind: "deck", id: d.id });
   const copy = async (text, el) => { try { await navigator.clipboard.writeText(text); toast("Copied"); } catch (e) { if (el) { el.select(); } toast("Select the text and copy it"); } };
   $("#cp").onclick = () => copy($("#ex").value, $("#ex"));
