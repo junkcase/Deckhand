@@ -581,7 +581,7 @@ function attachAutocomplete(inp, ul, onPick, opts = {}) {
     try { const r = await sf("/cards/autocomplete?q=" + encodeURIComponent(q), null, { now: true }); if (inp.value.trim() === q) show((r.data || []).slice(0, 8), q); } catch (e) {}
   }, 220);
   const look = () => {
-    const q = inp.value.trim();
+    const q = (opts.qty ? inp.value.replace(/^\s*\d+\s*x?\s+/i, "") : inp.value).trim();
     if (q.length < 2 || /[:<>=!"]/.test(q)) { ul.hidden = true; return; }
     const local = suggest(q);
     if (local) show(local, q); else remote(q);
@@ -592,7 +592,7 @@ function attachAutocomplete(inp, ul, onPick, opts = {}) {
   inp.addEventListener("keydown", e => {
     // Enter with no list showing: look up exactly what was typed (closest match)
     if (enterPicks && e.key === "Enter" && (ul.hidden || !items.length) && inp.value.trim().length >= 2 && !/[:<>=!"]/.test(inp.value)) {
-      e.preventDefault(); const q = inp.value.trim();
+      e.preventDefault(); const q = (opts.qty ? inp.value.replace(/^\s*\d+\s*x?\s+/i, "") : inp.value).trim();
       sf("/cards/named?fuzzy=" + encodeURIComponent(q), null, { now: true }).then(c => onPick(c.name)).catch(er => toast(`No card found for “${q}”${er.status === 404 ? "" : ": " + er.message}`));
       return;
     }
@@ -1747,7 +1747,17 @@ function backOf(s, full) {
   if ((s.layout || (full && full.layout)) === "flip") return { src: s.imgN || s.img, flip: true };
   return null;
 }
-function openCard(card, finish, binder) {
+// a deck card switched to another printing: same quantity, sideboard and commander status
+function setDeckPrinting(d, k, picked) {
+  const old = d.cards[k]; if (!old) return k;
+  const sl = slim(picked), nk = sl.id + "|" + (old.side ? 1 : 0); if (nk === k) return k;
+  const c = { qty: old.qty, side: old.side }; DECK_FIELDS.forEach(f => c[f] = sl[f]);
+  delete d.cards[k];
+  if (d.cards[nk]) d.cards[nk].qty += c.qty; else d.cards[nk] = c;
+  d.cmdr = d.cmdr.map(x => x === k ? nk : x);
+  d.updated = Date.now(); save(); return nk;
+}
+function openCard(card, finish, binder, ctx) {
   let s = isSlim(card) ? card : slim(card), editing = null;
   let full = card.oracle_text !== undefined || card.card_faces ? card : null;
   let fin = finish && s.finishes.includes(finish) ? finish : s.finishes[0] || "nonfoil";
@@ -1806,6 +1816,8 @@ function openCard(card, finish, binder) {
         ${decks.length ? `<div class="row wrap"><select id="dSel" class="grow">${decks.map(d => `<option value="${d.id}" ${d.id === deckOpen ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select>
           <button class="btn sm" id="dMain">Main</button><button class="btn sm" id="dSide">Side</button></div>` : `<p class="small muted" style="margin:0">Create a deck in the Decks tab first.</p>`}
       </div>
+      ${ctx && ctx.deck && ctx.deck.cards[ctx.key] ? (() => { const dc = ctx.deck.cards[ctx.key]; return `<div class="box stack" style="margin-top:10px;gap:6px"><div class="kv"><span class="label">In ${esc(ctx.deck.name)}</span><span class="small">${dc.qty}× ${setIcon(dc.set, dc.rarity)} ${esc((dc.set || "").toUpperCase())} #${esc(dc.num || "")}</span></div>
+        <button class="btn sm" id="cDeckPrint" style="align-self:flex-start">Change printing in this deck</button><div id="cDeckPrintBox"></div></div>`; })() : ""}
       <div class="row wrap" style="margin-top:10px"><button class="btn sm" id="cTrade">Add to trade</button><button class="btn sm" id="cPrints">Other printings</button>
         ${s.uri ? `<a class="btn sm ghost" href="${esc(s.uri)}" target="_blank" rel="noopener">Open on Scryfall</a>` : ""}</div>
       <div id="printBox"></div>`;
@@ -1843,6 +1855,10 @@ function openCard(card, finish, binder) {
       if (own) tradeAddGive(own[0]); else tradeAddGet(s, fin);
       toast(own ? "Added to what you give" : "Added to what you get", { label: "Open trade", fn: () => { closeSheet(); go("trade"); } });
     };
+    const dp = $("#cDeckPrint"); if (dp) dp.onclick = () => showPrints(s, picked => {
+      ctx.key = setDeckPrinting(ctx.deck, ctx.key, picked); s = slim(picked); full = picked;
+      toast(`${ctx.deck.name} now uses ${picked.set.toUpperCase()} #${picked.collector_number}`); draw();
+    }, $("#cDeckPrintBox"));
     $("#cPrints").onclick = () => showPrints(s, picked => { s = slim(picked); full = picked; fin = s.finishes.includes(fin) ? fin : s.finishes[0]; draw(); });
   };
   openSheet(`<div id="sheetBody"></div>`, () => render());
@@ -3563,6 +3579,14 @@ function compareSheet(d, s, U) {
 const deckTab = {};
 
 const THEMES = ["Aristocrats", "Artifacts", "Blink", "Burn", "Cascade", "Control", "Counters (+1/+1)", "Dragons", "Elves", "Enchantments", "Equipment", "Goblins", "Graveyard", "Group Hug", "Infect", "Landfall", "Lifegain", "Mill", "Proliferate", "Reanimator", "Sacrifice", "Spellslinger", "Stax", "Superfriends", "Tokens", "Treasure", "Tribal", "Vampires", "Voltron", "Wheels", "Wizards", "Zombies"];
+function parseAddLine(t) {
+  let s_ = t.trim(), qty = 1, set = null, num = null;
+  const q = s_.match(/^(\d+)\s*x?\s+(.+)$/i); if (q) { qty = Math.max(1, Math.min(99, +q[1])); s_ = q[2].trim(); }
+  let m = s_.match(/^(.*?)\s*\(([A-Za-z0-9]{2,6})\)\s*#?([\w★-]*\d[\w★-]*)?\s*(\*F\*)?$/);          // Name (SET) 123
+  if (m) { set = m[2].toLowerCase(); num = m[3] || null; s_ = m[1].trim(); }
+  else if ((m = s_.match(/^(.*?)\s*\b([A-Za-z][A-Za-z0-9]{1,5})\s+#?(\d+[a-z★]?)$/i)) && (m[1] === "" || /[a-z]/i.test(m[1]))) { set = m[2].toLowerCase(); num = m[3]; s_ = m[1].trim(); }   // Name cmm 410 / cmm 410
+  return { qty, name: s_, set, num };
+}
 function renderDecks() {
   setHead("Decks", Object.keys(S.decks).length ? Object.keys(S.decks).length + " decks" : "");
   const decks = Object.values(S.decks).sort((a, b) => b.updated - a.updated);
@@ -3597,7 +3621,7 @@ function renderDeck(d) {
       : al.other ? `<span class="chip ok" title="${esc(al.where.map(w => w.qty + " in " + w.name).join(", "))}">owned · also in ${al.where.length} other deck${al.where.length > 1 ? "s" : ""}</span>` : `<span class="chip ok">owned</span>`;
     return `
       <div class="item ${fl ? "flagged" : ""}"><img loading="lazy" src="${esc(c.img)}" alt=""><button class="tap" data-open="${esc(k)}"><div class="name">${esc(c.name)}</div>
-        <div class="meta"><span>${pips(c.mana)}</span>${ownChip}<span class="num">${money(priceOf(c))}</span>${fl ? fl.map(f => `<span class="chip warn">${esc(f)}</span>`).join("") : ""}</div></button>
+        <div class="meta"><span>${pips(c.mana)}</span><span class="small muted">${esc((c.set || "").toUpperCase())} #${esc(c.num || "")}</span>${ownChip}<span class="num">${money(priceOf(c))}</span>${fl ? fl.map(f => `<span class="chip warn">${esc(f)}</span>`).join("") : ""}</div></button>
         <div class="right"><span class="stepper"><button data-dec="${esc(k)}" aria-label="Remove one">−</button><span class="num">${c.qty}</span><button data-inc="${esc(k)}" aria-label="Add one">+</button></span></div></div>`; };
   const group = (cards, title) => {
     if (!cards.length) return "";
@@ -3632,7 +3656,7 @@ function renderDeck(d) {
         : ck.pending ? `<span class="small muted">Checking card legality…</span>`
         : ck.issues.length ? `<ul class="issues">${ck.issues.map(i => `<li>${esc(i)}</li>`).join("")}</ul>` : `<span class="chip ok" style="align-self:flex-start">Legal in ${FORMATS[d.format]}</span>`}
     </div>
-    <div class="ac"><input type="search" id="dAdd" placeholder="Start typing a card to add" autocomplete="off" autocapitalize="off" spellcheck="false"><ul id="dAc" hidden></ul></div>
+    <div class="ac"><input type="search" id="dAdd" placeholder="Add a card: name, 4 Forest, or Sol Ring CMM 410" autocomplete="off" autocapitalize="off" spellcheck="false"><ul id="dAc" hidden></ul></div>
     ${st.mainN ? `<div class="box"><div class="row" style="justify-content:space-between"><span class="label">Mana curve (spells)</span>
         <span>${"WUBRG".split("").filter(c => st.colors[c]).map(c => `<i class="pip p${c}">${c}</i><span class="small num" style="margin-right:6px">${st.colors[c]}</span>`).join("")}</span></div>
       <div class="curve">${st.curve.map(v => `<div class="bar" style="height:${v / max * 100}%"><span class="num">${v || ""}</span></div>`).join("")}</div>
@@ -3652,7 +3676,19 @@ function renderDeck(d) {
     const i = +sel.dataset.cmdr, next = d.cmdr.slice(); if (sel.value) next[i] = sel.value; else next.splice(i);
     d.cmdr = [...new Set(next.filter(Boolean))]; save(); renderDeck(d);
   });
-  attachAutocomplete($("#dAdd"), $("#dAc"), async name => { $("#dAdd").value = ""; try { addToDeck(d, await sf("/cards/named?exact=" + encodeURIComponent(name), null, { now: true }), 1, false); renderDeck(d); const al = allocFor(name, d.id); toast(`Added ${name} · ${al.own ? `you own ${al.own}${al.other ? `, ${al.other} in other decks` : ""}` : "not in your collection"}`); } catch (e) { toast(`Couldn't add “${name}”: ${e.message}`); } });
+  // typed with a set and collector number ("Sol Ring CMM 410", "cmm 410"): add exactly that printing
+  $("#dAdd").addEventListener("keydown", async e => {
+    if (e.key !== "Enter") return;
+    const P = parseAddLine($("#dAdd").value); if (!P.set) return;
+    e.preventDefault(); e.stopImmediatePropagation(); $("#dAc").hidden = true;
+    try {
+      const c = P.num ? await sf(`/cards/${encodeURIComponent(P.set)}/${encodeURIComponent(P.num)}`, null, { now: true }) : await sf(`/cards/named?exact=${encodeURIComponent(P.name)}&set=${encodeURIComponent(P.set)}`, null, { now: true });
+      if (P.name && P.num && !nameEq(c, P.name)) { toast(`${P.set.toUpperCase()} #${P.num} is ${c.name}, not ${P.name}. Check the number.`); return; }
+      $("#dAdd").value = ""; addToDeck(d, c, P.qty, false); renderDeck(d);
+      toast(`Added ${P.qty > 1 ? P.qty + "× " : ""}${c.name} (${c.set.toUpperCase()} #${c.collector_number})`);
+    } catch (er) { toast(er.status === 404 ? `No card found for ${P.set.toUpperCase()}${P.num ? " #" + P.num : ""}${P.name && !P.num ? " named " + P.name : ""}` : `Couldn't add it: ${er.message}`); }
+  });
+  attachAutocomplete($("#dAdd"), $("#dAc"), async name => { const qty = parseAddLine($("#dAdd").value).qty; $("#dAdd").value = ""; try { addToDeck(d, await sf("/cards/named?exact=" + encodeURIComponent(name), null, { now: true }), qty, false); renderDeck(d); const al = allocFor(name, d.id); toast(`Added ${qty > 1 ? qty + "× " : ""}${name} · ${al.own ? `you own ${al.own}${al.other ? `, ${al.other} in other decks` : ""}` : "not in your collection"}`); } catch (e) { toast(`Couldn't add “${name}”: ${e.message}`); } }, { qty: true });
   $("#dTabs").onclick = e => { const b = e.target.closest("button"); if (!b) return; deckTab[d.id] = b.dataset.t; renderDeck(d); };
   const dt = deckTab[d.id] || "cards";
   if (dt === "suggest") drawSuggest(d); else if (dt === "balance") drawBalance(d); else if (dt === "upgrade") drawUpgrade(d);
@@ -3664,7 +3700,7 @@ function renderDeck(d) {
     const k = b.dataset.inc || b.dataset.dec || b.dataset.open, c = d.cards[k]; if (!c) return;
     if (b.dataset.inc) { c.qty++; d.updated = Date.now(); save(); renderDeck(d); }
     else if (b.dataset.dec) { c.qty--; if (c.qty <= 0) { delete d.cards[k]; d.cmdr = d.cmdr.filter(x => x !== k); } d.updated = Date.now(); save(); renderDeck(d); }
-    else openCard(c);
+    else openCard(c, null, null, { deck: d, key: k });
   };
 }
 const hand = { deck: null, cards: [], lib: [] };
