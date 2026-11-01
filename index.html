@@ -324,7 +324,9 @@ function migrate() {
   for (const k in S.coll) {
     const e = S.coll[k]; if (!e || !e.id) continue;
     if (!e.binder || !S.binders[e.binder]) e.binder = ownBinder();
-    const nk = ckey(e.id, e.finish, e.binder);
+    if (e.cond && !CONDS.some(c => c[0] === e.cond)) e.cond = "NM";
+    if (e.paid != null && !(typeof e.paid === "number" && isFinite(e.paid) && e.paid >= 0)) delete e.paid;
+    const nk = ckey(e.id, e.finish, e.binder, e.cond);
     if (nc[nk]) nc[nk].qty += e.qty; else nc[nk] = e;
   }
   S.coll = nc;
@@ -337,7 +339,18 @@ function migrate() {
   for (const d of Object.values(S.decks)) { d.format = d.format || "casual"; d.cmdr = (d.cmdr || []).filter(k => d.cards[k]); }
   S.v = 2;
 }
-const ckey = (id, finish, binder) => id + "|" + finish + "|" + binder;
+const ckey = (id, finish, binder, cond) => id + "|" + finish + "|" + binder + (cond && cond !== "NM" ? "|" + cond : "");
+const CONDS = [["NM", "Near Mint"], ["LP", "Lightly Played"], ["MP", "Moderately Played"], ["HP", "Heavily Played"], ["DMG", "Damaged"]];
+// condition words used by ManaBox, Moxfield, TCGplayer, Deckbox and others
+function condOf(v) {
+  const t = String(v || "").toLowerCase().replace(/[_-]+/g, " ").trim();
+  if (!t || /^(m|mint|nm|near mint|nm m|near mint or better)$/.test(t)) return "NM";
+  if (/^(lp|sp|ex|excellent|light(ly)? played|slightly played)$/.test(t)) return "LP";
+  if (/^(mp|gd|good|played|moderately played)$/.test(t)) return "MP";
+  if (/^(hp|pl|poor|heavily played)$/.test(t)) return "HP";
+  if (/^(d|dmg|damaged)$/.test(t)) return "DMG";
+  return "NM";
+}
 const pkey = (id, finish) => id + "|" + finish;
 migrate();
 /* Saving: the phone's IndexedDB database (room for very large collections). Browser localStorage
@@ -628,22 +641,26 @@ function ownBinder() {
 }
 function defaultBinder() { return S.meta.binder && S.binders[S.meta.binder] ? S.meta.binder : ownBinder(); }
 const binderName = id => (S.binders[id] || { name: "Collection" }).name;
-function addToColl(card, finish = "nonfoil", qty = 1, binder, noSave) {
+function addToColl(card, finish = "nonfoil", qty = 1, binder, noSave, extra = {}) {
   staleIndex();
   const s = isSlim(card) ? card : slim(card);
   binder = binder && S.binders[binder] ? binder : defaultBinder();
   if (!s.finishes.includes(finish)) finish = s.finishes[0] || "nonfoil";
-  const k = ckey(s.id, finish, binder);
+  const cond = extra.cond && extra.cond !== "NM" ? extra.cond : undefined;
+  const k = ckey(s.id, finish, binder, cond);
   const cur = S.coll[k];
-  if (cur) { cur.qty += qty; cur.prices = s.prices; }
-  else if (qty > 0) S.coll[k] = Object.assign({}, s, { finish, qty, binder, added: Date.now() });
+  if (cur) {
+    if (extra.paid != null && qty > 0) cur.paid = cur.paid != null ? (cur.paid * cur.qty + extra.paid * qty) / (cur.qty + qty) : extra.paid;   // average paid per copy
+    cur.qty += qty; cur.prices = s.prices;
+  }
+  else if (qty > 0) { S.coll[k] = Object.assign({}, s, { finish, qty, binder, added: Date.now() }); if (cond) S.coll[k].cond = cond; if (extra.paid != null) S.coll[k].paid = extra.paid; }
   if (S.coll[k] && S.coll[k].qty <= 0) delete S.coll[k];
   if (!noSave) save(); return k;
 }
 function moveEntry(k, b) {
   const e = S.coll[k]; if (!e || e.binder === b) return;
   delete S.coll[k]; e.binder = b;
-  const nk = ckey(e.id, e.finish, b);
+  const nk = ckey(e.id, e.finish, b, e.cond);
   const t = S.coll[nk];
   if (t) { t.qty += e.qty; if (e.scanned && (!t.scanned || e.scanned > t.scanned)) t.scanned = e.scanned; if (e.firstScanned && (!t.firstScanned || e.firstScanned < t.firstScanned)) t.firstScanned = e.firstScanned; t.scans = (t.scans || 0) + (e.scans || 0); }
   else S.coll[nk] = e;
@@ -657,9 +674,11 @@ function takeCopies(k, n, ch) {
   const base = ch.card ? Object.assign({}, isSlim(ch.card) ? ch.card : slim(ch.card)) : Object.assign({}, e);
   const want = ch.finish || e.finish, binder = ch.binder && S.binders[ch.binder] ? ch.binder : e.binder;
   const fin = (base.finishes || ["nonfoil"]).includes(want) ? want : (base.finishes || ["nonfoil"])[0];
-  const nk = ckey(base.id, fin, binder);
+  const cond = "cond" in ch ? (ch.cond === "NM" ? undefined : ch.cond) : e.cond;
+  const nk = ckey(base.id, fin, binder, cond);
   if (nk === k) return k;
-  const moved = Object.assign(base, { finish: fin, binder, qty: n, added: e.added, scanned: e.scanned, firstScanned: e.firstScanned, scans: e.scans });
+  const moved = Object.assign(base, { finish: fin, binder, qty: n, added: e.added, scanned: e.scanned, firstScanned: e.firstScanned, scans: e.scans, cond, paid: e.paid });
+  if (!cond) delete moved.cond; if (moved.paid == null) delete moved.paid;
   delete moved.priceFrom;
   e.qty -= n; if (e.qty <= 0) delete S.coll[k];
   const t = S.coll[nk];
@@ -704,13 +723,15 @@ function cardIndex() {
 const staleIndex = () => { IDX.v++; };
 function ownedByName(name) { return cardIndex().owned.get(name) || 0; }
 function collTotals(filter) {
-  let cards = 0, value = 0; const uniq = new Set();
+  let cards = 0, value = 0, paid = 0, paidN = 0, paidNow = 0; const uniq = new Set();
   for (const k in S.coll) {
     const e = S.coll[k];
     if (filter === "all" ? isWish(e.binder) : e.binder !== filter) continue;
-    cards += e.qty; uniq.add(e.oid || e.name); value += (priceOf(e, e.finish) || 0) * e.qty;
+    const v = (priceOf(e, e.finish) || 0) * e.qty;
+    cards += e.qty; uniq.add(e.oid || e.name); value += v;
+    if (e.paid != null) { paid += e.paid * e.qty; paidN += e.qty; paidNow += v; }
   }
-  return { cards, uniq: uniq.size, value };
+  return { cards, uniq: uniq.size, value, paid, paidN, paidNow };
 }
 function binderByName(name) {
   name = (name || "").trim(); if (!name) return defaultBinder();
@@ -890,6 +911,7 @@ function renderColl() {
     <div class="summary"><div><span class="label">${wish ? "Wanted" : "Cards"}</span><b class="num">${t.cards.toLocaleString()}</b></div>
       <div><span class="label">Unique</span><b class="num">${t.uniq.toLocaleString()}</b></div>
       <div><span class="label">${wish ? "Cost to buy" : "Value"}</span><b class="num gold">${money(t.value)}</b></div></div>
+    ${!wish && t.paidN ? `<div class="small">You paid <b class="num">${money(t.paid)}</b> for ${t.paidN.toLocaleString()} card${t.paidN === 1 ? "" : "s"} with a purchase price; they're worth <b class="num">${money(t.paidNow)}</b> now <b class="num ${t.paidNow >= t.paid ? "up" : "down"}">${signed(t.paidNow - t.paid)}${t.paid ? ` (${t.paidNow >= t.paid ? "+" : ""}${Math.round((t.paidNow - t.paid) / t.paid * 100)}%)` : ""}</b></div>` : ""}
     ${cv.binder === "all" ? (histVals.length >= 2 ? `<div class="box"><div class="kv"><span class="label">Collection value</span>
         <span class="num small ${histVals.at(-1) >= histVals[0] ? "up" : "down"}">${signed(histVals.at(-1) - histVals[0])} since ${dayStr(S.hist[0].d)}</span></div>${spark(histVals)}</div>`
       : `<p class="small muted" style="margin:0">Your value chart starts after prices update on two different days. Deckhand updates them automatically once a day when you open it.</p>`) : ""}
@@ -989,7 +1011,7 @@ function drawCollList() {
   el.innerHTML = `${selBar}<div class="list">${shown.map(([k, e]) => { const c = phChange(e), on = cv.sel.has(k); return `${dayHead(e)}
     <div class="item ${cv.select ? "selectable" : ""} ${on ? "picked" : ""}">${cv.select ? `<span class="check" aria-hidden="true">${on ? "✓" : ""}</span>` : `<img loading="lazy" src="${esc(e.img)}" alt="">`}
       <button class="tap" data-open="${esc(k)}"><div class="name">${esc(e.name)}</div>
-        <div class="meta"><span>${setIcon(e.set, e.rarity)} ${esc(e.set.toUpperCase())} #${esc(e.num)}</span>${e.finish !== "nonfoil" ? `<span class="chip foil">${esc(e.finish)}</span>` : ""}
+        <div class="meta"><span>${setIcon(e.set, e.rarity)} ${esc(e.set.toUpperCase())} #${esc(e.num)}</span>${e.finish !== "nonfoil" ? `<span class="chip foil">${esc(e.finish)}</span>` : ""}${e.cond && e.cond !== "NM" ? `<span class="chip warn" title="${esc((CONDS.find(c => c[0] === e.cond) || [])[1] || "")}">${esc(e.cond)}</span>` : ""}${e.lang && e.lang !== "en" ? `<span class="chip">${esc(e.lang.toUpperCase())}</span>` : ""}
           ${cv.binder === "all" && Object.keys(S.binders).length > 1 ? `<span class="chip">${esc(binderName(e.binder))}</span>` : ""}
           <span class="num">${money(priceOf(e, e.finish))} ea</span>${e.priceFrom === "en" ? `<span class="chip" title="No price for this language, so the English printing's price is used">${esc((e.lang || "").toUpperCase())} · EN price</span>` : priceOf(e, e.finish) == null ? `<span class="chip warn">No price</span>` : ""}${c && c.d ? `<span class="num ${c.d > 0 ? "up" : "down"}">${signed(c.d)}</span>` : ""}
           ${e.scanned ? `<span class="scanned num" title="Last scanned ${esc(new Date(e.scanned).toLocaleString())}">Scanned ${esc(cv.sort === "scanned" ? clock(e.scanned) : scanWhen(e.scanned))}</span>` : ""}${deckChips(uses[e.name])}</div></button>
@@ -1387,6 +1409,7 @@ function ioSheet() {
       <button class="btn" id="ioBack">Export full backup (everything)</button>
       <button class="btn" id="ioRest">Restore from a backup file</button>
       <button class="btn" id="ioCsv">Export collection as CSV</button>
+      <button class="btn" id="ioMb">Export in ManaBox's format</button>
       <button class="btn" id="ioImp">Import a CSV file</button>
     </div>
     <p class="small muted">CSV files from ManaBox, Moxfield, Deckbox, TCGplayer, Dragon Shield, Archidekt and most other apps work. You'll see a preview before anything is added.</p>
@@ -1398,11 +1421,19 @@ function ioSheet() {
     catch (e) { $("#ioMsg").textContent = "That file isn't a Deckhand backup."; }
   });
   $("#ioCsv").onclick = () => {
-    const head = "Name,Set code,Set name,Collector number,Foil,Rarity,Quantity,Binder Name,Scryfall ID,Price USD,Date added,Last scanned,First scanned";
+    const head = "Name,Set code,Set name,Collector number,Foil,Rarity,Quantity,Binder Name,Scryfall ID,Price USD,Condition,Language,Purchase price,Date added,Last scanned,First scanned";
     const iso = t => t ? new Date(t).toISOString().replace("T", " ").slice(0, 16) : "";
     const q = s => `"${String(s ?? "").replace(/"/g, '""')}"`;
-    const lines = Object.values(S.coll).map(e => [q(e.name), q(e.set), q(e.setName), q(e.num), e.finish === "nonfoil" ? "normal" : e.finish, e.rarity, e.qty, q(binderName(e.binder)), e.id, priceOf(e, e.finish) ?? "", iso(e.added), iso(e.scanned), iso(e.firstScanned)].join(","));
+    const lines = Object.values(S.coll).map(e => [q(e.name), q(e.set), q(e.setName), q(e.num), e.finish === "nonfoil" ? "normal" : e.finish, e.rarity, e.qty, q(binderName(e.binder)), e.id, priceOf(e, e.finish) ?? "", e.cond || "NM", e.lang || "en", e.paid ?? "", iso(e.added), iso(e.scanned), iso(e.firstScanned)].join(","));
     download(`deckhand-collection-${stamp}.csv`, [head, ...lines].join("\n"), "text/csv");
+  };
+  // ManaBox's own CSV layout, so the file can go back into ManaBox (or anything that reads its exports)
+  $("#ioMb").onclick = () => {
+    const head = "Binder Name,Binder Type,Name,Set code,Set name,Collector number,Foil,Rarity,Quantity,ManaBox ID,Scryfall ID,Purchase price,Misprint,Altered,Condition,Language,Purchase price currency";
+    const q = s => `"${String(s ?? "").replace(/"/g, '""')}"`, MB = { NM: "near_mint", LP: "light_played", MP: "played", HP: "poor", DMG: "poor" };
+    const lines = Object.values(S.coll).map(e => [q(binderName(e.binder)), isWish(e.binder) ? "list" : "binder", q(e.name), q(e.set.toUpperCase()), q(e.setName), q(e.num), e.finish === "nonfoil" ? "normal" : e.finish,
+      e.rarity, e.qty, "", e.id, e.paid ?? "", "false", "false", MB[e.cond || "NM"], e.lang || "en", "USD"].join(","));
+    download(`deckhand-for-manabox-${stamp}.csv`, [head, ...lines].join("\n"), "text/csv");
   };
   $("#ioImp").onclick = () => pickCSV({ kind: "coll" });
 }
@@ -1437,7 +1468,9 @@ const CSV_FIELDS = [
   ["id", "Scryfall ID", /scryfall/],
   ["foil", "Foil / finish", /^(foil|finish|printing|is foil|foil type)$/],
   ["binder", "Binder or list", /^(binder name|binder|list name|folder|list|collection name)$/],
-  ["board", "Main / side / commander", /^(board|section|category|zone|deck section)$/]
+  ["board", "Main / side / commander", /^(board|section|category|zone|deck section)$/],
+  ["cond", "Condition", /^(condition|cond|card condition)$/],
+  ["paid", "Purchase price", /^(purchase price|price paid|paid|cost|buy price|acquired price|purchase price usd)$/]
 ];
 function pickCSV(target) { pickFile("", f => csvImport(f, target)); }
 function csvRowInfo(r, m) {
@@ -1446,7 +1479,8 @@ function csvRowInfo(r, m) {
   const finish = fv.includes("etched") ? "etched" : /^(foil|true|yes|y|1|x)$/.test(fv) || (fv.includes("foil") && !fv.includes("non")) ? "foil" : "nonfoil";
   const q = parseInt(g("qty").replace(/[^\d]/g, ""));
   return { name: g("name").replace(/\s*\(.*?\)\s*$/, ""), qty: m.qty >= 0 ? (isNaN(q) ? 1 : q) : 1, set: g("set").toLowerCase(), setName: g("setName"), num: g("num").replace(/^#/, ""),
-    id: /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(g("id")) ? g("id").toLowerCase() : "", finish, binder: g("binder"), board: g("board").toLowerCase() };
+    id: /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(g("id")) ? g("id").toLowerCase() : "", finish, binder: g("binder"), board: g("board").toLowerCase(),
+    cond: m.cond >= 0 ? condOf(g("cond")) : "NM", paid: (() => { const v = parseFloat(g("paid").replace(/[^\d.]/g, "")); return m.paid >= 0 && isFinite(v) && v > 0 ? v : null; })() };
 }
 async function csvImport(file, target) {
   let text;
@@ -1547,7 +1581,7 @@ async function csvImport(file, target) {
         for (const [c, w] of found) {
           let b = st.dest;
           if (b === "__file") { const before = Object.keys(S.binders).length; b = w.binder ? binderByName(w.binder) : defaultBinder(); if (Object.keys(S.binders).length > before) newBinders.add(S.binders[b].name); }
-          addToColl(slim(c), w.finish, w.qty, b, true); cards += w.qty; if (w.guessed) guessed++;
+          addToColl(slim(c), w.finish, w.qty, b, true, { cond: w.cond, paid: w.paid }); cards += w.qty; if (w.guessed) guessed++;
         }
         where = st.dest === "__file" ? (newBinders.size ? `New binders: ${[...newBinders].join(", ")}.` : "") : `Added to ${S.binders[st.dest].name}.`;
       } else {
@@ -1875,12 +1909,15 @@ function openCard(card, finish, binder, ctx) {
           return `<div class="row" style="justify-content:space-between"><span class="label">In your collection</span><span class="num">${own} owned${inDecks ? ` · ${inDecks} in decks · ${Math.max(0, own - inDecks)} free` : ""}</span></div>
           ${uses.length ? `<div class="chips">${uses.map(u => `<button class="chip deck" data-deck="${esc(u.id)}">In ${esc(u.name)}${u.qty > 1 ? " ×" + u.qty : ""} ›</button>`).join("")}</div>` : ""}`; })()}
         ${owned.map(([k, e], i) => `<div class="own ${editing === k ? "open" : ""}">
-          <div class="kv"><span class="grow">${e.qty}× ${setIcon(e.set, e.rarity)} ${esc(e.set.toUpperCase())} #${esc(e.num)}${e.finish !== "nonfoil" ? ` <span class="chip foil">${esc(e.finish)}</span>` : ""} <span class="chip">${esc(binderName(e.binder))}</span>
+          <div class="kv"><span class="grow">${e.qty}× ${setIcon(e.set, e.rarity)} ${esc(e.set.toUpperCase())} #${esc(e.num)}${e.finish !== "nonfoil" ? ` <span class="chip foil">${esc(e.finish)}</span>` : ""} ${e.cond && e.cond !== "NM" ? `<span class="chip warn" title="${esc((CONDS.find(c => c[0] === e.cond) || [])[1] || "")}">${esc(e.cond)}</span>` : ""}${e.lang && e.lang !== "en" ? `<span class="chip">${esc(e.lang.toUpperCase())}</span>` : ""} <span class="chip">${esc(binderName(e.binder))}</span>
+            ${e.paid != null ? (() => { const now = priceOf(e, e.finish), d = now != null ? now - e.paid : null; return `<span class="small" style="display:block">Paid ${money(e.paid)} each${d != null ? ` · now ${money(now)} <span class="${d >= 0 ? "up" : "down"}">${signed(d)}</span>` : ""}</span>`; })() : ""}
             ${e.scanned ? `<span class="small muted" style="display:block">Last scanned ${esc(scanWhen(e.scanned))}${e.firstScanned && !sameDay(new Date(e.firstScanned), new Date(e.scanned)) ? ` · first ${esc(dayLabel(e.firstScanned))}` : ""}${e.scans > 1 ? ` · ${e.scans} scans` : ""}</span>` : e.added ? `<span class="small muted" style="display:block">Added ${esc(scanWhen(e.added))}</span>` : ""}</span>
             <button class="btn sm" data-edit="${esc(k)}">${editing === k ? "Done" : "Edit"}</button></div>
           ${editing === k ? `<div class="editbox">
             <div class="row wrap"><label class="small row" style="gap:6px">Copies <select id="eN">${Array.from({ length: e.qty }, (_, j) => `<option value="${e.qty - j}">${e.qty - j}${e.qty - j === e.qty ? " (all)" : ""}</option>`).join("")}</select></label></div>
             <div class="row wrap"><select id="eBin" class="grow" aria-label="Move to binder">${binderOptions(e.binder)}</select><button class="btn sm" id="eMove">Move</button></div>
+            <div class="row wrap"><select id="eCond" class="grow" aria-label="Condition">${CONDS.map(([c, l]) => `<option value="${c}" ${(e.cond || "NM") === c ? "selected" : ""}>${l}</option>`).join("")}</select><button class="btn sm" id="eCondGo">Set condition</button></div>
+            <div class="row wrap"><label class="small row grow" style="gap:6px">Paid each $<input type="number" id="ePaid" min="0" step="0.01" style="width:90px" value="${e.paid != null ? e.paid : ""}" placeholder="—"></label><button class="btn sm" id="ePaidGo">Save price paid</button></div>
             <div class="row wrap"><button class="btn sm" id="ePrint">Change printing</button>${(e.finishes || []).length > 1 ? `<button class="btn sm" id="eFin">Make ${e.finish === "nonfoil" ? (e.finishes.includes("foil") ? "foil" : e.finishes.find(f => f !== "nonfoil")) : "normal"}</button>` : ""}<button class="btn sm danger" id="eDel">Remove</button></div>
             <div id="ePrintBox"></div></div>` : ""}
         </div>`).join("")}
@@ -1925,6 +1962,8 @@ function openCard(card, finish, binder, ctx) {
     if (editing && S.coll[editing]) {
       const k = editing, e = S.coll[k], n = () => +$("#eN").value;
       $("#eMove").onclick = () => { const to = $("#eBin").value; if (to === e.binder) { toast("Already in " + S.binders[to].name); return; } const c = n(); editing = takeCopies(k, c, { binder: to }); toast(`Moved ${c} to ${S.binders[to].name}`); draw(); };
+      $("#eCondGo").onclick = () => { const to = $("#eCond").value, c = n(); if (to === (e.cond || "NM")) return; editing = takeCopies(k, c, { cond: to }); toast(`Marked ${c} as ${CONDS.find(x => x[0] === to)[1]}`); draw(); };
+      $("#ePaidGo").onclick = () => { const v = parseFloat($("#ePaid").value); if ($("#ePaid").value === "") delete e.paid; else if (isFinite(v) && v >= 0) e.paid = Math.round(v * 100) / 100; else return; save(); toast(e.paid != null ? `Saved: paid ${money(e.paid)} each` : "Price paid cleared"); draw(); };
       const ef = $("#eFin"); if (ef) ef.onclick = () => { const to = e.finish === "nonfoil" ? (e.finishes.includes("foil") ? "foil" : e.finishes.find(f => f !== "nonfoil")) : "nonfoil", c = n(); editing = takeCopies(k, c, { finish: to }); toast(`Changed ${c} to ${to === "nonfoil" ? "normal" : to}`); draw(); };
       $("#eDel").onclick = () => { const c = n(), back = Object.assign({}, e); e.qty -= c; if (e.qty <= 0) delete S.coll[k]; save(); editing = S.coll[k] ? k : null; draw(); toast(`Removed ${c} ${e.name}`, { label: "Undo", fn: () => { S.coll[k] = back; save(); draw(); } }); };
       $("#ePrint").onclick = () => showPrints(e, picked => { const c = n(); editing = takeCopies(k, c, { card: picked });
