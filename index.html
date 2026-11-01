@@ -333,7 +333,7 @@ function migrate() {
   S.coll = S.coll || {}; S.decks = S.decks || {}; S.meta = S.meta || {};
   if (!S.binders) S.binders = {
     main: { id: "main", name: "Collection" }, trade: { id: "trade", name: "Trade binder" }, wish: { id: "wish", name: "Wishlist", wish: true } };
-  S.settings = S.settings || {}; S.alerts = S.alerts || {}; S.ph = S.ph || {}; S.hist = S.hist || []; S.trade = S.trade || { give: [], get: [] };
+  S.settings = S.settings || {}; S.alerts = S.alerts || {}; for (const k in S.alerts) if (!S.alerts[k] || typeof S.alerts[k] !== "object") delete S.alerts[k]; else normAlert(S.alerts[k]); S.ph = S.ph || {}; S.hist = S.hist || []; S.trade = S.trade || { give: [], get: [] };
   const nc = {};
   for (const k in S.coll) {
     const e = S.coll[k]; if (!e || !e.id) continue;
@@ -776,6 +776,153 @@ async function priceFallback() {
   }
   return n;
 }
+/* ---------- price alerts ----------
+   One record per printing + finish (key "id|finish"): any number of rules plus a log of when they fired.
+   A rule fires once when its condition becomes true, then waits until the price moves back before it can fire again,
+   so an unchanged price never alerts twice. Checked whenever prices update (about once a day while Deckhand is open). */
+const ALERT_SRC = "TCGplayer market price, via Scryfall";
+const AKINDS = [["above", "Rises above"], ["below", "Falls below"], ["target", "Reaches"], ["pct", "Changes by"]];
+function ruleText(r) {
+  if (r.kind === "above") return "Rises above " + money(r.v);
+  if (r.kind === "below") return "Falls below " + money(r.v);
+  if (r.kind === "target") return "Reaches " + money(r.v) + (r.dir === "down" ? " (falling)" : " (rising)");
+  return (r.dir === "up" ? "Up " : r.dir === "down" ? "Down " : "Up or down ") + r.v + "% from " + money(r.base);
+}
+function ruleMet(r, p) {
+  if (p == null || !r) return false;
+  if (r.kind === "above") return p >= r.v;
+  if (r.kind === "below") return p <= r.v;
+  if (r.kind === "target") return r.dir === "down" ? p <= r.v : p >= r.v;
+  if (!r.base) return false;
+  const c = Math.round((p - r.base) / r.base * 10000) / 100;
+  return r.dir === "up" ? c >= r.v : r.dir === "down" ? c <= -r.v : Math.abs(c) >= r.v;
+}
+// older alerts had one "below"/"above" pair; turn them into rules (the old fields stay, so an older copy of the app still reads them)
+function normAlert(a) {
+  if (!a) return a;
+  if (!Array.isArray(a.rules)) {
+    a.rules = []; a.log = [];
+    for (const kind of ["below", "above"]) if (a[kind] != null && isFinite(a[kind])) a.rules.push({ id: uid(), kind, v: +a[kind], on: true, at: a.hitAt || 0,
+      armed: !(a.hitAt && (kind === "below" ? a.hitPrice <= a[kind] : a.hitPrice >= a[kind])) });
+    if (a.hitAt) { const r = a.rules.find(r => r.armed === false) || a.rules[0]; a.log.push({ id: uid(), at: a.hitAt, price: a.hitPrice, rid: r && r.id, text: r ? ruleText(r) : "Price target", seen: !!a.seen }); }
+  }
+  a.rules = a.rules.filter(r => r && AKINDS.some(k => k[0] === r.kind) && isFinite(r.v = +r.v));
+  if (!Array.isArray(a.log)) a.log = [];
+  a.log = a.log.filter(l => l && isFinite(l.at));
+  return a;
+}
+// the price the alert watches: your own copy's price (which includes the English-price fallback), else the card's
+function alertPrice(k, a) {
+  const [id, fin] = k.split("|");
+  for (const e of Object.values(S.coll)) if (e.id === id && e.finish === fin) { const p = priceOf(e, fin); if (p != null) return p; }
+  return a && a.prices ? priceOf(a, fin) : null;
+}
+// a new or edited rule takes its % starting point and its direction from today's price
+function bindRule(r, p) {
+  r = Object.assign({}, r);
+  if (r.kind === "pct") { if (p == null) return null; r.base = p; } else delete r.base;
+  if (r.kind === "target") r.dir = p == null || p < r.v ? "up" : "down"; else if (r.kind !== "pct") delete r.dir;
+  armNow(r, p); return r;
+}
+// (re)start watching from the current price: if it's already past the line, wait for it to move back first
+function armNow(r, p) { r.armed = !ruleMet(r, p); if (r.armed) delete r.side; else { const sd = pctSide(r, p); if (sd) r.side = sd; } }
+// for "up or down by %": which side of the starting price it's on, so a swing from +30% to −30% counts as a new event
+const pctSide = (r, p) => r.kind === "pct" && r.dir === "either" && r.base && p != null ? (p >= r.base ? "up" : "down") : null;
+function checkAlerts() {
+  let hits = 0; const now = Date.now();
+  for (const k in S.alerts) {
+    const a = normAlert(S.alerts[k]), p = alertPrice(k, a); let changed = false;
+    for (const r of a.rules) {
+      if (!r.on || p == null) continue;
+      const met = ruleMet(r, p);
+      const side = pctSide(r, p);
+      if (met && (r.armed !== false || (side && r.side && side !== r.side))) { r.armed = false; if (side) r.side = side; a.log.push({ id: uid(), at: now, rid: r.id, price: p, text: ruleText(r), seen: false }); hits++; changed = true; }
+      else if (!met && r.armed === false) { r.armed = true; changed = true; }
+    }
+    if (a.log.length > 50) a.log.splice(0, a.log.length - 50);
+    if (changed) a.updated = now;
+  }
+  return hits;
+}
+const ruleStatus = r => !r.on ? "paused" : r.armed === false ? "triggered · waits for the price to move back" : "watching";
+const alertSrcLine = () => `${ALERT_SRC}${S.meta.pricedAt ? `, updated ${esc(scanWhen(S.meta.pricedAt))}` : ", not updated yet"}`;
+function ruleFormHTML(r) {
+  r = r || { kind: "below" };
+  return `<div class="row wrap"><select id="afKind" aria-label="Alert type">${AKINDS.map(([k, l]) => `<option value="${k}" ${r.kind === k ? "selected" : ""}>${l}</option>`).join("")}</select>
+    <select id="afDir" aria-label="Direction" ${r.kind === "pct" ? "" : "hidden"}>${[["either", "up or down"], ["up", "up"], ["down", "down"]].map(([k, l]) => `<option value="${k}" ${r.dir === k ? "selected" : ""}>${l}</option>`).join("")}</select>
+    <input type="number" id="afV" class="grow" inputmode="decimal" step="0.01" min="0" placeholder="${r.kind === "pct" ? "%" : "$"}" value="${r.v != null ? esc(String(r.v)) : ""}" style="min-width:90px" aria-label="Amount"></div>`;
+}
+function wireRuleForm() { const k = $("#afKind"); k.onchange = () => { $("#afDir").hidden = k.value !== "pct"; $("#afV").placeholder = k.value === "pct" ? "%" : "$"; }; }
+function readRule() {
+  const kind = $("#afKind").value, v = parseFloat($("#afV").value);
+  if (!(v > 0)) return { err: kind === "pct" ? "Enter a percentage" : "Enter a price" };
+  const r = { id: uid(), kind, v: Math.round(v * 100) / 100, on: true, at: Date.now() };
+  if (kind === "pct") r.dir = $("#afDir").value;
+  return { rule: r };
+}
+function alertRecord(k, card) {
+  const a = normAlert(S.alerts[k]) || (S.alerts[k] = { rules: [], log: [] });
+  Object.assign(a, { name: card.name, img: card.img, prices: card.prices, set: card.set, num: card.num, updated: Date.now() });
+  delete a.below; delete a.above; delete a.hitAt; delete a.hitPrice; delete a.seen;      // edited here: the rules are the alert now
+  return a;
+}
+function unseenAlerts() { const out = []; for (const [k, a] of Object.entries(S.alerts)) { normAlert(a); for (const l of a.log) if (!l.seen) out.push([k, a, l]); } return out.sort((x, y) => y[2].at - x[2].at); }
+let AEDIT_NEXT = null;
+async function openAlertCard(k, edit) {
+  const [id, fin] = k.split("|"); AEDIT_NEXT = edit || null;
+  const e = Object.values(S.coll).find(x => x.id === id && x.finish === fin);
+  if (e) return openCard(e, fin, e.binder);
+  try { openCard(await sf("/cards/" + id), fin); } catch (err) { AEDIT_NEXT = null; toast("Couldn't open the card: " + err.message); }
+}
+function alertsSheet(start) {
+  let view = start || "active";
+  openSheet(`<div id="alSheet"></div>`, () => render());
+  const draw = () => {
+    const ents = Object.entries(S.alerts).map(([k, a]) => [k, normAlert(a)]);
+    const active = ents.filter(([, a]) => a.rules.length).sort((x, y) => (x[1].name || "").localeCompare(y[1].name || ""));
+    const hist = []; for (const [k, a] of ents) for (const l of a.log) hist.push([k, a, l]); hist.sort((x, y) => y[2].at - x[2].at);
+    const fin = k => k.split("|")[1], nm = (k, a) => `${esc(a.name || "Card")} <span class="small muted">${a.set ? esc(a.set.toUpperCase()) : ""}${fin(k) !== "nonfoil" ? " " + esc(fin(k)) : ""}</span>`;
+    $("#alSheet").innerHTML = `<h2>Price alerts</h2>
+      <p class="small muted" style="margin:4px 0 10px">${alertSrcLine()}. Alerts are checked when prices update, about once a day while Deckhand is open, and show on the Collection page. Nothing is sent outside the app.</p>
+      <span class="seg wide" id="alTabs"><button data-v="active" aria-pressed="${view === "active"}">Active (${active.reduce((n, [, a]) => n + a.rules.length, 0)})</button><button data-v="hist" aria-pressed="${view === "hist"}">History (${hist.length})</button></span>
+      <div class="stack" style="margin-top:10px">${view === "active" ? (active.length ? active.map(([k, a]) => { const p = alertPrice(k, a); return `<div class="box" style="gap:4px">
+          <div class="row"><button class="linkbtn grow" style="text-align:left;text-decoration:none;color:inherit" data-aopen="${esc(k)}">${nm(k, a)}</button><span class="num small">${p != null ? money(p) : `<span class="muted">no price</span>`}</span></div>
+          ${a.rules.map(r => `<div class="kv"><span class="grow small ${r.on ? "" : "muted"}">${esc(ruleText(r))} <span class="muted">· ${ruleStatus(r)}</span></span>
+            <button class="btn sm ghost" data-aed="${esc(k)}" data-r="${esc(r.id)}">Edit</button><button class="btn sm ghost" data-aon="${esc(k)}" data-r="${esc(r.id)}">${r.on ? "Pause" : "Resume"}</button><button class="btn sm ghost" data-adel="${esc(k)}" data-r="${esc(r.id)}" aria-label="Delete alert">✕</button></div>`).join("")}</div>`; }).join("")
+        : `<p class="small muted">No alerts yet. Open any card and use Price alerts, or tap Select on the Collection page to set one on several cards at once.</p>`)
+      : (hist.length ? `<div class="row"><span class="grow"></span>${hist.some(h => !h[2].seen) ? `<button class="btn sm ghost" id="alSeen">Mark all seen</button>` : ""}<button class="btn sm ghost" id="alClr">Clear history</button></div>
+          ${hist.map(([k, a, l]) => `<button class="tap mvrow" data-aopen="${esc(k)}"><span class="nm">${l.seen ? "" : `<span class="chip warn">new</span> `}${nm(k, a)}<span class="small muted" style="display:block;white-space:normal">${esc(l.text || "")}</span></span><span class="num small">${money(l.price)}</span><span class="small muted">${esc(new Date(l.at).toLocaleDateString())}</span></button>`).join("")}`
+        : `<p class="small muted">No alerts have triggered yet.</p>`)}</div>`;
+    $("#alTabs").onclick = e => { const b = e.target.closest("button"); if (b) { view = b.dataset.v; draw(); } };
+    const S_ = $("#alSheet");
+    S_.querySelectorAll("[data-aopen]").forEach(b => b.onclick = () => openAlertCard(b.dataset.aopen));
+    S_.querySelectorAll("[data-aed]").forEach(b => b.onclick = () => openAlertCard(b.dataset.aed, b.dataset.r));
+    S_.querySelectorAll("[data-aon]").forEach(b => b.onclick = () => { const k = b.dataset.aon, a = S.alerts[k], r = a.rules.find(x => x.id === b.dataset.r); if (!r) return;
+      r.on = !r.on; if (r.on) armNow(r, alertPrice(k, a)); a.updated = Date.now(); save(); draw(); });
+    S_.querySelectorAll("[data-adel]").forEach(b => b.onclick = () => { const k = b.dataset.adel, a = S.alerts[k], i = a.rules.findIndex(x => x.id === b.dataset.r); if (i < 0) return;
+      const [gone] = a.rules.splice(i, 1); a.updated = Date.now(); if (!a.rules.length && !a.log.length) delete S.alerts[k]; save(); draw();
+      toast("Alert deleted", { label: "Undo", fn: () => { const x = normAlert(S.alerts[k]) || (S.alerts[k] = Object.assign(a, { rules: [] })); x.rules.splice(i, 0, gone); x.updated = Date.now(); save(); draw(); } }); });
+    const sn = $("#alSeen"); if (sn) sn.onclick = () => { for (const [, a, l] of hist) l.seen = true; for (const [, a] of ents) a.updated = Date.now(); save(); draw(); };
+    const cl = $("#alClr"); if (cl) cl.onclick = () => { const back = {}; for (const [k, a] of ents) { back[k] = a.log; a.log = []; a.updated = Date.now(); if (!a.rules.length) delete S.alerts[k]; }
+      save(); draw(); toast("History cleared", { label: "Undo", fn: () => { for (const k in back) { if (!S.alerts[k]) S.alerts[k] = Object.assign(ents.find(e => e[0] === k)[1], { rules: [] }); S.alerts[k].log = back[k]; } save(); draw(); } }); };
+  };
+  draw();
+}
+function bulkAlertSheet(keys) {
+  const ents = [...new Map(keys.map(k => S.coll[k]).filter(Boolean).map(e => [pkey(e.id, e.finish), e])).entries()];
+  openSheet(`<h2>Price alert for ${ents.length} card${ents.length === 1 ? "" : "s"}</h2>
+    <p class="small muted" style="margin:4px 0 10px">The same rule is added to each selected card. A % change is measured from each card's own price today. ${alertSrcLine()}.</p>
+    ${ruleFormHTML({ kind: "pct", dir: "either" })}<div class="row" style="margin-top:8px"><button class="btn primary" id="baGo">Add alert</button></div>`, () => render());
+  wireRuleForm();
+  $("#baGo").onclick = () => {
+    const x = readRule(); if (x.err) return toast(x.err);
+    let n = 0, noP = 0, met = 0;
+    for (const [k, e] of ents) { const p = alertPrice(k, { prices: e.prices }), r = bindRule(Object.assign({}, x.rule, { id: uid() }), p);
+      if (!r) { noP++; continue; } alertRecord(k, e).rules.push(r); n++; if (!r.armed) met++; }
+    save(); cv.select = false; cv.sel.clear(); closeSheet();
+    toast(`Alert added to ${n} card${n === 1 ? "" : "s"}${noP ? `; ${noP} skipped (no price to measure from)` : ""}${met ? `; ${met} already past it, so they wait for the price to move back first` : ""}`);
+  };
+}
 let refreshing = false, refreshMsg = "";
 function recordPH(k, p) {
   if (p == null) return;
@@ -807,9 +954,9 @@ async function refreshPrices(quiet) {
     for (const k in S.alerts) {
       const a = S.alerts[k], [id, fin] = k.split("|"), s = map[id]; live.add(k);
       if (!s) continue;
-      a.prices = s.prices; a.img = s.img; const p = priceOf(s, fin); recordPH(k, p);
-      if (p != null && !a.hitAt && ((a.below != null && p <= a.below) || (a.above != null && p >= a.above))) { a.hitAt = Date.now(); a.hitPrice = p; a.seen = false; hits++; }
+      a.prices = s.prices; a.img = s.img; recordPH(k, priceOf(s, fin));
     }
+    hits = checkAlerts();
     for (const k in S.ph) if (!live.has(k)) delete S.ph[k];
     const v = collTotals("all").value, d = today(), last = S.hist[S.hist.length - 1];
     if (last && last.d === d) last.v = v; else S.hist.push({ d, v });
@@ -948,16 +1095,16 @@ function renderColl() {
     return;
   }
   const counts = {}; for (const e of Object.values(S.coll)) counts[e.binder] = (counts[e.binder] || 0) + e.qty;
-  const alertHits = Object.entries(S.alerts).filter(([, a]) => a.hitAt && !a.seen);
+  const alertHits = unseenAlerts(), nRules = Object.values(S.alerts).reduce((n, a) => n + normAlert(a).rules.length, 0);
   const histVals = S.hist.map(h => h.v);
   v.innerHTML = `<div class="stack">
     <div class="chips scrollx" id="bChips"><button data-b="all" aria-pressed="${cv.binder === "all"}">All owned</button>
       ${Object.values(S.binders).map(b => `<button data-b="${esc(b.id)}" aria-pressed="${cv.binder === b.id}">${esc(b.name)} <span class="num">${counts[b.id] || 0}</span></button>`).join("")}
       <button data-b="__manage">＋ Manage binders</button></div>
     ${backupNudge()}
-    ${alertHits.length ? `<div class="box alert"><span class="label gold">Price alerts</span>${alertHits.map(([k, a]) => `
-      <div class="kv"><span class="grow">${esc(a.name)} is now <b class="num">${money(a.hitPrice)}</b> <span class="muted">(${a.below != null && a.hitPrice <= a.below ? "below" : "above"} your ${money(a.below != null && a.hitPrice <= a.below ? a.below : a.above)} target)</span></span>
-      <button class="btn sm" data-alert="${esc(k)}">View</button><button class="btn sm ghost" data-seen="${esc(k)}">OK</button></div>`).join("")}</div>` : ""}
+    ${alertHits.length ? `<div class="box alert"><div class="row"><span class="label gold grow">Price alerts</span><button class="linkbtn small" id="alAll">All alerts</button>${alertHits.length > 1 ? `<button class="linkbtn small" id="alOkAll">OK to all</button>` : ""}</div>${alertHits.slice(0, 8).map(([k, a, l]) => `
+      <div class="kv"><span class="grow">${esc(a.name)}${k.split("|")[1] !== "nonfoil" ? ` <span class="small muted">${esc(k.split("|")[1])}</span>` : ""} was <b class="num">${money(l.price)}</b> <span class="muted small">(${esc(l.text || "")}, ${esc(new Date(l.at).toLocaleDateString())})</span></span>
+      <button class="btn sm" data-alert="${esc(k)}">View</button><button class="btn sm ghost" data-seen="${esc(k)}" data-l="${esc(l.id)}">OK</button></div>`).join("")}${alertHits.length > 8 ? `<span class="small muted">and ${alertHits.length - 8} more under All alerts</span>` : ""}</div>` : ""}
     <div id="dash"><div class="summary"><button class="tile" data-dash="all"><span class="label">${wish ? "Wanted" : "Cards"}</span><b class="num">${t.cards.toLocaleString()}</b></button>
       <button class="tile" data-dash="name"><span class="label">Unique</span><b class="num">${t.uniq.toLocaleString()}</b></button>
       <button class="tile" data-dash="value"><span class="label">${wish ? "Cost to buy" : "Value"}</span><b class="num gold">${money(t.value)}</b></button></div>
@@ -979,7 +1126,7 @@ function renderColl() {
     ${moversHTML()}
     <div class="row"><input type="search" id="cq" class="grow" placeholder="Filter by name, set or type" value="${esc(cv.q)}">
       <select id="cs" aria-label="Sort"><option value="value">Value</option><option value="change">Price change</option><option value="name">Name</option><option value="set">Set</option><option value="scanned">Date scanned</option><option value="recent">Recently added</option></select></div>
-    <div class="row wrap"><button class="btn sm" id="cRefresh">Update prices</button><button class="btn sm" id="cImp">Import CSV</button><button class="btn sm" id="cVal">Value breakdown</button><button class="btn sm" id="cMore">Backup / export</button><button class="btn sm" id="cSync">Sync</button>${INSTALL.prompt && !isStandalone() ? `<button class="btn sm" id="cInst">Install app</button>` : ""}<button class="btn sm ${cv.select ? "primary" : ""}" id="cSel">${cv.select ? "Done selecting" : "Select"}</button></div>
+    <div class="row wrap"><button class="btn sm" id="cRefresh">Update prices</button><button class="btn sm" id="cImp">Import CSV</button><button class="btn sm" id="cVal">Value breakdown</button><button class="btn sm" id="cAlerts">Price alerts${nRules ? ` (${nRules})` : ""}</button><button class="btn sm" id="cMore">Backup / export</button><button class="btn sm" id="cSync">Sync</button>${INSTALL.prompt && !isStandalone() ? `<button class="btn sm" id="cInst">Install app</button>` : ""}<button class="btn sm ${cv.select ? "primary" : ""}" id="cSel">${cv.select ? "Done selecting" : "Select"}</button></div>
     ${cv.fSet || cv.fRar ? `<div class="fchips small"><span class="muted">Showing only</span>${cv.fSet ? `<button class="chip" id="fSetX" aria-label="Stop filtering by set">${esc((st.sets[cv.fSet] || {}).name || cv.fSet.toUpperCase())} ✕</button>` : ""}${cv.fRar ? `<button class="chip rar-${esc(cv.fRar)}" id="fRarX" aria-label="Stop filtering by rarity">${cv.fRar === "mythic" ? "Mythics" : "Rares"} ✕</button>` : ""}</div>` : ""}
     <div id="clist"></div></div>`;
   $("#cs").value = cv.sort; updRefreshBtn();
@@ -1001,8 +1148,10 @@ function renderColl() {
   const rx = $("#fRarX"); if (rx) rx.onclick = () => { cv.fRar = ""; renderColl(); };
   $("#cSel").onclick = () => { cv.select = !cv.select; cv.sel.clear(); renderColl(); };
   $("#bChips").onclick = e => { const b = e.target.closest("button"); if (!b) return; if (b.dataset.b === "__manage") binderSheet(); else { cv.binder = b.dataset.b; renderColl(); } };
-  v.querySelectorAll("[data-seen]").forEach(b => b.onclick = () => { S.alerts[b.dataset.seen].seen = true; save(); renderColl(); });
-  v.querySelectorAll("[data-alert]").forEach(b => b.onclick = async () => { const [id, fin] = b.dataset.alert.split("|"); try { openCard(await sf("/cards/" + id), fin); } catch (e) { toast(e.message); } });
+  v.querySelectorAll("[data-seen]").forEach(b => b.onclick = () => { const a = S.alerts[b.dataset.seen], l = a && a.log.find(x => x.id === b.dataset.l); if (l) { l.seen = true; a.updated = Date.now(); save(); } renderColl(); });
+  v.querySelectorAll("[data-alert]").forEach(b => b.onclick = () => openAlertCard(b.dataset.alert));
+  $("#cAlerts").onclick = () => alertsSheet(); const aa = $("#alAll"); if (aa) aa.onclick = () => alertsSheet("hist");
+  const ao = $("#alOkAll"); if (ao) ao.onclick = () => { for (const [, a, l] of alertHits) { l.seen = true; a.updated = Date.now(); } save(); renderColl(); };
   v.querySelectorAll("[data-mover]").forEach(b => b.onclick = () => { const e = S.coll[b.dataset.mover]; if (e) openCard(e, e.finish, e.binder); });
   const bn = $("#bkNow"); if (bn) { bn.onclick = () => { backupNow(); renderColl(); }; $("#bkSync").onclick = syncSheet; $("#bkLater").onclick = () => { S.meta.backupSnooze = Date.now() + 7 * 864e5; save(); renderColl(); }; }
   const mp = $("#mvPer"); if (mp) mp.onclick = e => { const b = e.target.closest("button"); if (!b) return; S.meta.moversPeriod = +b.dataset.p; save(); renderColl(); };
@@ -1079,7 +1228,7 @@ function drawCollList() {
   const selBar = !cv.select ? "" : `<div class="box selbar">
       <div class="row wrap"><b class="grow">${cv.sel.size ? `${cv.sel.size} selected (${nSel} card${nSel === 1 ? "" : "s"})` : "Tap cards to select them"}</b>
         <button class="btn sm ghost" id="sAll">Select all ${shown.length}</button>${cv.sel.size ? `<button class="btn sm ghost" id="sNone">Clear</button>` : ""}</div>
-      ${cv.sel.size ? `<div class="row wrap"><select id="sBin" class="grow" aria-label="Move selected to">${binderOptions(cv.binder !== "all" ? cv.binder : defaultBinder())}</select><button class="btn sm primary" id="sMove">Move</button><button class="btn sm danger" id="sDel">Remove</button></div>
+      ${cv.sel.size ? `<div class="row wrap"><select id="sBin" class="grow" aria-label="Move selected to">${binderOptions(cv.binder !== "all" ? cv.binder : defaultBinder())}</select><button class="btn sm primary" id="sMove">Move</button><button class="btn sm" id="sAlert">Price alert</button><button class="btn sm danger" id="sDel">Remove</button></div>
       <div class="row" id="sDelC" hidden><span class="grow small">Remove ${nSel} cards from your collection?</span><button class="btn sm danger" id="sDelY">Remove</button><button class="btn sm ghost" id="sDelN">Keep</button></div>` : ""}</div>`;
   el.innerHTML = `${selBar}<div class="list">${shown.map(([k, e]) => { const c = phChange(e), on = cv.sel.has(k); return `${dayHead(e)}
     <div class="item ${cv.select ? "selectable" : ""} ${on ? "picked" : ""}">${cv.select ? `<span class="check" aria-hidden="true">${on ? "✓" : ""}</span>` : `<img loading="lazy" src="${esc(e.img)}" alt="">`}
@@ -1095,6 +1244,7 @@ function drawCollList() {
     const keys = shown.map(([k]) => k), redraw = () => drawCollList();
     $("#sAll").onclick = () => { keys.forEach(k => cv.sel.add(k)); redraw(); };
     const sn = $("#sNone"); if (sn) sn.onclick = () => { cv.sel.clear(); redraw(); };
+    const sa = $("#sAlert"); if (sa) sa.onclick = () => bulkAlertSheet([...cv.sel]);
     const sm = $("#sMove"); if (sm) sm.onclick = () => { const to = $("#sBin").value; let n = 0; for (const k of [...cv.sel]) { const e = S.coll[k]; if (e && e.binder !== to) { n += e.qty; takeCopies(k, e.qty, { binder: to }); } } cv.sel.clear(); save(); renderColl(); toast(`Moved ${n} card${n === 1 ? "" : "s"} to ${S.binders[to].name}`); };
     const sd = $("#sDel"); if (sd) { sd.onclick = () => { $("#sDelC").hidden = false; }; $("#sDelN").onclick = () => { $("#sDelC").hidden = true; };
       $("#sDelY").onclick = () => { const back = {}; for (const k of cv.sel) if (S.coll[k]) { back[k] = S.coll[k]; delete S.coll[k]; } cv.sel.clear(); save(); renderColl(); toast(`Removed ${Object.keys(back).length} entries`, { label: "Undo", fn: () => { Object.assign(S.coll, back); save(); renderColl(); } }); }; }
@@ -1953,7 +2103,7 @@ function setDeckPrinting(d, k, picked) {
   d.updated = Date.now(); save(); return nk;
 }
 function openCard(card, finish, binder, ctx) {
-  let s = isSlim(card) ? card : slim(card), editing = null, addQty = 1;
+  let s = isSlim(card) ? card : slim(card), editing = null, addQty = 1, aEdit = AEDIT_NEXT; AEDIT_NEXT = null;
   let full = card.oracle_text !== undefined || card.card_faces ? card : null;
   let fin = finish && s.finishes.includes(finish) ? finish : s.finishes[0] || "nonfoil";
   let bsel = binder && S.binders[binder] ? binder : (cv.binder !== "all" && S.binders[cv.binder] ? cv.binder : defaultBinder());
@@ -1962,7 +2112,8 @@ function openCard(card, finish, binder, ctx) {
     const decks = Object.values(S.decks);
     const back = backOf(s, full);
     const text = full ? (full.card_faces ? full.card_faces.map(f => `${f.name}  ${f.mana_cost || ""}\n${f.type_line || ""}\n${f.oracle_text || ""}`).join("\n\n") : `${full.type_line || ""}\n${full.oracle_text || ""}`) : s.type;
-    const p = s.prices || {}, ak = pkey(s.id, fin), al = S.alerts[ak], hist = S.ph[ak] || [];
+    const p = s.prices || {}, ak = pkey(s.id, fin), al = normAlert(S.alerts[ak]), hist = S.ph[ak] || [], aCur = alertPrice(ak, { prices: s.prices });
+    const aRule = al && aEdit ? al.rules.find(r => r.id === aEdit) : null; if (!aRule) aEdit = null;
     const legal = s.leg ? Object.keys(FORMATS).filter(f => f !== "casual").map(f => `<span class="chip ${s.leg[f] === "l" ? "ok" : s.leg[f] === "r" ? "acc" : s.leg[f] === "b" ? "warn" : ""}">${FORMATS[f]}${s.leg[f] === "b" ? " banned" : s.leg[f] === "r" ? " restricted" : s.leg[f] === "n" ? " ✕" : ""}</span>`).join("") : "";
     $("#sheetBody").innerHTML = `
       ${back ? `<div class="faces" id="faces"><img src="${esc(s.imgN || s.img)}" alt="${esc(s.name.split(" // ")[0])}, front"><img src="${esc(back.src)}" alt="${esc(s.name.split(" // ")[1] || s.name)}, ${back.flip ? "flipped" : "back"}" class="${back.flip ? "turned" : ""}"></div>
@@ -2005,13 +2156,15 @@ function openCard(card, finish, binder, ctx) {
           <span class="stepper"><button id="qDec" aria-label="Fewer">−</button><span class="num" id="qN">${addQty}</span><button id="qInc" aria-label="More">+</button></span>
           <button class="btn sm primary" id="cPlus">Add ${addQty} · ${esc(s.set.toUpperCase())} #${esc(s.num)}${fin !== "nonfoil" ? " " + fin : ""}</button></div>
       </div>
-      <div class="box ${al && al.hitAt ? "alert" : ""}" style="margin-top:10px">
-        <span class="label">Price alert ${fin !== "nonfoil" ? "(" + fin + ")" : ""}</span>
-        ${al && al.hitAt ? `<span class="small gold">Hit ${money(al.hitPrice)} on ${new Date(al.hitAt).toLocaleDateString()}. Save again to keep watching.</span>` : ""}
-        <div class="row"><label class="grow small">Tell me if it drops to<input type="number" id="aBelow" inputmode="decimal" step="0.01" min="0" placeholder="$" value="${al && al.below != null ? al.below : ""}"></label>
-          <label class="grow small">or rises to<input type="number" id="aAbove" inputmode="decimal" step="0.01" min="0" placeholder="$" value="${al && al.above != null ? al.above : ""}"></label></div>
-        <div class="row"><button class="btn sm" id="aSave">${al ? "Update alert" : "Set alert"}</button>${al ? `<button class="btn sm ghost" id="aClear">Remove</button>` : ""}
-          <span class="small muted grow">Checked when prices update (daily).</span></div>
+      <div class="box ${al && al.log.some(l => !l.seen) ? "alert" : ""}" style="margin-top:10px" id="alBox">
+        <div class="row"><span class="label grow">Price alerts ${fin !== "nonfoil" ? "(" + esc(fin) + ")" : ""}</span><span class="small num">${aCur != null ? "Now " + money(aCur) : `<span class="muted">No price yet</span>`}</span></div>
+        ${al && al.rules.length ? al.rules.map(r => `<div class="kv"><span class="grow small ${r.on ? "" : "muted"}">${esc(ruleText(r))} <span class="muted">· ${ruleStatus(r)}</span></span>
+          <button class="btn sm ghost" data-ced="${esc(r.id)}">Edit</button><button class="btn sm ghost" data-con="${esc(r.id)}">${r.on ? "Pause" : "Resume"}</button><button class="btn sm ghost" data-cdel="${esc(r.id)}" aria-label="Delete alert">✕</button></div>`).join("") : ""}
+        ${aRule ? `<span class="small"><b>Editing:</b> ${esc(ruleText(aRule))}</span>` : ""}
+        ${ruleFormHTML(aRule)}
+        <div class="row"><button class="btn sm" id="aSave">${aRule ? "Save changes" : "Add alert"}</button>${aRule ? `<button class="btn sm ghost" id="aCancel">Cancel</button>` : ""}<button class="linkbtn small" id="aAll" style="margin-left:auto">All alerts</button></div>
+        <span class="small muted">${alertSrcLine()}. Checked when prices update, about once a day.</span>
+        ${al && al.log.length ? `<span class="small muted">Triggered: ${al.log.slice(-3).reverse().map(l => `${esc(new Date(l.at).toLocaleDateString())} at ${money(l.price)} (${esc(l.text || "")})`).join(" · ")}</span>` : ""}
       </div>
       <div class="box" style="margin-top:10px">
         <span class="label">Add to a deck</span>
@@ -2047,13 +2200,23 @@ function openCard(card, finish, binder, ctx) {
     $("#cPlus").onclick = () => bump(addQty); $("#cMinus").onclick = () => bump(-1);
     $("#qInc").onclick = () => { addQty = Math.min(99, addQty + 1); draw(); }; $("#qDec").onclick = () => { addQty = Math.max(1, addQty - 1); draw(); };
     $("#cPickPr").onclick = () => showPrints(s, picked => { s = slim(picked); full = picked; fin = s.finishes.includes(fin) ? fin : s.finishes[0]; draw(); }, $("#cPickBox"));
+    wireRuleForm();
     $("#aSave").onclick = () => {
-      const b = parseFloat($("#aBelow").value), a = parseFloat($("#aAbove").value);
-      if (isNaN(b) && isNaN(a)) { toast("Enter a price to watch for"); return; }
-      S.alerts[ak] = { name: s.name, img: s.img, prices: s.prices, below: isNaN(b) ? null : b, above: isNaN(a) ? null : a };
-      save(); draw(); toast("Alert saved");
+      const x = readRule(); if (x.err) return toast(x.err);
+      const r = bindRule(x.rule, aCur); if (!r) return toast("This card has no price yet, so a % change has nothing to start from");
+      const a = alertRecord(ak, s);
+      const i = aEdit ? a.rules.findIndex(q => q.id === aEdit) : -1;
+      if (i >= 0) { r.id = aEdit; r.on = a.rules[i].on; a.rules[i] = r; } else a.rules.push(r);
+      aEdit = null; save(); draw();
+      toast(r.armed || aCur == null ? (i >= 0 ? "Alert updated" : "Alert added") : `Saved. It's already ${money(aCur)}, so it will alert the next time it gets there after moving back.`);
     };
-    const ac = $("#aClear"); if (ac) ac.onclick = () => { delete S.alerts[ak]; save(); draw(); toast("Alert removed"); };
+    const acn = $("#aCancel"); if (acn) acn.onclick = () => { aEdit = null; draw(); };
+    $("#aAll").onclick = () => { closeSheet(); alertsSheet(); };
+    const box = $("#alBox");
+    box.querySelectorAll("[data-ced]").forEach(b => b.onclick = () => { aEdit = b.dataset.ced; draw(); });
+    box.querySelectorAll("[data-con]").forEach(b => b.onclick = () => { const r = al.rules.find(x => x.id === b.dataset.con); if (!r) return; r.on = !r.on; if (r.on) armNow(r, aCur); al.updated = Date.now(); save(); draw(); });
+    box.querySelectorAll("[data-cdel]").forEach(b => b.onclick = () => { const i = al.rules.findIndex(x => x.id === b.dataset.cdel); if (i < 0) return; al.rules.splice(i, 1); al.updated = Date.now();
+      if (!al.rules.length && !al.log.length) delete S.alerts[ak]; if (aEdit === b.dataset.cdel) aEdit = null; save(); draw(); toast("Alert deleted"); });
     if (decks.length) {
       const add = side => { const d = S.decks[$("#dSel").value]; addToDeck(d, s, 1, side); toast(`Added to ${d.name}${side ? " sideboard" : ""}`); };
       $("#dMain").onclick = () => add(false); $("#dSide").onclick = () => add(true);
