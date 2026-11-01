@@ -1,0 +1,23 @@
+const { JSDOM } = require("jsdom"); const fs = require("fs"); const { IDBFactory } = require("fake-indexeddb");
+const html = fs.readFileSync(require("path").join(__dirname, "../../index.html"), "utf8").replace(/<script src=[^>]+><\/script>/, "").replace(/<link[^>]+>/g, "");
+const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exitCode = 1; };
+(async () => {
+  const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: "https://x.github.io/" }); const w = dom.window; w.scrollTo = () => {}; w.indexedDB = new IDBFactory();
+  w.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) }); w.URL.createObjectURL = () => "blob:x"; w.URL.revokeObjectURL = () => {};
+  w.eval(fs.readFileSync(require("path").join(__dirname, "../.build/app.js"), "utf8") + ";window.T={S:()=>S,addToColl,slim,go,renderColl,setSyncCfg};");
+  await new Promise(r => setTimeout(r, 300));
+  const T = w.T, S = T.S(), $ = q => w.document.querySelector(q);
+  for (let i = 0; i < 12; i++) T.addToColl(T.slim({ id: "c" + i, oracle_id: "o" + i, name: "Card " + i, set: "cmm", set_name: "CMM", collector_number: String(i), rarity: "rare", type_line: "Artifact", cmc: 1, mana_cost: "", colors: [], color_identity: [], prices: { usd: "1" }, finishes: ["nonfoil"], legalities: {}, image_uris: { small: "s", normal: "n" } }), "nonfoil", 1, "main");
+  S.meta.firstUse = Date.now() - 3 * 864e5; T.go("coll");
+  ok(!$("#bkNudge"), "a new user (3 days) isn't nagged");
+  S.meta.firstUse = Date.now() - 20 * 864e5; T.renderColl();
+  ok($("#bkNudge") && /haven't made a backup yet/.test($("#bkNudge").textContent), "after 2 weeks with no backup and no sync: a reminder with Back up now / Turn on Sync / later");
+  $("#bkNow").click(); await new Promise(r => setTimeout(r, 50));
+  ok(!$("#bkNudge") && S.meta.backupAt > Date.now() - 5000, "Back up now saves the file and the reminder goes away");
+  S.meta.backupAt = Date.now() - 15 * 864e5; T.renderColl();
+  ok(/Last backup 15 days ago/.test($("#bkNudge").textContent), "comes back 2 weeks after the last backup");
+  $("#bkLater").click(); await new Promise(r => setTimeout(r, 20));
+  ok(!$("#bkNudge"), "Remind me in a week hides it");
+  S.meta.backupSnooze = 0; T.setSyncCfg({ token: "t", gist: "g", login: "me" }); T.renderColl();
+  ok(!$("#bkNudge"), "never shown to people using Sync");
+})();

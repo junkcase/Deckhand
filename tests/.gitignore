@@ -1,0 +1,13 @@
+node_modules/
+.build/
+app.html
+app_real.html
+*.png
+crop_*
+gbox_*
+shot_*
+grid_*.jpg
+cards.jpg
+*.json
+!package.json
+!package-lock.json

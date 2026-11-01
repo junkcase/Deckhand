@@ -1,0 +1,35 @@
+const { JSDOM } = require("jsdom"); const fs = require("fs");
+const html = fs.readFileSync(require("path").join(__dirname, "../../index.html"), "utf8").replace(/<script src=[^>]+><\/script>/, "").replace(/<link[^>]+>/g, "");
+const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: "https://x.github.io/" }); const w = dom.window; w.scrollTo = () => {};
+w.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
+let fakeNow = new Date("2026-10-30T09:58:00").getTime();
+const RealDate = w.Date; w.Date = class extends RealDate { constructor(...a) { super(...(a.length ? a : [fakeNow])); } static now() { return fakeNow; } };
+w.eval(fs.readFileSync(require("path").join(__dirname, "../.build/app.js"), "utf8") + ";window.T={S:()=>S,sc,setMatch,go,cv,renderColl,openCard,slim,moveEntry};");
+const T = w.T, $ = s => w.document.querySelector(s);
+const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exitCode = 1; };
+const mk = (id, name) => T.slim({ id, oracle_id: "o" + id, name, set: "fdn", set_name: "Foundations", collector_number: id, rarity: "rare", type_line: "Creature", prices: { usd: "1.00" }, finishes: ["nonfoil"], image_uris: { small: "s", normal: "n" } });
+T.go("scan");
+const scanAt = (when, card) => { fakeNow = new Date(when).getTime(); T.sc.mode = "any"; T.setMatch(card, true); };
+scanAt("2026-10-27T15:10:00", mk("1", "Sol Ring"));
+scanAt("2026-10-29T20:05:00", mk("2", "Lightning Bolt"));
+scanAt("2026-10-30T09:41:00", mk("3", "Counterspell"));
+scanAt("2026-10-30T09:57:00", mk("1", "Sol Ring"));        // same card again today
+fakeNow = new Date("2026-10-30T10:00:00").getTime();
+const sol = Object.values(T.S().coll).find(e => e.name === "Sol Ring");
+ok(sol.qty === 2 && sol.scans === 2 && new Date(sol.firstScanned).getDate() === 27 && new Date(sol.scanned).getDate() === 30, "rescanning keeps first and last scan date and counts scans");
+ok(T.sc.items.every(x => x.at), "each scan in this session has a time");
+ok(/9:57/.test($("#scSession").textContent), "scan list shows the time: " + $("#scSession").textContent.match(/\d+:\d+\s?[AP]M/g).join(", "));
+T.go("coll"); T.cv.sort = "scanned"; T.renderColl();
+const heads = [...w.document.querySelectorAll("#clist .group-h")].map(h => h.textContent.replace(/\s+/g, " ").trim());
+ok(heads.length === 2 && heads[0].startsWith("Today") && heads[1].startsWith("Yesterday"), "grouped by day: " + heads.join(" | "));
+const names = [...w.document.querySelectorAll("#clist .name")].map(n => n.textContent);
+ok(names.join(",") === "Sol Ring,Counterspell,Lightning Bolt", "newest scan first: " + names.join(", "));
+T.cv.sort = "value"; T.renderColl();
+const lab = [...w.document.querySelectorAll("#clist .scanned")].map(n => n.textContent);
+ok(lab.some(t => /Scanned today 9:57/.test(t)) && lab.some(t => /Scanned yesterday 8:05/.test(t)), "list shows 'Scanned today…' / 'yesterday…': " + lab.join(" | "));
+T.openCard(sol, "nonfoil", sol.binder);
+const sheet = $("#sheetBody").textContent.replace(/\s+/g, " ");
+ok(/Last scanned today 9:57/.test(sheet) && /first Tue, Oct 27/.test(sheet) && /2 scans/.test(sheet), "card screen: " + sheet.match(/Last scanned[^·]+·[^·]+·[^·]+scans/)[0]);
+// merge via binder move keeps the newest date
+const k = Object.keys(T.S().coll).find(k => T.S().coll[k].name === "Lightning Bolt"); T.moveEntry(k, "trade");
+ok(T.S().coll[Object.keys(T.S().coll).find(k => T.S().coll[k].name === "Lightning Bolt")].scanned, "moving to another binder keeps the scan date");

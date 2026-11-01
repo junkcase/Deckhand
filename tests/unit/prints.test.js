@@ -1,0 +1,32 @@
+const { JSDOM } = require("jsdom"); const fs = require("fs"); const { IDBFactory } = require("fake-indexeddb");
+const html = fs.readFileSync(require("path").join(__dirname, "../../index.html"), "utf8").replace(/<script src=[^>]+><\/script>/, "").replace(/<link[^>]+>/g, "");
+const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exitCode = 1; };
+const P = (id, set, set_name, num, year, rarity, usd, foil, extra = {}) => Object.assign({ id, oracle_id: "o-sol", name: "Sol Ring", set, set_name, collector_number: num, released_at: year + "-06-01", rarity, type_line: "Artifact", prices: { usd, usd_foil: foil }, finishes: ["nonfoil", "foil"], image_uris: { small: "s-" + id, normal: "n-" + id }, lang: "en" }, extra);
+const prints = [P("p1", "cmm", "Commander Masters", "410", 2023, "uncommon", "1.20", "4.50"), P("p2", "ltc", "Tales of Middle-earth Commander", "284", 2023, "uncommon", "1.10", null),
+  P("p3", "2ed", "Unlimited Edition", "270", 1993, "uncommon", "180.00", null), P("p4", "sld", "Secret Lair Drop", "1512", 2022, "rare", null, "35.00", { border_color: "borderless" }), P("p5", "c21", "Commander 2021", "263", 2021, "uncommon", "0.90", null, { lang: "ja" })];
+(async () => {
+  const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: "https://x.github.io/" }); const w = dom.window; w.scrollTo = () => {}; w.indexedDB = new IDBFactory();
+  w.fetch = async u => { u = decodeURIComponent(String(u)); const J = j => ({ ok: true, status: 200, json: async () => j });
+    if (u.endsWith("/sets")) return J({ data: prints.map(c => ({ code: c.set, name: c.set_name, released_at: c.released_at, icon_svg_uri: `https://svgs.scryfall.io/sets/${c.set}.svg` })) });
+    if (u.includes("unique=prints")) return J({ data: prints, has_more: false });
+    if (u.includes("card-names")) return J({ data: ["Sol Ring"] });
+    return { ok: false, status: 404, json: async () => ({}) }; };
+  w.eval(fs.readFileSync(require("path").join(__dirname, "../.build/app.js"), "utf8") + ";window.T={showPrints,openSheet,slim,setIcon,loadSets};");
+  await new Promise(r => setTimeout(r, 300));
+  const T = w.T, $ = s => w.document.querySelector(s);
+  T.openSheet(`<div id="printBox"></div>`); let picked = null;
+  await T.showPrints(T.slim(prints[0]), c => picked = c);
+  const tiles = [...w.document.querySelectorAll(".prints button[data-i]")];
+  const t0 = tiles[0], sym = t0.querySelector(".sym");
+  ok(tiles.length === 5, "all 5 printings shown");
+  ok(sym && /svgs\.scryfall\.io\/sets\/cmm\.svg/.test(sym.getAttribute("style")) && sym.dataset.r === "uncommon", "each printing shows its set symbol, coloured by rarity (CMM, uncommon)");
+  ok(/CMM/.test(t0.textContent) && /#410/.test(t0.textContent) && /Commander Masters/.test(t0.textContent) && /2023/.test(t0.textContent) && /\$1\.20/.test(t0.textContent) && /F \$4\.50/.test(t0.textContent), "set code, number, set name, year, normal and foil price: " + t0.textContent.replace(/\s+/g, " ").trim());
+  ok(t0.getAttribute("aria-pressed") === "true", "the current pick is outlined");
+  ok(/borderless/.test(tiles[3].textContent) && /\$35\.00 foil/.test(tiles[3].textContent), "special versions labelled (borderless, foil-only price)");
+  ok(/JA/.test(tiles[4].textContent), "non-English printing labelled");
+  const q = $("#prQ"); q.value = "unlim"; q.dispatchEvent(new w.Event("input"));
+  const left = [...w.document.querySelectorAll(".prints button[data-i]")];
+  ok(left.length === 1 && /Unlimited Edition/.test(left[0].textContent), "filter box narrows to one set");
+  left[0].click(); ok(picked && picked.id === "p3", "tapping a printing picks it");
+  ok(/sym/.test(T.setIcon("sld", "rare")) && /data-r="rare"/.test(T.setIcon("sld", "rare")), "set symbol helper for lists");
+})();

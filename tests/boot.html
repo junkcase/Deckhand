@@ -1,0 +1,17 @@
+<script src="node_modules/tesseract.js/dist/tesseract.min.js"></script>
+<script src="names.js"></script>
+<script>
+(() => {
+  const mk = Tesseract.createWorker;
+  Tesseract.createWorker = (l, o, opts = {}) => mk(l, o, Object.assign({}, opts, { workerPath: "node_modules/tesseract.js/dist/worker.min.js", corePath: "node_modules/tesseract.js-core", langPath: "node_modules/@tesseract.js-data/eng/4.0.0_best_int", cacheMethod: "none" }));
+  const real = window.fetch.bind(window);
+  window.fetch = async (u, o) => { u = String(u); const J = j => new Response(JSON.stringify(j), { status: 200, headers: { "Content-Type": "application/json" } });
+    if (u.includes("api.scryfall.com")) {
+      if (u.includes("card-names")) return J({ data: BENCH_NAMES });
+      if (u.includes("/cards/collection")) { const ids = JSON.parse(o.body).identifiers; return J({ data: ids.map(i => window.BENCH_CARD(i)).filter(Boolean) }); }
+      if (u.includes("/sets")) return J({ data: [] });
+      return new Response("{}", { status: 404 });
+    }
+    return real(u, o); };
+})();
+</script>

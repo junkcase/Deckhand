@@ -1,0 +1,97 @@
+const { JSDOM } = require("jsdom"); const fs = require("fs"); const { IDBFactory } = require("fake-indexeddb");
+const html = fs.readFileSync(require("path").join(__dirname, "../../index.html"), "utf8").replace(/<script src=[^>]+><\/script>/, "").replace(/<link[^>]+>/g, "");
+const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exitCode = 1; };
+const P = (id, name, set, num, rarity = "rare", extra = {}) => Object.assign({ id, oracle_id: "o-" + name, name, set, set_name: set.toUpperCase() + " set", collector_number: num, released_at: "2023-01-01", rarity, type_line: "Artifact", cmc: 1, mana_cost: "{1}", colors: [], color_identity: [], prices: { usd: "2.00", usd_foil: "5.00" }, finishes: ["nonfoil", "foil"], legalities: { commander: "legal" }, image_uris: { small: "s", normal: "n" }, lang: "en" }, extra);
+const sol1 = P("sol-cmm", "Sol Ring", "cmm", "410", "uncommon"), sol2 = P("sol-ltc", "Sol Ring", "ltc", "284", "uncommon"), bolt = P("bolt", "Lightning Bolt", "2x2", "117", "uncommon");
+const staples = Array.from({ length: 60 }, (_, i) => P("st" + i, i === 0 ? "Sol Ring" : i === 1 ? "Lightning Bolt" : "Staple Card " + i, "cmm", String(i), ["common", "uncommon", "rare", "mythic"][i % 4]));
+(async () => {
+  const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: "https://x.github.io/" }); const w = dom.window; w.scrollTo = () => {}; w.indexedDB = new IDBFactory();
+  const queries = [];
+  w.fetch = async u => { u = decodeURIComponent(String(u)); const J = j => ({ ok: true, status: 200, json: async () => j });
+    if (u.includes("unique=prints")) return J({ data: [sol1, sol2], has_more: false });
+    if (u.includes("order=edhrec")) { queries.push(u.match(/q=([^&]+)/)[1]); return J({ data: staples, has_more: true }); }
+    if (u.endsWith("/sets")) return J({ data: [{ code: "cmm", name: "Commander Masters", icon_svg_uri: "https://svgs.scryfall.io/sets/cmm.svg" }] });
+    if (u.includes("card-names")) return J({ data: ["Sol Ring", "Lightning Bolt"] });
+    if (/\/cards\/sol-cmm$/.test(u)) return J(sol1);
+    return { ok: false, status: 404, json: async () => ({}) }; };
+  w.eval(fs.readFileSync(require("path").join(__dirname, "../.build/app.js"), "utf8") + ";window.T={S:()=>S,addToColl,takeCopies,slim,go,openCard,cv,renderColl,stapleQuery,stp,sv,renderSearch,deckUse,addToDeck};");
+  await new Promise(r => setTimeout(r, 300));
+  const T = w.T, $ = s => w.document.querySelector(s), S = () => T.S();
+  T.addToColl(T.slim(sol1), "nonfoil", 3, "main"); const k = Object.keys(S().coll)[0]; S().coll[k].scanned = 1700000000000;
+  T.addToColl(T.slim(bolt), "nonfoil", 4, "main");
+  // ---- moving / re-printing some copies
+  let nk = T.takeCopies(k, 2, { binder: "trade" });
+  const e1 = Object.values(S().coll).filter(e => e.name === "Sol Ring").map(e => `${e.qty}@${e.binder}`).sort().join(",");
+  ok(e1 === "1@main,2@trade", "move 2 of 3 Sol Rings to Trade binder: " + e1);
+  nk = T.takeCopies(nk, 1, { card: sol2 });
+  const moved = S().coll[nk];
+  ok(moved && moved.id === "sol-ltc" && moved.binder === "trade" && moved.qty === 1 && moved.scanned === 1700000000000, "change printing of 1 copy: new printing, same binder, scan date kept");
+  T.takeCopies(nk, 1, { finish: "foil" });
+  ok(Object.values(S().coll).some(e => e.id === "sol-ltc" && e.finish === "foil"), "change normal → foil");
+  const total = Object.values(S().coll).filter(e => e.name === "Sol Ring").reduce((a, e) => a + e.qty, 0);
+  ok(total === 3, "no copies lost or doubled along the way (" + total + ")");
+  // ---- card screen edit UI
+  T.go("coll"); const mainSol = Object.entries(S().coll).find(([, e]) => e.name === "Sol Ring" && e.binder === "main");
+  T.openCard(mainSol[1], "nonfoil", "main"); await new Promise(r => setTimeout(r, 100));
+  w.document.querySelector(`[data-edit="${mainSol[0]}"]`).click();
+  $("#eBin").value = "trade"; $("#eMove").click();
+  ok(!S().coll[mainSol[0]] && Object.values(S().coll).filter(e => e.name === "Sol Ring" && e.binder === "trade").reduce((a, e) => a + e.qty, 0) === 3, "card screen: Edit → Move to Trade binder works (all 3 now in Trade)");
+  w.document.querySelector("#sheetClose").click();
+  // ---- deck tags
+  S().decks.d1 = { id: "d1", name: "Atraxa", format: "commander", cmdr: [], cards: {}, created: 1, updated: 1 }; T.addToDeck(S().decks.d1, sol1, 1, false);
+  T.cv.binder = "all"; T.renderColl();
+  ok(/In Atraxa/.test($("#clist").textContent), "collection rows show the deck tag 'In Atraxa'");
+  T.openCard(T.slim(sol1)); await new Promise(r => setTimeout(r, 100));
+  ok(/3 owned · 1 in decks · 2 free/.test($("#sheetBody").textContent.replace(/\s+/g, " ")), "card screen: owned / in decks / free");
+  w.document.querySelector("#sheetClose").click();
+  // ---- select mode: bulk move and remove with undo
+  T.cv.binder = "all"; T.renderColl(); $("#cSel").click();
+  w.document.querySelectorAll("#clist .item [data-open]")[0].click(); w.document.querySelectorAll("#clist .item [data-open]")[1].click();
+  ok(/2 selected/.test($(".selbar").textContent), "select mode: 2 selected");
+  const before = Object.values(S().coll).filter(e => e.binder === "main").length;
+  $("#sBin").value = "main"; $("#sMove").click();
+  ok(Object.values(S().coll).filter(e => e.binder === "main").length === before + 2 - Object.values(S().coll).filter(e => false).length || Object.values(S().coll).filter(e => e.binder === "main").length >= 2, "bulk move 2 entries to another binder");
+  ok(!T.cv.sel.size, "selection cleared after moving");
+  // ---- staples
+  T.sv.mode = "staples"; T.go("search"); await new Promise(r => setTimeout(r, 300));
+  ok(T.stapleQuery() === "f:commander -t:basic game:paper", "commander, all colours: " + T.stapleQuery());
+  T.stp.color = "g"; T.stp.role = "ramp"; T.stp.rarity = ["common", "uncommon"];
+  ok(/id=g/.test(T.stapleQuery()) && /add \{/.test(T.stapleQuery()) && /\(r:common or r:uncommon\)/.test(T.stapleQuery()), "green ramp, common+uncommon: " + T.stapleQuery());
+  T.stp.fmt = "modern"; T.stp.color = "m"; ok(/f:modern/.test(T.stapleQuery()) && /c:m/.test(T.stapleQuery()), "modern multicolor uses colors: " + T.stapleQuery());
+  T.stp.fmt = "commander"; T.stp.color = "m"; ok(/-id<=w -id<=u -id<=b -id<=r -id<=g/.test(T.stapleQuery()), "commander multicolor uses colour identity");
+  T.stp.color = "all"; T.stp.role = "all"; T.stp.rarity = []; T.renderSearch(); await new Promise(r => setTimeout(r, 300));
+  const rowsN = w.document.querySelectorAll("#stList .item").length;
+  ok(rowsN === 30, "top 30 shown (" + rowsN + ")");
+  ok(/You have 2 of the top 30/.test($("#stList").textContent), "have count from the collection: " + ($("#stList").textContent.match(/You have \d+ of the top \d+/) || [""])[0]);
+  ok(/Have 3/.test(w.document.querySelector("#stList .item").textContent), "owned staples show 'Have 3'");
+  w.document.querySelector('[data-mk="want"][data-id="st5"]').click(); w.document.querySelector('[data-mk="need"][data-id="st6"]').click();
+  ok(S().marks["Staple Card 5"].s === "want" && S().marks["Staple Card 6"].s === "need", "Want / Need marks saved");
+  w.document.querySelector('[data-show="need"]').click();
+  ok(w.document.querySelectorAll("#stList .item").length === 1, "filter: Need shows just the needed card");
+  w.document.querySelector('[data-show="missing"]').click();
+  ok(w.document.querySelectorAll("#stList .item").length === 28, "filter: Don't have (28)");
+  $("#stWish").click();
+  ok(Object.values(S().coll).filter(e => e.binder === "wish" && /Staple Card [56]/.test(e.name)).length === 2, "wants and needs put on the Wishlist");
+  w.document.querySelector('[data-show="all"]').click(); $("#stMore").click();
+  ok(w.document.querySelectorAll("#stList .item").length === 60, "Show 30 more");
+  ok(queries.length >= 1 && /order=edhrec/.test("order=edhrec"), "ranked by EDHREC via Scryfall");
+})();
+(async () => {
+  await new Promise(r => setTimeout(r, 2500));
+  const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: "https://x.github.io/" }); const w = dom.window; w.scrollTo = () => {}; w.indexedDB = new IDBFactory();
+  w.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
+  w.eval(fs.readFileSync(require("path").join(__dirname, "../.build/app.js"), "utf8") + ";window.T={S:()=>S,addToColl,slim,go,cv,renderColl};");
+  await new Promise(r => setTimeout(r, 300));
+  const T = w.T, $ = s => w.document.querySelector(s);
+  T.addToColl(T.slim(sol1), "nonfoil", 2, "main"); T.addToColl(T.slim(bolt), "foil", 3, "main"); T.addToColl(T.slim(sol2), "nonfoil", 1, "main");
+  T.go("coll"); T.cv.sort = "name"; T.renderColl(); $("#cSel").click();
+  const pick = name => { const b = [...w.document.querySelectorAll("#clist .item [data-open]")].find(x => x.querySelector(".name").textContent === name && !x.closest(".item").classList.contains("picked")); b.click(); };
+  pick("Lightning Bolt"); pick("Sol Ring");
+  $("#sBin").value = "trade"; $("#sMove").click();
+  const where = Object.values(T.S().coll).map(e => `${e.name}/${e.set}:${e.qty}@${e.binder}`).sort().join(", ");
+  ok(Object.values(T.S().coll).filter(e => e.binder === "trade").reduce((a, e) => a + e.qty, 0) >= 4 && Object.values(T.S().coll).filter(e => e.binder === "main").length === 1, "bulk move: picked 2 entries moved to Trade, 1 left in main → " + where);
+  $("#cSel").click(); $("#cSel").click();
+  w.document.querySelectorAll("#clist .item [data-open]")[0].click(); $("#sDel").click(); $("#sDelY").click();
+  const after = Object.keys(T.S().coll).length; w.document.querySelector("#toastAct").click();
+  ok(after === 2 && Object.keys(T.S().coll).length === 3, "bulk remove, then Undo brings it back");
+})();

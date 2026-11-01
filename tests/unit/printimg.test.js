@@ -1,0 +1,25 @@
+const { JSDOM } = require("jsdom"); const fs = require("fs"); const { IDBFactory } = require("fake-indexeddb");
+const html = fs.readFileSync(require("path").join(__dirname, "../../index.html"), "utf8").replace(/<script src=[^>]+><\/script>/, "").replace(/<link[^>]+>/g, "");
+const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exitCode = 1; };
+const P = (id, set, num, usd) => ({ id, oracle_id: "o-sol", name: "Sol Ring", set, set_name: set.toUpperCase() + " set", collector_number: num, released_at: "2023-01-0" + num, rarity: "uncommon", type_line: "Artifact", cmc: 1, mana_cost: "{1}", colors: [], color_identity: [], prices: { usd }, finishes: ["nonfoil", "foil"], legalities: { commander: "legal" }, image_uris: { small: "small-" + id, normal: "normal-" + id } });
+const a = P("sol-cmm", "cmm", "1", "1.50"), b = P("sol-ltc", "ltc", "2", "4.00");
+(async () => {
+  const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: "https://x.github.io/" }); const w = dom.window; w.scrollTo = () => {}; w.indexedDB = new IDBFactory();
+  w.fetch = async u => { u = decodeURIComponent(String(u)); const J = j => ({ ok: true, status: 200, json: async () => j });
+    if (u.includes("unique=prints")) return J({ data: [b, a], has_more: false });
+    if (/\/cards\/sol-cmm$/.test(u)) return J(a); if (/\/cards\/sol-ltc$/.test(u)) return J(b);
+    return { ok: false, status: 404, json: async () => ({}) }; };
+  w.eval(fs.readFileSync(require("path").join(__dirname, "../.build/app.js"), "utf8") + ";window.T={S:()=>S,addToColl,slim,go,openCard,closeSheet};");
+  await new Promise(r => setTimeout(r, 300));
+  const T = w.T, $ = s => w.document.querySelector(s), wait = ms => new Promise(r => setTimeout(r, ms));
+  T.addToColl(T.slim(a), "nonfoil", 2, "main"); T.go("coll");
+  const k = Object.keys(T.S().coll)[0];
+  T.openCard(T.S().coll[k], "nonfoil", "main"); await wait(300);
+  ok($("#bigImg").getAttribute("src") === "normal-sol-cmm", "card screen shows the CMM printing");
+  $(`[data-edit="${k}"]`).click(); $("#eN").value = "2"; $("#ePrint").click(); await wait(500);
+  const tile = [...w.document.querySelectorAll(".prints button[data-i]")].find(t => /LTC/i.test(t.textContent)); tile.click(); await wait(400);
+  ok($("#bigImg").getAttribute("src") === "normal-sol-ltc", "after changing the printing, the picture is the new printing: " + $("#bigImg").getAttribute("src"));
+  const txt = $("#sheetBody").textContent;
+  ok(/LTC/.test(txt) && /\$4\.00/.test(txt), "set and price on the screen are the new printing's too");
+  ok(Object.values(T.S().coll).map(e => e.id + "×" + e.qty).join() === "sol-ltc×2" && Object.values(T.S().coll)[0].img === "small-sol-ltc", "the saved copies are the new printing (list picture too)");
+})();

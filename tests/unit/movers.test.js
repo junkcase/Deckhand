@@ -1,0 +1,41 @@
+const { JSDOM } = require("jsdom"); const fs = require("fs"); const { IDBFactory } = require("fake-indexeddb");
+const html = fs.readFileSync(require("path").join(__dirname, "../../index.html"), "utf8").replace(/<script src=[^>]+><\/script>/, "").replace(/<link[^>]+>/g, "");
+const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exitCode = 1; };
+const P = (id, name, usd) => ({ id, oracle_id: "o" + id, name, set: "cmm", set_name: "CMM", collector_number: "1", rarity: "rare", type_line: "Artifact", cmc: 1, mana_cost: "{1}", colors: [], color_identity: [], prices: { usd }, finishes: ["nonfoil"], legalities: {}, image_uris: { small: "s", normal: "n" } });
+(async () => {
+  const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: "https://x.github.io/" }); const w = dom.window; w.scrollTo = () => {}; w.indexedDB = new IDBFactory();
+  w.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
+  w.eval(fs.readFileSync(require("path").join(__dirname, "../.build/app.js"), "utf8") + ";window.T={S:()=>S,addToColl,slim,go,renderColl,cv,today,pkey};");
+  await new Promise(r => setTimeout(r, 300));
+  const T = w.T, S = T.S(), t = T.today(), $ = q => w.document.querySelector(q);
+  const add = (c, qty, bin, hist) => { T.addToColl(T.slim(c), "nonfoil", qty, bin); S.ph[T.pkey(c.id, "nonfoil")] = hist.map(([d, v]) => [t - d, v]); };
+  add(P("sol", "Sol Ring", "1.50"), 1, "main", [[10, 1.0], [3, 1.2], [0, 1.5]]);
+  add(P("bolt", "Lightning Bolt", "1.50"), 3, "main", [[8, 2.0], [1, 1.5]]);
+  add(P("cs", "Counterspell", "3.00"), 1, "trade", [[2, 1.0], [0, 3.0]]);
+  add(P("new", "Brand New Card", "5.00"), 1, "main", [[2, 4.0], [0, 5.0]]);
+  add(P("crypt", "Mana Crypt", "180.00"), 1, "wish", [[9, 200], [0, 180]]);
+  S.meta.pricedAt = Date.now();
+  const txt = () => $("#movers").textContent.replace(/\s+/g, " ");
+  T.cv.binder = "all"; S.meta.moversPeriod = 1; T.go("coll"); await new Promise(r => setTimeout(r, 50));
+  let m = txt();
+  ok(/Sol Ring CMM \$1\.50 ?\+\$0\.30 \+25%/.test(m) && /Counterspell CMM \$3\.00 ?\+\$2\.00 \+200%/.test(m) && /Brand New Card/.test(m), "Today, all owned: Sol Ring +$0.30 (+25%), Counterspell +$2.00, Brand New Card +$1.00");
+  ok(!/Lightning Bolt/.test(m) && !/Mana Crypt/.test(m), "unchanged today (Bolt) and wishlist cards (Mana Crypt) aren't listed");
+  ok(/Value up \+\$3\.30 since/.test(m), "total: value up $3.30 today");
+  $("#mvPer [data-p=\"7\"]").click(); await new Promise(r => setTimeout(r, 30)); m = txt();
+  ok(/DownLightning Bolt CMM ×3 \$1\.50 ?−\$0\.50 -25%/.test(m), "This week: Lightning Bolt ×3 down $0.50 each: " + (m.match(/Lightning Bolt[^]*?%/) || [""])[0]);
+  ok(/Sol Ring CMM \$1\.50 ?\+\$0\.50 \+50%/.test(m) && !/Brand New Card/.test(m) && /Value down −\$1\.00/.test(m), "This week: Sol Ring +$0.50, value down $1.00 overall; a card with only 2 days of prices is left out");
+  ok(/since/.test(m) && /\(2 cards with prices from then/.test(m), "says how many cards it could compare");
+  ok(S.meta.moversPeriod === 7, "remembers Today / This week");
+  // per binder
+  T.cv.binder = "trade"; S.meta.moversPeriod = 1; T.renderColl(); m = txt();
+  ok(/Counterspell/.test(m) && !/Sol Ring/.test(m), "Trade binder: only its own cards");
+  T.cv.binder = "wish"; T.renderColl(); m = txt();
+  ok(/Price moves on cards you want/.test(m) && /Mana Crypt/.test(m) && /Cost to buy down/.test(m), "Wishlist: 'Price moves on cards you want', Mana Crypt down $20 (good news)");
+  ok(/Mana Crypt CMM \$180\.00 ?−\$20\.00/.test(m), "…its price dropped today, shown as a drop in the cost to buy");
+  T.cv.binder = "main"; S.ph[T.pkey("sol", "nonfoil")].push([t, 1.5]); T.renderColl();
+  const yest = new Date((t - 1) * 864e5).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+  ok(txt().includes("since " + yest), "the 'since' date is yesterday (" + yest + "), not a day early in US evenings");
+  // not enough history yet
+  T.cv.binder = "main"; for (const k in S.ph) S.ph[k] = [[t, 1]]; S.meta.moversPeriod = 7; T.renderColl(); m = txt();
+  ok(/Weekly movers start once Deckhand has prices from a week ago/.test(m), "not enough history yet: explains when weekly movers start");
+})();
