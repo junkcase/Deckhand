@@ -349,7 +349,7 @@ function idbOpen() {
 async function idbGet(k) { const db = await idbOpen(); return new Promise((res, rej) => { const q = db.transaction("kv").objectStore("kv").get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
 async function idbSet(k, v) { const db = await idbOpen(); return new Promise((res, rej) => { const tx = db.transaction("kv", "readwrite"); tx.objectStore("kv").put(v, k); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error || new Error("aborted")); }); }
 let saveT = null, saving = null, saveWarned = false;
-function save() { clearTimeout(saveT); saveT = setTimeout(flushSave, 250); if (typeof SYNC !== "undefined") { SYNC.dirty = true; scheduleSync(); } }
+function save() { staleIndex(); clearTimeout(saveT); saveT = setTimeout(flushSave, 250); if (typeof SYNC !== "undefined") { SYNC.dirty = true; scheduleSync(); } }
 async function flushSave() {
   clearTimeout(saveT); saveT = null;
   if (idb.ok) {
@@ -623,6 +623,7 @@ function ownBinder() {
 function defaultBinder() { return S.meta.binder && S.binders[S.meta.binder] ? S.meta.binder : ownBinder(); }
 const binderName = id => (S.binders[id] || { name: "Collection" }).name;
 function addToColl(card, finish = "nonfoil", qty = 1, binder, noSave) {
+  staleIndex();
   const s = isSlim(card) ? card : slim(card);
   binder = binder && S.binders[binder] ? binder : defaultBinder();
   if (!s.finishes.includes(finish)) finish = s.finishes[0] || "nonfoil";
@@ -679,13 +680,23 @@ const deckChips = (uses, max = 2) => !uses || !uses.length ? "" : uses.slice(0, 
 // belongs to one deck and copies used elsewhere aren't available.
 const shareCopies = () => !S.settings || S.settings.shareCopies !== false;
 function allocFor(name, deckId) {
-  const own = ownedByName(name); let other = 0; const where = [];
-  for (const d of Object.values(S.decks)) { if (d.id === deckId) continue; let q = 0; for (const c of Object.values(d.cards)) if (c.name === name) q += c.qty; if (q) { other += q; where.push({ id: d.id, name: d.name, qty: q }); } }
-  const need = deckId && S.decks[deckId] ? Object.values(S.decks[deckId].cards).filter(c => c.name === name).reduce((a, c) => a + c.qty, 0) : 0;
+  const X = cardIndex(), own = X.owned.get(name) || 0, per = X.decks.get(name); let other = 0, need = 0; const where = [];
+  if (per) for (const [id, q] of per) { if (id === deckId) { need = q; continue; } const d = S.decks[id]; if (d) { other += q; where.push({ id, name: d.name, qty: q }); } }
   const free = Math.max(0, own - other), usable = shareCopies() ? own : free;
   return { own, other, where, free, need, usable, missing: Math.max(0, need - usable) };
 }
-function ownedByName(name) { let n = 0; for (const k in S.coll) { const e = S.coll[k]; if (e.name === name && !isWish(e.binder)) n += e.qty; } return n; }
+// Copies owned and deck usage by card name, worked out once per change (a 6,000-card collection made
+// per-card scans add up to seconds on a tablet). save() marks it stale.
+const IDX = { v: 0, built: -1, owned: null, decks: null };
+function cardIndex() {
+  if (IDX.built === IDX.v && IDX.owned) return IDX;
+  const owned = new Map(), decks = new Map();
+  for (const k in S.coll) { const e = S.coll[k]; if (!isWish(e.binder)) owned.set(e.name, (owned.get(e.name) || 0) + e.qty); }
+  for (const d of Object.values(S.decks)) for (const c of Object.values(d.cards)) { let m = decks.get(c.name); if (!m) decks.set(c.name, m = new Map()); m.set(d.id, (m.get(d.id) || 0) + c.qty); }
+  IDX.owned = owned; IDX.decks = decks; IDX.built = IDX.v; return IDX;
+}
+const staleIndex = () => { IDX.v++; };
+function ownedByName(name) { return cardIndex().owned.get(name) || 0; }
 function collTotals(filter) {
   let cards = 0, value = 0; const uniq = new Set();
   for (const k in S.coll) {
@@ -829,6 +840,7 @@ function go(t, extra) {
 }
 function setHead(title, sub = "") { $("#viewTitle").textContent = title; $("#viewSub").textContent = sub; }
 function render() {
+  staleIndex();
   if (tab === "coll") renderColl();
   else if (tab === "scan") renderScan();
   else if (tab === "search") renderSearch();
@@ -1078,7 +1090,9 @@ function setSyncCfg(c) { SYNC.cfg = c; try { c ? localStorage.setItem("deckhand.
 const syncEmpty = k => k === "hist" ? [] : k === "trade" ? { give: [], get: [] } : {};
 const pickSync = st => { const o = {}; for (const k of SYNC_KEYS) o[k] = st && st[k] !== undefined ? st[k] : syncEmpty(k); return o; };
 // compare by content, whatever order the fields happen to be in
-const J_ = v => v === undefined ? "" : JSON.stringify(v, (k, x) => x && typeof x === "object" && !Array.isArray(x) ? Object.keys(x).sort().reduce((o, kk) => (o[kk] = x[kk], o), {}) : x);
+// Plain JSON comparison (fast). mergeSync keeps GitHub's key order and reuses unchanged objects, so
+// identical data produces identical text; a rare key-order difference only causes a harmless extra save.
+const J_ = v => v === undefined ? "" : JSON.stringify(v);
 function devName() { const u = navigator.userAgent; return /iPad|Tablet/.test(u) || (/Android/.test(u) && !/Mobile/.test(u)) ? "tablet" : /Android|iPhone|Mobile/.test(u) ? "phone" : "computer"; }
 async function gh(path, opts = {}) {
   const cfg = syncCfg();
@@ -1163,19 +1177,23 @@ async function pushGist(state) {
 // Combine three versions: B = last synced, L = this device, R = GitHub. Card counts merge as changes
 // (R + what this device added or removed since B); everything else takes whichever side changed.
 function mergeSync(B, L, R) {
-  const out = {};
+  // whole sections first: if one side didn't touch a section, the other side's version is the answer
+  const out = {}, fast = {};
+  for (const k of SYNC_KEYS) { const bj = J_(B[k]), lj = J_(L[k]); if (lj === bj) fast[k] = R[k]; else if (J_(R[k]) === bj) fast[k] = L[k]; }
+  const done = r => { for (const k of SYNC_KEYS) if (k in fast) r[k] = fast[k] === undefined ? syncEmpty(k) : fast[k]; return r; };
+  if (Object.keys(fast).length === SYNC_KEYS.length) return done(out);
   const coll = {};
-  for (const k of new Set([...Object.keys(B.coll), ...Object.keys(L.coll), ...Object.keys(R.coll)])) {
+  for (const k of new Set([...Object.keys(R.coll), ...Object.keys(L.coll), ...Object.keys(B.coll)])) {
     const b = B.coll[k], l = L.coll[k], r = R.coll[k], q = (r ? r.qty : 0) + (l ? l.qty : 0) - (b ? b.qty : 0);
     if (q <= 0) continue;
     const src = l && (!b || J_(l) !== J_(b)) ? l : (r || l);
-    const o = Object.assign({}, src); o.qty = q; coll[k] = o;
+    if (src.qty === q) coll[k] = src; else { const o = Object.assign({}, src); o.qty = q; coll[k] = o; }
   }
   out.coll = coll;
   const stamp = x => (x && (x.updated || x.at)) || 0;
   for (const key of ["decks", "binders", "alerts", "marks", "settings", "roles"]) {
     const b = B[key] || {}, l = L[key] || {}, r = R[key] || {}, o = {};
-    for (const k of new Set([...Object.keys(b), ...Object.keys(l), ...Object.keys(r)])) {
+    for (const k of new Set([...Object.keys(r), ...Object.keys(l), ...Object.keys(b)])) {
       const bs = J_(b[k]), ls = J_(l[k]), rs = J_(r[k]); let v;
       if (ls === bs) v = r[k]; else if (rs === bs) v = l[k];
       else if (l[k] === undefined || r[k] === undefined) v = l[k] === undefined ? r[k] : l[k];      // changed on one side, deleted on the other: keep it
@@ -1185,15 +1203,17 @@ function mergeSync(B, L, R) {
     out[key] = o;
   }
   const ph = {};
-  for (const k of new Set([...Object.keys(L.ph), ...Object.keys(R.ph)])) {
-    const m = new Map(); for (const p of [...(R.ph[k] || []), ...(L.ph[k] || [])]) m.set(p[0], p);
+  for (const k of new Set([...Object.keys(R.ph), ...Object.keys(L.ph)])) {
+    const ra = R.ph[k], la = L.ph[k];
+    if (!la || (ra && J_(ra) === J_(la))) { ph[k] = ra; continue; } if (!ra) { ph[k] = la; continue; }
+    const m = new Map(); for (const p of [...ra, ...la]) m.set(p[0], p);
     ph[k] = [...m.values()].sort((a, b) => a[0] < b[0] ? -1 : 1);
   }
   out.ph = ph;
   const hm = new Map(); for (const h of [...R.hist, ...L.hist]) hm.set(h.d, h);
   out.hist = [...hm.values()].sort((a, b) => a.d < b.d ? -1 : 1).slice(-365);
   out.trade = J_(L.trade) === J_(B.trade) ? R.trade : L.trade;
-  return out;
+  return done(out);
 }
 async function syncBase() { if (SYNC.base === undefined) { try { SYNC.base = idb.ok ? (await idbGet("syncBase")) || null : null; } catch (e) { SYNC.base = null; } } return SYNC.base; }
 async function setSyncBase(st) { SYNC.base = { state: JSON.parse(JSON.stringify(st)), at: Date.now() }; if (idb.ok) await idbSet("syncBase", SYNC.base).catch(() => {}); }
@@ -1216,6 +1236,7 @@ async function syncNow(manual) {
     const remote = await readGist();
     if (!remote && !wasDirty && base) { SYNC.at = Date.now(); SYNC.err = ""; return; }            // nothing new anywhere
     const local = pickSync(S);
+    if (!remote && base && SYNC.lastJ && J_(local) === SYNC.lastJ) { SYNC.at = Date.now(); SYNC.err = ""; return; }   // only device settings changed
     if (!base) {                                                                                     // first sync on this device
       const rs = remote && remote.state, lc = syncCount(local) + Object.keys(local.decks).length, rc = rs ? syncCount(rs) + Object.keys(rs.decks).length : 0;
       if (!rs || !rc) { await pushGist(local); await setSyncBase(local); }
@@ -1226,7 +1247,7 @@ async function syncNow(manual) {
       const ms = J_(merged), changedHere = SYNC_KEYS.some(k => J_(merged[k]) !== J_(local[k]));
       if (changedHere) { applySynced(merged); if (remote) { SYNC.from = remote.info.device || ""; toast(`Updated from your ${SYNC.from || "other device"}`, { label: "Undo", fn: undoSync }); } }
       if (ms !== J_(R)) await pushGist(merged);
-      await setSyncBase(merged);
+      await setSyncBase(merged); SYNC.lastJ = ms;
     }
     SYNC.at = Date.now(); SYNC.err = "";
   } catch (e) {
@@ -3034,6 +3055,7 @@ const TYPES = ["Creature", "Planeswalker", "Battle", "Instant", "Sorcery", "Arti
 const typeOf = t => { for (const x of ["Land", "Creature", "Planeswalker", "Battle", "Instant", "Sorcery", "Artifact", "Enchantment"]) if ((t || "").split("//")[0].includes(x)) return x; return "Other"; };
 const DECK_FIELDS = ["id", "oid", "name", "set", "setName", "num", "rarity", "type", "cmc", "mana", "colors", "ci", "img", "imgN", "imgB", "layout", "roles", "prices", "finishes", "uri", "leg", "cap", "basic", "canCmdr", "partner", "text"];
 function addToDeck(d, card, qty, side, noSave) {
+  staleIndex();
   const s = isSlim(card) ? card : slim(card);
   const k = s.id + "|" + (side ? 1 : 0);
   if (d.cards[k]) d.cards[k].qty += qty;
