@@ -1037,7 +1037,104 @@ function render() {
 }
 
 /* ================= COLLECTION ================= */
-const cv = { q: "", sort: "value", binder: "all", select: false, sel: new Set(), fSet: "", fRar: "" };
+const cv = { q: "", sort: "value", binder: "all", select: false, sel: new Set(), f: null, fOpen: false };
+/* Collection filters: the Search tab's filter settings (colors and how to match them, type, rarity, format, mana value,
+   price, set) plus things only your own cards have. Search sends them to Scryfall; here they're checked on this device. */
+const collDefaultF = () => Object.assign(defaultF(), { sub: "", num: "", priceMin: "", fin: [], lang: "", ownMin: "", ownMax: "", availMin: "", asg: "", deck: "" });
+const FIN_L = { nonfoil: "Normal", foil: "Foil", etched: "Etched" };
+const CMODE_L = { incl: "Colors including", exact: "Colors exactly", most: "Colors at most", id: "Color identity within" };
+const fnum = v => v !== "" && v != null && isFinite(parseFloat(v)) ? parseFloat(v) : null;
+const reEsc = t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// one predicate for the whole list, built once per redraw (deck use per card name comes from the shared index)
+function collPred(f) {
+  const X = cardIndex(), T = [];
+  let used = null; const usedOf = n => { if (!used) { used = new Map(); for (const [nm, m] of X.decks) { let t = 0; for (const q of m.values()) t += q; used.set(nm, t); } } return used.get(n) || 0; };
+  if (f.colors.length) { const L = f.colors.filter(c => c !== "C"), m = f.cmode;
+    T.push(e => { const a = (m === "id" ? e.ci : e.colors) || [];
+      if (m === "incl") return L.length ? L.every(c => a.includes(c)) : !a.length;
+      if (m === "exact") return a.length === L.length && L.every(c => a.includes(c));
+      return a.every(c => L.includes(c)); }); }
+  if (f.type) { const re = new RegExp("\\b" + reEsc(f.type) + "\\b", "i"); T.push(e => re.test(e.type || "")); }
+  const words = (f.sub || "").toLowerCase().split(/[\s,]+/).filter(Boolean);
+  if (words.length) T.push(e => { const t = (e.type || "").toLowerCase(); return words.every(w => t.includes(w)); });
+  if (f.rarity.length) T.push(e => f.rarity.includes(rarGroup(e.rarity)));
+  if (f.set) T.push(e => e.set === f.set);
+  const nq = (f.num || "").trim();
+  if (nq) { const r = nq.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+    if (r) { const lo = Math.min(+r[1], +r[2]), hi = Math.max(+r[1], +r[2]); T.push(e => { const n = parseInt(e.num); return n >= lo && n <= hi; }); }
+    else { const want = nq.toLowerCase().replace(/^#/, ""); T.push(e => String(e.num || "").toLowerCase() === want); } }
+  if (f.format) T.push(e => !!e.leg && (e.leg[f.format] === "l" || e.leg[f.format] === "r"));
+  const mv0 = fnum(f.mvMin), mv1 = fnum(f.mvMax); if (mv0 != null || mv1 != null) T.push(e => (mv0 == null || e.cmc >= mv0) && (mv1 == null || e.cmc <= mv1));
+  const p0 = fnum(f.priceMin), p1 = fnum(f.priceMax);
+  if (p0 != null || p1 != null) T.push(e => { const p = priceOf(e, e.finish); return p != null && (p0 == null || p >= p0) && (p1 == null || p <= p1); });
+  if (f.fin.length) T.push(e => f.fin.includes(e.finish));
+  if (f.lang) T.push(e => (e.lang || "en") === f.lang);
+  const o0 = fnum(f.ownMin), o1 = fnum(f.ownMax); if (o0 != null || o1 != null) T.push(e => { const n = X.owned.get(e.name) || 0; return (o0 == null || n >= o0) && (o1 == null || n <= o1); });
+  const a0 = fnum(f.availMin); if (a0 != null) T.push(e => Math.max(0, (X.owned.get(e.name) || 0) - usedOf(e.name)) >= a0);
+  if (f.asg) T.push(e => (usedOf(e.name) > 0) === (f.asg === "in"));
+  if (f.deck) T.push(e => { const m = X.decks.get(e.name); return !!m && m.has(f.deck); });
+  return T.length ? e => { for (const t of T) if (!t(e)) return false; return true; } : null;
+}
+// the active filters as removable chips: [key, label]
+function collFilterChips(f, sets) {
+  const out = [], rng = (a, b, pre = "", suf = "") => a !== "" && b !== "" ? `${pre}${a}–${pre}${b}${suf}` : a !== "" ? `${pre}${a}+${suf}` : `up to ${pre}${b}${suf}`;
+  if (cv.q.trim()) out.push(["q", `“${cv.q.trim()}”`]);
+  if (f.colors.length) out.push(["colors", `${CMODE_L[f.cmode] || "Colors"} ${f.colors.join("")}`]);
+  if (f.type) out.push(["type", f.type]);
+  if (f.sub.trim()) out.push(["sub", `Type has “${f.sub.trim()}”`]);
+  if (f.rarity.length) out.push(["rarity", f.rarity.map(r => (RAR.find(x => x[0] === r) || [, r])[1]).join(", ")]);
+  if (f.set) out.push(["set", (sets[f.set] || {}).name || f.set.toUpperCase()]);
+  if (f.num.trim()) out.push(["num", "#" + f.num.trim().replace(/^#/, "")]);
+  if (f.format) out.push(["format", "Legal in " + (FORMATS[f.format] || f.format)]);
+  if (f.mvMin !== "" || f.mvMax !== "") out.push(["mv", "Mana value " + rng(f.mvMin, f.mvMax)]);
+  if (f.priceMin !== "" || f.priceMax !== "") out.push(["price", "Price " + rng(f.priceMin, f.priceMax, "$")]);
+  if (f.fin.length) out.push(["fin", f.fin.map(x => FIN_L[x] || x).join(", ")]);
+  if (f.lang) out.push(["lang", "Language " + f.lang.toUpperCase()]);
+  if (f.ownMin !== "" || f.ownMax !== "") out.push(["own", "Own " + rng(f.ownMin, f.ownMax, "", " copies")]);
+  if (f.availMin !== "") out.push(["avail", `${f.availMin}+ not in decks`]);
+  if (f.asg) out.push(["asg", f.asg === "in" ? "In a deck" : "Not in any deck"]);
+  if (f.deck) out.push(["deck", "In " + ((S.decks[f.deck] || {}).name || "deck")]);
+  return out;
+}
+function clearCollFilter(k) {
+  const f = cv.f, d = collDefaultF();
+  const keys = { q: [], colors: ["colors", "cmode"], mv: ["mvMin", "mvMax"], price: ["priceMin", "priceMax"], own: ["ownMin", "ownMax"], avail: ["availMin"] }[k] || [k];
+  if (k === "q") cv.q = ""; for (const x of keys) f[x] = d[x];
+}
+function collFilterPanel(f, sets) {
+  const binderCards = Object.values(S.coll).filter(e => cv.binder === "all" ? !isWish(e.binder) : e.binder === cv.binder);
+  const langs = [...new Set(binderCards.map(e => e.lang || "en"))].sort(), fins = ["nonfoil", "foil", "etched"].filter(x => binderCards.some(e => e.finish === x) || f.fin.includes(x));
+  const setList = Object.values(sets).sort((a, b) => a.name.localeCompare(b.name)), decks = Object.values(S.decks).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  const noLeg = f.format ? binderCards.filter(e => !e.leg).reduce((n, e) => n + e.qty, 0) : 0;
+  const opt = (v, l, cur) => `<option value="${esc(v)}" ${cur === v ? "selected" : ""}>${esc(l)}</option>`;
+  return `<div class="box stack" id="cfp" ${cv.fOpen ? "" : "hidden"} style="gap:10px">
+    <div class="stack" style="gap:6px"><span class="label">Colors</span>
+      <div class="row wrap"><span class="cpick" id="cfCol">${["W", "U", "B", "R", "G", "C"].map(c => `<button type="button" data-c="${c}" aria-pressed="${f.colors.includes(c)}" aria-label="${{ W: "White", U: "Blue", B: "Black", R: "Red", G: "Green", C: "Colorless" }[c]}"><i class="pip p${c}">${c}</i></button>`).join("")}</span>
+        <select id="cfCm" aria-label="How to match colors">${[["incl", "Including these"], ["exact", "Exactly these"], ["most", "At most these"], ["id", "Commander color identity"]].map(([k, v]) => opt(k, v, f.cmode)).join("")}</select></div></div>
+    <div class="stack" style="gap:6px"><span class="label">Rarity</span><div class="chips" id="cfRar">${RAR.map(([k, v]) => `<button type="button" data-r="${k}" aria-pressed="${f.rarity.includes(k)}">${v}</button>`).join("")}</div></div>
+    ${fins.length > 1 || f.fin.length ? `<div class="stack" style="gap:6px"><span class="label">Finish</span><div class="chips" id="cfFin">${fins.map(x => `<button type="button" data-x="${x}" aria-pressed="${f.fin.includes(x)}">${FIN_L[x]}</button>`).join("")}</div></div>` : ""}
+    <div class="fgrid">
+      <label class="small">Card type<select data-k="type"><option value="">Any type</option>${TYPE_OPTS.map(t => opt(t, t, f.type)).join("")}</select></label>
+      <label class="small">Subtype or type words<input type="text" data-k="sub" placeholder="e.g. Elf, Equipment" value="${esc(f.sub)}" autocomplete="off"></label>
+      <label class="small">Set<select data-k="set"><option value="">Any set</option>${setList.map(x => opt(x.code, `${x.name} (${x.code.toUpperCase()})`, f.set)).join("")}</select></label>
+      <label class="small">Collector number<input type="text" data-k="num" placeholder="e.g. 123 or 1-50" value="${esc(f.num)}" autocomplete="off"></label>
+      <label class="small">Legal in<select data-k="format"><option value="">Any format</option>${Object.entries(FORMATS).filter(([k]) => k !== "casual").map(([k, v]) => opt(k, v, f.format)).join("")}</select></label>
+      <label class="small">Language<select data-k="lang"><option value="">Any language</option>${langs.map(l => opt(l, l.toUpperCase(), f.lang)).join("")}</select></label>
+      <label class="small">Mana value from<input type="number" data-k="mvMin" inputmode="numeric" min="0" placeholder="0" value="${esc(f.mvMin)}"></label>
+      <label class="small">to<input type="number" data-k="mvMax" inputmode="numeric" min="0" placeholder="16" value="${esc(f.mvMax)}"></label>
+      <label class="small">Price per copy from ($)<input type="number" data-k="priceMin" inputmode="decimal" min="0" step="0.01" placeholder="0" value="${esc(f.priceMin)}"></label>
+      <label class="small">to ($)<input type="number" data-k="priceMax" inputmode="decimal" min="0" step="0.01" placeholder="Any" value="${esc(f.priceMax)}"></label>
+      <label class="small">Copies owned, at least<input type="number" data-k="ownMin" inputmode="numeric" min="0" placeholder="Any" value="${esc(f.ownMin)}"></label>
+      <label class="small">at most<input type="number" data-k="ownMax" inputmode="numeric" min="0" placeholder="Any" value="${esc(f.ownMax)}"></label>
+      <label class="small">Not in decks, at least<input type="number" data-k="availMin" inputmode="numeric" min="0" placeholder="Any" value="${esc(f.availMin)}"></label>
+      <label class="small">Used in decks<select data-k="asg">${opt("", "Either", f.asg)}${opt("in", "In a deck", f.asg)}${opt("out", "Not in any deck", f.asg)}</select></label>
+      ${decks.length ? `<label class="small">In this deck<select data-k="deck"><option value="">Any deck</option>${decks.map(d => opt(d.id, d.name || "Untitled deck", f.deck)).join("")}</select></label>` : ""}
+    </div>
+    <span class="small muted">Copies are counted across all printings of a card, outside wishlists. “Not in decks” is copies owned minus copies used in your decks.</span>
+    ${noLeg ? `<span class="small muted">${noLeg.toLocaleString()} card${noLeg === 1 ? " has" : "s have"} no format information saved yet, so ${noLeg === 1 ? "it's" : "they're"} left out. Update prices fills it in.</span>` : ""}
+    <div class="row"><button type="button" class="btn sm" id="cfClear">Clear filters</button><span class="grow small muted" id="cfN"></span><button type="button" class="btn sm primary" id="cfDone">Done</button></div>
+  </div>`;
+}
 // Dashboard numbers for one binder (or everything owned), all from the cards actually stored.
 function collStats(binder) {
   const sets = {}, rar = { rare: 0, mythic: 0 }, list = []; let noPrice = 0;
@@ -1059,11 +1156,38 @@ function histChange(days) {
   const base = today() - days; let then = null; for (const x of h) { if (x.d <= base) then = x; else break; }
   return then ? h.at(-1).v - then.v : null;
 }
+const chipsHTML = chips => !chips.length ? "" : `<span class="muted">Showing only</span>${chips.map(([k, l]) => `<button class="chip" data-fx="${esc(k)}" aria-label="Remove filter: ${esc(l)}">${esc(l)} ✕</button>`).join("")}${chips.length > 1 ? `<button class="linkbtn small" data-fx="__all">Clear all</button>` : ""}`;
+// after any filter change: redraw the list, the chips and the Filters button without rebuilding the panel (keeps focus while typing)
+function collFiltersChanged(st) {
+  const chips = collFilterChips(cv.f, st.sets), n = chips.filter(c => c[0] !== "q").length;
+  const cc = $("#cfChips"); if (cc) { cc.innerHTML = chipsHTML(chips); wireChips(st); }
+  const t = $("#cfTog"); if (t) { t.textContent = "Filters" + (n ? ` · ${n}` : ""); t.classList.toggle("on", !!n); }
+  drawCollList();
+}
+function wireChips(st) {
+  $("#cfChips").querySelectorAll("[data-fx]").forEach(b => b.onclick = () => {
+    if (b.dataset.fx === "__all") { cv.f = collDefaultF(); cv.q = ""; } else clearCollFilter(b.dataset.fx);
+    renderColl();
+  });
+}
+function wireCollFilters(st) {
+  const P = $("#cfp"), f = cv.f, redraw = debounce(() => collFiltersChanged(st), 120);
+  $("#cfTog").onclick = () => { cv.fOpen = !cv.fOpen; P.hidden = !cv.fOpen; $("#cfTog").setAttribute("aria-expanded", cv.fOpen); if (cv.fOpen) drawCollList(); };
+  const toggleIn = (arr, v) => { const i = arr.indexOf(v); i < 0 ? arr.push(v) : arr.splice(i, 1); return i < 0; };
+  $("#cfCol").onclick = e => { const b = e.target.closest("button"); if (b) { b.setAttribute("aria-pressed", toggleIn(f.colors, b.dataset.c)); redraw(); } };
+  $("#cfRar").onclick = e => { const b = e.target.closest("button"); if (b) { b.setAttribute("aria-pressed", toggleIn(f.rarity, b.dataset.r)); redraw(); } };
+  const fi = $("#cfFin"); if (fi) fi.onclick = e => { const b = e.target.closest("button"); if (b) { b.setAttribute("aria-pressed", toggleIn(f.fin, b.dataset.x)); redraw(); } };
+  $("#cfCm").onchange = e => { f.cmode = e.target.value; redraw(); };
+  P.querySelectorAll("[data-k]").forEach(el => el[el.tagName === "SELECT" ? "onchange" : "oninput"] = () => { f[el.dataset.k] = el.value; redraw(); });
+  $("#cfClear").onclick = () => { cv.f = collDefaultF(); renderColl(); };
+  $("#cfDone").onclick = () => { cv.fOpen = false; P.hidden = true; $("#cfTog").setAttribute("aria-expanded", "false"); };
+  wireChips(st);
+}
 function setsSheet() {
   const st = collStats(cv.binder), arr = Object.values(st.sets).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
   openSheet(`<h2>Sets</h2><p class="small muted" style="margin:4px 0 10px">${arr.length} set${arr.length === 1 ? "" : "s"} in ${cv.binder === "all" ? "your collection" : esc(binderName(cv.binder))}. Tap one to see its cards.</p>
     <div class="stack" style="gap:0">${arr.map(x => `<button class="tap mvrow" data-set="${esc(x.code)}"><span class="nm">${setIcon(x.code, "common")} ${esc(x.name)} <span class="small muted">${esc(x.code.toUpperCase())}</span></span><span class="num small muted">${x.n.toLocaleString()}</span><span class="num small">${money(x.val)}</span></button>`).join("")}</div>`, () => render());
-  $("#sheetRoot").querySelectorAll("[data-set]").forEach(b => b.onclick = () => { cv.fSet = b.dataset.set; cv.fRar = ""; closeSheet(); showList(); });
+  $("#sheetRoot").querySelectorAll("[data-set]").forEach(b => b.onclick = () => { cv.f = collDefaultF(); cv.q = ""; cv.f.set = b.dataset.set; closeSheet(); showList(); });
 }
 // jump from a dashboard number to the matching cards in the list below
 function showList() { renderColl(); const l = $("#cq"); if (l) l.scrollIntoView({ block: "start", behavior: "smooth" }); }
@@ -1071,7 +1195,10 @@ function renderColl() {
   if (cv.binder !== "all" && !S.binders[cv.binder]) cv.binder = "all";
   const wish = cv.binder !== "all" && isWish(cv.binder);
   const t = collTotals(cv.binder), st = collStats(cv.binder);
-  if (cv.fSet && !st.sets[cv.fSet]) cv.fSet = "";
+  if (!cv.f) cv.f = collDefaultF();
+  if (cv.f.set && !st.sets[cv.f.set]) cv.f.set = "";
+  if (cv.f.deck && !S.decks[cv.f.deck]) cv.f.deck = "";
+  const fChips = collFilterChips(cv.f, st.sets);
   setHead("Collection", S.meta.pricedAt ? "Prices " + new Date(S.meta.pricedAt).toLocaleDateString() : "");
   const v = $("#view");
   if (!Object.keys(S.coll).length && !Object.keys(S.alerts).length) {
@@ -1125,12 +1252,14 @@ function renderColl() {
       : `<p class="small muted" style="margin:0">Your value chart starts after prices update on two different days. Deckhand updates them automatically once a day when you open it.</p>`) : ""}
     ${moversHTML()}
     <div class="row"><input type="search" id="cq" class="grow" placeholder="Filter by name, set or type" value="${esc(cv.q)}">
+      <button type="button" class="btn sm ${fChips.filter(c => c[0] !== "q").length ? "on" : ""}" id="cfTog" aria-expanded="${cv.fOpen}">Filters${fChips.filter(c => c[0] !== "q").length ? ` · ${fChips.filter(c => c[0] !== "q").length}` : ""}</button>
       <select id="cs" aria-label="Sort"><option value="value">Value</option><option value="change">Price change</option><option value="name">Name</option><option value="set">Set</option><option value="scanned">Date scanned</option><option value="recent">Recently added</option></select></div>
+    ${collFilterPanel(cv.f, st.sets)}
     <div class="row wrap"><button class="btn sm" id="cRefresh">Update prices</button><button class="btn sm" id="cImp">Import CSV</button><button class="btn sm" id="cVal">Value breakdown</button><button class="btn sm" id="cAlerts">Price alerts${nRules ? ` (${nRules})` : ""}</button><button class="btn sm" id="cMore">Backup / export</button><button class="btn sm" id="cSync">Sync</button>${INSTALL.prompt && !isStandalone() ? `<button class="btn sm" id="cInst">Install app</button>` : ""}<button class="btn sm ${cv.select ? "primary" : ""}" id="cSel">${cv.select ? "Done selecting" : "Select"}</button></div>
-    ${cv.fSet || cv.fRar ? `<div class="fchips small"><span class="muted">Showing only</span>${cv.fSet ? `<button class="chip" id="fSetX" aria-label="Stop filtering by set">${esc((st.sets[cv.fSet] || {}).name || cv.fSet.toUpperCase())} ✕</button>` : ""}${cv.fRar ? `<button class="chip rar-${esc(cv.fRar)}" id="fRarX" aria-label="Stop filtering by rarity">${cv.fRar === "mythic" ? "Mythics" : "Rares"} ✕</button>` : ""}</div>` : ""}
+    <div class="fchips small" id="cfChips">${chipsHTML(fChips)}</div>
     <div id="clist"></div></div>`;
   $("#cs").value = cv.sort; updRefreshBtn();
-  $("#cq").oninput = debounce(e => { cv.q = e.target.value; drawCollList(); }, 150);
+  $("#cq").oninput = debounce(e => { cv.q = e.target.value; collFiltersChanged(st); }, 150);
   $("#cs").onchange = e => { cv.sort = e.target.value; drawCollList(); };
   $("#cRefresh").onclick = () => refreshPrices(false);
   $("#cMore").onclick = ioSheet; $("#cSync").onclick = syncSheet; syncBadge(); const ci = $("#cInst"); if (ci) ci.onclick = installApp;
@@ -1139,13 +1268,13 @@ function renderColl() {
   v.querySelectorAll("[data-dash]").forEach(b => b.onclick = () => {
     const d = b.dataset.dash;
     if (d === "sets") return setsSheet();
-    if (d === "rare" || d === "mythic") { cv.fRar = d; cv.fSet = ""; }
-    else { cv.fRar = ""; cv.fSet = ""; if (d !== "all") cv.sort = d; }
+    cv.f = collDefaultF(); cv.q = "";
+    if (d === "rare" || d === "mythic") cv.f.rarity = [d];
+    else if (d !== "all") cv.sort = d;
     showList();
   });
   const np = $("#dNoP"); if (np) np.onclick = valueSheet;
-  const fx = $("#fSetX"); if (fx) fx.onclick = () => { cv.fSet = ""; renderColl(); };
-  const rx = $("#fRarX"); if (rx) rx.onclick = () => { cv.fRar = ""; renderColl(); };
+  wireCollFilters(st);
   $("#cSel").onclick = () => { cv.select = !cv.select; cv.sel.clear(); renderColl(); };
   $("#bChips").onclick = e => { const b = e.target.closest("button"); if (!b) return; if (b.dataset.b === "__manage") binderSheet(); else { cv.binder = b.dataset.b; renderColl(); } };
   v.querySelectorAll("[data-seen]").forEach(b => b.onclick = () => { const a = S.alerts[b.dataset.seen], l = a && a.log.find(x => x.id === b.dataset.l); if (l) { l.seen = true; a.updated = Date.now(); save(); } renderColl(); });
@@ -1201,11 +1330,16 @@ function moversHTML() {
     : `<p class="small muted" style="margin:0">${per === 7 ? "Weekly" : "Daily"} movers start once Deckhand has prices from ${per === 7 ? "a week" : "a day"} ago${isFinite(M.earliest) ? ` (it has them since ${esc(new Date(M.earliest * 864e5).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" }))})` : ""}. Prices update by themselves once a day when you open the app.</p>`}</div>`;
 }
 function drawCollList() {
-  const q = cv.q.trim().toLowerCase();
-  let rows = Object.entries(S.coll).filter(([k, e]) =>
-    (cv.binder === "all" ? !isWish(e.binder) : e.binder === cv.binder) &&
-    (!cv.fSet || e.set === cv.fSet) && (!cv.fRar || e.rarity === cv.fRar) &&
-    (!q || (e.name + " " + e.set + " " + e.setName + " " + e.type).toLowerCase().includes(q)));
+  const q = cv.q.trim().toLowerCase(), pred = collPred(cv.f || (cv.f = collDefaultF()));
+  let inBinder = 0, inBinderCards = 0;
+  let rows = Object.entries(S.coll).filter(([k, e]) => {
+    if (cv.binder === "all" ? isWish(e.binder) : e.binder !== cv.binder) return false;
+    inBinder++; inBinderCards += e.qty;
+    return (!q || (e.name + " " + e.set + " " + e.setName + " " + e.type).toLowerCase().includes(q)) && (!pred || pred(e));
+  });
+  const filtered = !!(q || pred), nCards = rows.reduce((n, [, e]) => n + e.qty, 0);
+  cv.lastN = { entries: rows.length, cards: nCards, of: inBinder, ofCards: inBinderCards };
+  const cn = $("#cfN"); if (cn) cn.textContent = filtered ? `${nCards.toLocaleString()} card${nCards === 1 ? "" : "s"} match` : "";
   const val = e => (priceOf(e, e.finish) || 0) * e.qty;
   const chg = e => { const c = phChange(e); return c ? c.d * e.qty : 0; };
   const cmp = { value: (a, b) => val(b[1]) - val(a[1]), change: (a, b) => Math.abs(chg(b[1])) - Math.abs(chg(a[1])), name: (a, b) => a[1].name.localeCompare(b[1].name),
@@ -1215,7 +1349,8 @@ function drawCollList() {
   const shown = rows.slice(0, 400);
   const el = $("#clist"), uses = deckUse();
   for (const k of [...cv.sel]) if (!S.coll[k]) cv.sel.delete(k);
-  if (!rows.length) { el.innerHTML = `<p class="muted">${q || cv.fSet || cv.fRar ? `No cards match${q ? ` “${esc(cv.q)}”` : ""}${cv.fSet || cv.fRar ? " with this filter" : ""}.` : "Nothing in this binder yet. Add cards from Search or Scan and pick this binder."}</p>`; return; }
+  if (!rows.length) { el.innerHTML = `<p class="muted">${filtered ? `No cards match${q ? ` “${esc(cv.q)}”` : ""}${pred ? (q ? " with these filters" : " these filters") : ""}. <button class="linkbtn" id="cfNone">Clear all</button>` : "Nothing in this binder yet. Add cards from Search or Scan and pick this binder."}</p>`;
+    const cn0 = $("#cfNone"); if (cn0) cn0.onclick = () => { cv.f = collDefaultF(); cv.q = ""; renderColl(); }; return; }
   let lastDay = null;
   const dayHead = e => {
     if (cv.sort !== "scanned") return "";
@@ -1230,7 +1365,7 @@ function drawCollList() {
         <button class="btn sm ghost" id="sAll">Select all ${shown.length}</button>${cv.sel.size ? `<button class="btn sm ghost" id="sNone">Clear</button>` : ""}</div>
       ${cv.sel.size ? `<div class="row wrap"><select id="sBin" class="grow" aria-label="Move selected to">${binderOptions(cv.binder !== "all" ? cv.binder : defaultBinder())}</select><button class="btn sm primary" id="sMove">Move</button><button class="btn sm" id="sAlert">Price alert</button><button class="btn sm danger" id="sDel">Remove</button></div>
       <div class="row" id="sDelC" hidden><span class="grow small">Remove ${nSel} cards from your collection?</span><button class="btn sm danger" id="sDelY">Remove</button><button class="btn sm ghost" id="sDelN">Keep</button></div>` : ""}</div>`;
-  el.innerHTML = `${selBar}<div class="list">${shown.map(([k, e]) => { const c = phChange(e), on = cv.sel.has(k); return `${dayHead(e)}
+  el.innerHTML = `${filtered ? `<p class="small muted" style="margin:0 0 6px">Showing ${nCards.toLocaleString()} of ${cv.lastN.ofCards.toLocaleString()} card${cv.lastN.ofCards === 1 ? "" : "s"}${rows.length > 1 ? ` (${rows.length.toLocaleString()} entries)` : ""}</p>` : ""}${selBar}<div class="list">${shown.map(([k, e]) => { const c = phChange(e), on = cv.sel.has(k); return `${dayHead(e)}
     <div class="item ${cv.select ? "selectable" : ""} ${on ? "picked" : ""}">${cv.select ? `<span class="check" aria-hidden="true">${on ? "✓" : ""}</span>` : `<img loading="lazy" src="${esc(e.img)}" alt="">`}
       <button class="tap" data-open="${esc(k)}"><div class="name">${esc(e.name)}</div>
         <div class="meta"><span>${setIcon(e.set, e.rarity)} ${esc(e.set.toUpperCase())} #${esc(e.num)}</span>${e.finish !== "nonfoil" ? `<span class="chip foil">${esc(e.finish)}</span>` : ""}${e.cond && e.cond !== "NM" ? `<span class="chip warn" title="${esc((CONDS.find(c => c[0] === e.cond) || [])[1] || "")}">${esc(e.cond)}</span>` : ""}${e.lang && e.lang !== "en" ? `<span class="chip">${esc(e.lang.toUpperCase())}</span>` : ""}

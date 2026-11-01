@@ -34,16 +34,16 @@ async function run(ctxOpts, shot) {
   if (shot) await p.screenshot({ path: __dirname + "/" + shot, fullPage: true });
   // Mythics tile → only mythics in the list (wishlist mythic not owned, so not shown)
   await p.click('#dash [data-dash="mythic"]'); await p.waitForTimeout(200);
-  R.myth = await p.$$eval("#clist .item .name", a => a.map(x => x.textContent)); R.chip = !!(await p.$("#fRarX"));
-  await p.click("#fRarX"); await p.waitForTimeout(150); R.cleared = (await p.$$("#clist .item")).length;
+  R.myth = await p.$$eval("#clist .item .name", a => a.map(x => x.textContent)); R.chip = !!(await p.$("#cfChips [data-fx=rarity]"));
+  await p.click("#cfChips [data-fx=rarity]"); await p.waitForTimeout(150); R.cleared = (await p.$$("#clist .item")).length;
   await p.click('#dash [data-dash="rare"]'); await p.waitForTimeout(150); R.rare = (await p.$$eval("#clist .item .name", a => a.map(x => x.textContent))).sort();
   // Sets tile → sheet → pick MH3
   await p.click('#dash [data-dash="sets"]'); await p.waitForTimeout(200);
   R.sets = await p.$$eval("#sheetRoot [data-set]", a => a.map(x => x.dataset.set));
   await p.click('#sheetRoot [data-set="mh3"]'); await p.waitForTimeout(300);
-  R.mh3 = (await p.$$eval("#clist .item .name", a => a.map(x => x.textContent))).sort(); R.rarGone = !(await p.$("#fRarX"));
+  R.mh3 = (await p.$$eval("#clist .item .name", a => a.map(x => x.textContent))).sort(); R.rarGone = !(await p.$("#cfChips [data-fx=rarity]"));
   await p.fill("#cq", "zzz"); await p.waitForTimeout(300); R.noMatch = await p.$eval("#clist", e => e.textContent);
-  await p.fill("#cq", ""); await p.click("#fSetX"); await p.waitForTimeout(150);
+  await p.fill("#cq", ""); await p.waitForTimeout(300); await p.click("#cfChips [data-fx=set]"); await p.waitForTimeout(150);
   // Most valuable "See all" → sorted by value
   await p.evaluate(() => { cv.sort = "name"; renderColl(); }); await p.click('.dash2 [data-dash="value"]'); await p.waitForTimeout(150);
   R.sort = await p.$eval("#cs", s => s.value); R.firstRow = await p.$eval("#clist .item .name", x => x.textContent);
@@ -72,7 +72,7 @@ async function run(ctxOpts, shot) {
     ok(JSON.stringify(R.myth) === '["Alpha Mythic"]' && R.chip && R.cleared === 5, `${label}: Mythics tile filters the list; ✕ clears it ${JSON.stringify([R.myth, R.cleared])}`);
     ok(JSON.stringify(R.rare) === '["Beta Rare","Gamma Rare"]', `${label}: Rares tile filters to rares`);
     ok(JSON.stringify(R.sets) === '["mh3","cmm","lci"]' && JSON.stringify(R.mh3) === '["Delta Common","Gamma Rare"]' && R.rarGone, `${label}: Sets sheet lists owned sets; picking one filters the list ${JSON.stringify([R.sets, R.mh3])}`);
-    ok(/No cards match “zzz” with this filter/.test(R.noMatch), `${label}: empty result explains the filter`);
+    ok(/No cards match “zzz” with these filters/.test(R.noMatch), `${label}: empty result explains the filter`);
     ok(R.sort === "value" && R.firstRow === "Alpha Mythic", `${label}: Most valuable "See all" sorts the list by value`);
     ok(JSON.stringify(R.wishTiles) === JSON.stringify(["1", "1", "$99.00", "1", "0", "1"]) && !R.wishChart, `${label}: a wishlist shows its own numbers and no collection value chart ${JSON.stringify(R.wishTiles)}`);
     ok(!!R.short, `${label}: too little history is labelled, not guessed`);
