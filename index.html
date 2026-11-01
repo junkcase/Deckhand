@@ -883,6 +883,7 @@ function renderColl() {
     <div class="chips scrollx" id="bChips"><button data-b="all" aria-pressed="${cv.binder === "all"}">All owned</button>
       ${Object.values(S.binders).map(b => `<button data-b="${esc(b.id)}" aria-pressed="${cv.binder === b.id}">${esc(b.name)} <span class="num">${counts[b.id] || 0}</span></button>`).join("")}
       <button data-b="__manage">＋ Manage binders</button></div>
+    ${backupNudge()}
     ${alertHits.length ? `<div class="box alert"><span class="label gold">Price alerts</span>${alertHits.map(([k, a]) => `
       <div class="kv"><span class="grow">${esc(a.name)} is now <b class="num">${money(a.hitPrice)}</b> <span class="muted">(${a.below != null && a.hitPrice <= a.below ? "below" : "above"} your ${money(a.below != null && a.hitPrice <= a.below ? a.below : a.above)} target)</span></span>
       <button class="btn sm" data-alert="${esc(k)}">View</button><button class="btn sm ghost" data-seen="${esc(k)}">OK</button></div>`).join("")}</div>` : ""}
@@ -909,6 +910,7 @@ function renderColl() {
   v.querySelectorAll("[data-seen]").forEach(b => b.onclick = () => { S.alerts[b.dataset.seen].seen = true; save(); renderColl(); });
   v.querySelectorAll("[data-alert]").forEach(b => b.onclick = async () => { const [id, fin] = b.dataset.alert.split("|"); try { openCard(await sf("/cards/" + id), fin); } catch (e) { toast(e.message); } });
   v.querySelectorAll("[data-mover]").forEach(b => b.onclick = () => { const e = S.coll[b.dataset.mover]; if (e) openCard(e, e.finish, e.binder); });
+  const bn = $("#bkNow"); if (bn) { bn.onclick = () => { backupNow(); renderColl(); }; $("#bkSync").onclick = syncSheet; $("#bkLater").onclick = () => { S.meta.backupSnooze = Date.now() + 7 * 864e5; save(); renderColl(); }; }
   const mp = $("#mvPer"); if (mp) mp.onclick = e => { const b = e.target.closest("button"); if (!b) return; S.meta.moversPeriod = +b.dataset.p; save(); renderColl(); };
   const mm = $("#mvMore"); if (mm) mm.onclick = () => { cv.moversMore = !cv.moversMore; renderColl(); };
   const mr = $("#mvRar"); if (mr) mr.onclick = e => { const b = e.target.closest("button"); if (!b) return; cv.moversRarity = b.dataset.r; renderColl(); };
@@ -1361,6 +1363,23 @@ function download(name, text, type) {
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name;
   document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
+// Without sync, everything lives only in this browser (which can clear site data when storage runs low,
+// or when you clear it). After two weeks without a backup, the collection screen offers one.
+function backupNow() {
+  S.meta.backupAt = Date.now(); save();
+  download(`deckhand-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(S), "application/json");
+  toast("Backup saved to your downloads. Keep it somewhere safe (Drive, email to yourself…)");
+}
+function backupNudge() {
+  const cfg = syncCfg(), n = Object.keys(S.coll).length + Object.keys(S.decks).length;
+  if ((cfg && cfg.gist && !cfg.paused) || n < 10) return "";
+  if (!S.meta.firstUse) { S.meta.firstUse = Date.now(); save(); }
+  const since = S.meta.backupAt || S.meta.firstUse, until = S.meta.backupSnooze || 0, days = Math.floor((Date.now() - since) / 864e5);
+  if (days < 14 || Date.now() < until) return "";
+  return `<div class="box alert" id="bkNudge"><b>Your cards are only saved in this browser.</b>
+    <p class="small" style="margin:4px 0 8px">${S.meta.backupAt ? `Last backup ${days} days ago.` : "You haven't made a backup yet."} If this browser's data is cleared, they'd be gone. A backup file takes a second; Sync keeps your devices the same automatically.</p>
+    <div class="row wrap" style="gap:6px"><button class="btn sm primary" id="bkNow">Back up now</button><button class="btn sm" id="bkSync">Turn on Sync</button><button class="btn sm ghost" id="bkLater">Remind me in a week</button></div></div>`;
+}
 function ioSheet() {
   openSheet(`<h2>Import and export</h2>
     <p class="muted small">${syncCfg() ? "Your collection syncs to your GitHub account. A backup file now and then is still a good idea." : "Your collection lives on this device only. Export a backup now and then, or turn on Sync to keep your devices the same."}</p>
@@ -1373,7 +1392,7 @@ function ioSheet() {
     <p class="small muted">CSV files from ManaBox, Moxfield, Deckbox, TCGplayer, Dragon Shield, Archidekt and most other apps work. You'll see a preview before anything is added.</p>
     <div id="ioMsg" class="status"></div>`);
   const stamp = new Date().toISOString().slice(0, 10);
-  $("#ioBack").onclick = () => download(`deckhand-backup-${stamp}.json`, JSON.stringify(S), "application/json");
+  $("#ioBack").onclick = () => backupNow();
   $("#ioRest").onclick = () => pickFile(".json,application/json", async f => {
     try { const d = JSON.parse(await f.text()); if (!d || typeof d.coll !== "object" || typeof d.decks !== "object") throw 0; S = d; migrate(); save(); closeSheet(); render(); toast("Backup restored"); }
     catch (e) { $("#ioMsg").textContent = "That file isn't a Deckhand backup."; }
