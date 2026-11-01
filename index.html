@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#16202b">
 <title>Deckhand</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Deckhand">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@500;600;700&family=Source+Sans+3:wght@400;600;700&display=swap">
 <style>
@@ -168,6 +175,8 @@ details.box summary::after{content:" ▾"}
 .cam .ctrl{position:absolute;left:0;right:0;bottom:12px;display:flex;justify-content:center;align-items:center;gap:22px}
 .shutter{width:70px;height:70px;border-radius:50%;border:4px solid #fff;background:rgba(255,255,255,.25)}
 .shutter:active{background:rgba(255,255,255,.6)}
+.foiltog{flex-direction:column;font-size:16px;line-height:1;gap:1px}.foiltog span{font-size:9px;font-weight:700;letter-spacing:.03em;text-transform:uppercase}
+.foiltog[aria-pressed="true"]{background:linear-gradient(135deg,#f5d77a,#9ad0f5,#e6a2e8);color:#16202b}
 .round{width:46px;height:46px;border-radius:50%;border:0;background:rgba(0,0,0,.55);color:#fff;display:grid;place-items:center}
 .round[aria-pressed="true"]{background:#ffd76a;color:#000}
 .status{min-height:22px;font-size:14px;color:var(--muted)}
@@ -191,6 +200,7 @@ details.box summary::after{content:" ▾"}
 .mvrow{display:grid;grid-template-columns:minmax(0,1fr) auto 112px;gap:8px;align-items:center;width:100%;text-align:left;padding:5px 0;border:0;border-top:1px solid var(--line);background:none;font:inherit;color:inherit;cursor:pointer}
 .mvrow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mvrow>span:last-child{text-align:right}.mvhead{margin-top:4px}
 #mvRar button{font-size:13px}#mvRar .rar-mythic{border-color:#c4622d}#mvRar .rar-rare{border-color:#b8962e}#mvRar .rar-uncommon{border-color:#7d8a96}
+ol.welcome{text-align:left;max-width:460px;margin:8px auto 14px;padding-left:20px;display:flex;flex-direction:column;gap:6px}
 .seg.wide{display:flex}
 .swap{border-top:1px solid var(--line);padding:10px 0;display:flex;flex-direction:column;gap:6px}.swap.over{opacity:.6}
 .swapcards{display:grid;grid-template-columns:1fr 18px 1fr;gap:6px;align-items:center}.swapcards .arrow{text-align:center;color:var(--muted)}
@@ -884,17 +894,23 @@ function renderColl() {
   setHead("Collection", S.meta.pricedAt ? "Prices " + new Date(S.meta.pricedAt).toLocaleDateString() : "");
   const v = $("#view");
   if (!Object.keys(S.coll).length && !Object.keys(S.alerts).length) {
-    v.innerHTML = `<div class="empty"><h2>Your binder is empty</h2>
-      <p>Scan cards with your camera, add them from Search, or bring over your ManaBox collection.</p>
+    const fresh = !Object.keys(S.decks).length;
+    v.innerHTML = `<div class="empty">${fresh ? `<h2>Welcome to Deckhand</h2>
+      <p>Your Magic collection, a card scanner and a Commander deck builder, free. Your cards are saved on this device; nothing is shared unless you turn on Sync.</p>
+      <ol class="welcome"><li><b>Bring your cards in:</b> import a CSV from ManaBox, Moxfield and most other apps, or scan them with your camera.</li>
+        <li><b>Organize:</b> binders, wishlists, prices, daily and weekly movers.</li><li><b>Build decks:</b> pick a commander for suggestions, deck balance and upgrade ideas from your own cards.</li>
+        <li><b>Use it everywhere:</b> Sync keeps your phone, tablet and computer the same.</li></ol>` : `<h2>Your binder is empty</h2>
+      <p>Scan cards with your camera, add them from Search, or bring over your ManaBox collection.</p>`}
       <div class="row wrap" style="justify-content:center">
         <button class="btn primary" id="eScan">Scan cards</button><button class="btn" id="eSearch">Search</button>
         <button class="btn" id="eImp">Import ManaBox CSV</button></div>
+      ${!isStandalone() ? `<p style="margin-top:10px"><button class="btn sm ghost" id="eInst">📲 Install Deckhand as an app</button></p>` : ""}
       <p class="small">In ManaBox: Collection → ⋮ → Export → CSV, then choose that file here.</p>
       <div class="box" style="margin-top:14px;text-align:left"><b>Already use Deckhand on another device?</b>
         <p class="small muted" style="margin:4px 0 8px">${syncCfg() && syncCfg().gist ? `Syncing with @${esc(syncCfg().login || "")}. ${SYNC.busy ? "Loading your cards…" : SYNC.err ? esc(SYNC.err) : "Your cards will appear here once the other device has synced."}` : "Connect Sync with the same GitHub token to bring your cards here, or restore a backup file."}</p>
         <div class="row wrap"><button class="btn primary" id="eSync">Sync</button><button class="btn" id="eRest">Restore a backup</button></div></div></div>`;
     $("#eScan").onclick = () => go("scan"); $("#eSearch").onclick = () => go("search"); $("#eImp").onclick = () => pickCSV({ kind: "coll" });
-    $("#eSync").onclick = syncSheet; $("#eRest").onclick = ioSheet;
+    $("#eSync").onclick = syncSheet; $("#eRest").onclick = ioSheet; const ei = $("#eInst"); if (ei) ei.onclick = installApp;
     return;
   }
   const counts = {}; for (const e of Object.values(S.coll)) counts[e.binder] = (counts[e.binder] || 0) + e.qty;
@@ -918,13 +934,13 @@ function renderColl() {
     ${moversHTML()}
     <div class="row"><input type="search" id="cq" class="grow" placeholder="Filter by name, set or type" value="${esc(cv.q)}">
       <select id="cs" aria-label="Sort"><option value="value">Value</option><option value="change">Price change</option><option value="name">Name</option><option value="set">Set</option><option value="scanned">Date scanned</option><option value="recent">Recently added</option></select></div>
-    <div class="row wrap"><button class="btn sm" id="cRefresh">Update prices</button><button class="btn sm" id="cImp">Import CSV</button><button class="btn sm" id="cVal">Value breakdown</button><button class="btn sm" id="cMore">Backup / export</button><button class="btn sm" id="cSync">Sync</button><button class="btn sm ${cv.select ? "primary" : ""}" id="cSel">${cv.select ? "Done selecting" : "Select"}</button></div>
+    <div class="row wrap"><button class="btn sm" id="cRefresh">Update prices</button><button class="btn sm" id="cImp">Import CSV</button><button class="btn sm" id="cVal">Value breakdown</button><button class="btn sm" id="cMore">Backup / export</button><button class="btn sm" id="cSync">Sync</button>${INSTALL.prompt && !isStandalone() ? `<button class="btn sm" id="cInst">Install app</button>` : ""}<button class="btn sm ${cv.select ? "primary" : ""}" id="cSel">${cv.select ? "Done selecting" : "Select"}</button></div>
     <div id="clist"></div></div>`;
   $("#cs").value = cv.sort; updRefreshBtn();
   $("#cq").oninput = debounce(e => { cv.q = e.target.value; drawCollList(); }, 150);
   $("#cs").onchange = e => { cv.sort = e.target.value; drawCollList(); };
   $("#cRefresh").onclick = () => refreshPrices(false);
-  $("#cMore").onclick = ioSheet; $("#cSync").onclick = syncSheet; syncBadge();
+  $("#cMore").onclick = ioSheet; $("#cSync").onclick = syncSheet; syncBadge(); const ci = $("#cInst"); if (ci) ci.onclick = installApp;
   $("#cImp").onclick = () => pickCSV({ kind: "coll" });
   $("#cVal").onclick = valueSheet;
   $("#cSel").onclick = () => { cv.select = !cv.select; cv.sel.clear(); renderColl(); };
@@ -2092,6 +2108,7 @@ function renderScan() {
       <button class="pill" id="autoBtn" aria-pressed="${sc.auto}">Auto ${sc.auto ? "on" : "off"}</button>
       <div class="ctrl"><button class="round" id="torch" aria-pressed="${torchOn}" aria-label="Flashlight" hidden>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 2h8l-2 7h-4zM10 9v13h4V9"/></svg></button>
+        <button class="round foiltog" id="camFoil" aria-pressed="${sc.finish === "foil"}" aria-label="Scanning foil cards">✦<span>${sc.finish === "foil" ? "Foil" : "Normal"}</span></button>
         <button class="shutter" id="shoot" aria-label="Scan card now"></button>
         <button class="round" id="photo" aria-label="Use a photo instead"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="12" cy="12" r="3.5"/></svg></button></div></div>
     <div class="row wrap">
@@ -2129,7 +2146,9 @@ function renderScan() {
   $("#gLayout").onchange = e => { S.meta.gridLayout = e.target.value; save(); };
   $("#gTake").onclick = () => pickPhotos(true, () => $("#gLayout").value);
   $("#gPick").onclick = () => pickPhotos(false, () => $("#gLayout").value);
-  $("#scFin").onclick = e => { const b = e.target.closest("button"); if (b) { sc.finish = b.dataset.f; $("#scFin").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); } };
+  const setFin = f => { sc.finish = f; $("#scFin").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x.dataset.f === f)); const cf = $("#camFoil"); if (cf) { cf.setAttribute("aria-pressed", f === "foil"); cf.querySelector("span").textContent = f === "foil" ? "Foil" : "Normal"; } };
+  $("#scFin").onclick = e => { const b = e.target.closest("button"); if (b) setFin(b.dataset.f); };
+  $("#camFoil").onclick = () => { setFin(sc.finish === "foil" ? "nonfoil" : "foil"); toast(sc.finish === "foil" ? "Scanning foils: new cards are added as foil" : "Scanning normal (non-foil) cards"); };
   $("#scBinder").onchange = e => { S.meta.binder = e.target.value; save(); };
   $("#scMode").onchange = e => { sc.mode = e.target.value; S.meta.scanMode = sc.mode; save(); };
   $("#scPhoto").onchange = e => { S.meta.fullPhoto = e.target.checked; save(); photoNote(); };
@@ -3953,6 +3972,18 @@ async function boot() {
   if (S.meta.usedScan) setTimeout(() => getWorkers().catch(() => {}), 2500);
   const sc_ = syncCfg(); if (sc_ && sc_.gist && !sc_.paused) setTimeout(startSyncLoop, 600);
   if (Object.keys(S.coll).length && (!S.meta.pricedAt || Date.now() - S.meta.pricedAt > 20 * 36e5)) setTimeout(() => refreshPrices(true), 1500);
+}
+/* ---------- install as an app ---------- */
+const INSTALL = { prompt: null };
+if ("serviceWorker" in navigator && (location.protocol === "https:" || /^(localhost|127\.0\.0\.1)$/.test(location.hostname))) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); INSTALL.prompt = e; if (tab === "coll" && !$("#sheetRoot").innerHTML) render(); });
+window.addEventListener("appinstalled", () => { INSTALL.prompt = null; S.meta.installed = true; save(); toast("Deckhand is installed. Open it from your home screen"); });
+const isStandalone = () => (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true;
+function installApp() {
+  if (INSTALL.prompt) { INSTALL.prompt.prompt(); INSTALL.prompt.userChoice.finally(() => { INSTALL.prompt = null; render(); }); return; }
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  openSheet(`<h2>Install Deckhand</h2><p>${ios ? "In Safari, tap the <b>Share</b> button, then <b>Add to Home Screen</b>." : "In Chrome, tap the <b>⋮</b> menu, then <b>Install app</b> (or <b>Add to Home screen</b>)."}</p>
+    <p class="small muted">It then opens full screen from its own icon, like any other app, and the app itself loads even with a poor connection. Your cards stay where they are.</p>`);
 }
 boot();
 </script>
