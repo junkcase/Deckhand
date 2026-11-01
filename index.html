@@ -210,6 +210,10 @@ details>summary{cursor:pointer}.seg.wide button{flex:1}
 .cgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}
 .ctile{display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--surface);cursor:pointer;font:inherit;color:inherit}
 .ctile img{width:100%;aspect-ratio:63/88;object-fit:cover;border-radius:6px;background:var(--sunk)}.ctile .nm{font-size:12px;text-align:center;line-height:1.2}
+.summary button.tile{display:block;width:100%;text-align:left;border:0;background:var(--surface);padding:10px 12px;min-width:0;font:inherit;color:inherit;cursor:pointer}
+.summary button.tile:hover{background:var(--sunk)}.summary .tile b{display:block;font:700 22px/1.1 var(--f-display);overflow:hidden;text-overflow:ellipsis}
+.summary + .summary{margin-top:-1px}#dash>.summary:first-child{border-radius:12px 12px 0 0}#dash>.summary:nth-child(2){border-radius:0 0 12px 12px}.dash2{display:grid;grid-template-columns:1fr;gap:10px}@media (min-width:760px){.dash2{grid-template-columns:1fr 1fr}}
+.dash2 .mvrow{grid-template-columns:minmax(0,1fr) auto}.fchips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .linkbtn{border:0;background:none;padding:0;color:var(--accent);font:inherit;text-decoration:underline;cursor:pointer}
 .meter{height:6px;border-radius:3px;background:var(--sunk);overflow:hidden}.meter>div{height:100%;background:var(--accent);border-radius:3px}.meter.sm{height:4px;margin-top:6px}
 .chip .x{border:0;background:none;padding:0 0 0 4px;font:inherit;cursor:pointer;color:inherit}
@@ -886,11 +890,41 @@ function render() {
 }
 
 /* ================= COLLECTION ================= */
-const cv = { q: "", sort: "value", binder: "all", select: false, sel: new Set() };
+const cv = { q: "", sort: "value", binder: "all", select: false, sel: new Set(), fSet: "", fRar: "" };
+// Dashboard numbers for one binder (or everything owned), all from the cards actually stored.
+function collStats(binder) {
+  const sets = {}, rar = { rare: 0, mythic: 0 }, list = []; let noPrice = 0;
+  for (const [k, e] of Object.entries(S.coll)) {
+    if (binder === "all" ? isWish(e.binder) : e.binder !== binder) continue;
+    list.push([k, e]);
+    if (e.set) { const x = sets[e.set] || (sets[e.set] = { code: e.set, name: e.setName || e.set.toUpperCase(), n: 0, val: 0 }); x.n += e.qty; x.val += (priceOf(e, e.finish) || 0) * e.qty; }
+    if (e.rarity === "rare" || e.rarity === "mythic") rar[e.rarity] += e.qty;
+    if (priceOf(e, e.finish) == null) noPrice += e.qty;
+  }
+  const val = e => (priceOf(e, e.finish) || 0) * e.qty, when = e => Math.max(e.added || 0, e.scanned || 0);
+  const top = list.filter(([, e]) => priceOf(e, e.finish) != null).sort((a, b) => val(b[1]) - val(a[1])).slice(0, 5);
+  const recent = list.filter(([, e]) => when(e)).sort((a, b) => when(b[1]) - when(a[1])).slice(0, 5);
+  return { sets, nSets: Object.keys(sets).length, rar, noPrice, top, recent, when };
+}
+// value change over the last n days from the saved daily totals; null when the history doesn't reach back that far
+function histChange(days) {
+  const h = S.hist; if (h.length < 2) return null;
+  const base = today() - days; let then = null; for (const x of h) { if (x.d <= base) then = x; else break; }
+  return then ? h.at(-1).v - then.v : null;
+}
+function setsSheet() {
+  const st = collStats(cv.binder), arr = Object.values(st.sets).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+  openSheet(`<h2>Sets</h2><p class="small muted" style="margin:4px 0 10px">${arr.length} set${arr.length === 1 ? "" : "s"} in ${cv.binder === "all" ? "your collection" : esc(binderName(cv.binder))}. Tap one to see its cards.</p>
+    <div class="stack" style="gap:0">${arr.map(x => `<button class="tap mvrow" data-set="${esc(x.code)}"><span class="nm">${setIcon(x.code, "common")} ${esc(x.name)} <span class="small muted">${esc(x.code.toUpperCase())}</span></span><span class="num small muted">${x.n.toLocaleString()}</span><span class="num small">${money(x.val)}</span></button>`).join("")}</div>`, () => render());
+  $("#sheetRoot").querySelectorAll("[data-set]").forEach(b => b.onclick = () => { cv.fSet = b.dataset.set; cv.fRar = ""; closeSheet(); showList(); });
+}
+// jump from a dashboard number to the matching cards in the list below
+function showList() { renderColl(); const l = $("#cq"); if (l) l.scrollIntoView({ block: "start", behavior: "smooth" }); }
 function renderColl() {
   if (cv.binder !== "all" && !S.binders[cv.binder]) cv.binder = "all";
   const wish = cv.binder !== "all" && isWish(cv.binder);
-  const t = collTotals(cv.binder);
+  const t = collTotals(cv.binder), st = collStats(cv.binder);
+  if (cv.fSet && !st.sets[cv.fSet]) cv.fSet = "";
   setHead("Collection", S.meta.pricedAt ? "Prices " + new Date(S.meta.pricedAt).toLocaleDateString() : "");
   const v = $("#view");
   if (!Object.keys(S.coll).length && !Object.keys(S.alerts).length) {
@@ -924,17 +958,29 @@ function renderColl() {
     ${alertHits.length ? `<div class="box alert"><span class="label gold">Price alerts</span>${alertHits.map(([k, a]) => `
       <div class="kv"><span class="grow">${esc(a.name)} is now <b class="num">${money(a.hitPrice)}</b> <span class="muted">(${a.below != null && a.hitPrice <= a.below ? "below" : "above"} your ${money(a.below != null && a.hitPrice <= a.below ? a.below : a.above)} target)</span></span>
       <button class="btn sm" data-alert="${esc(k)}">View</button><button class="btn sm ghost" data-seen="${esc(k)}">OK</button></div>`).join("")}</div>` : ""}
-    <div class="summary"><div><span class="label">${wish ? "Wanted" : "Cards"}</span><b class="num">${t.cards.toLocaleString()}</b></div>
-      <div><span class="label">Unique</span><b class="num">${t.uniq.toLocaleString()}</b></div>
-      <div><span class="label">${wish ? "Cost to buy" : "Value"}</span><b class="num gold">${money(t.value)}</b></div></div>
+    <div id="dash"><div class="summary"><button class="tile" data-dash="all"><span class="label">${wish ? "Wanted" : "Cards"}</span><b class="num">${t.cards.toLocaleString()}</b></button>
+      <button class="tile" data-dash="name"><span class="label">Unique</span><b class="num">${t.uniq.toLocaleString()}</b></button>
+      <button class="tile" data-dash="value"><span class="label">${wish ? "Cost to buy" : "Value"}</span><b class="num gold">${money(t.value)}</b></button></div>
+      <div class="summary"><button class="tile" data-dash="sets"><span class="label">Sets</span><b class="num">${st.nSets.toLocaleString()}</b></button>
+      <button class="tile" data-dash="rare"><span class="label">Rares</span><b class="num">${st.rar.rare.toLocaleString()}</b></button>
+      <button class="tile" data-dash="mythic"><span class="label">Mythics</span><b class="num">${st.rar.mythic.toLocaleString()}</b></button></div>
+      ${st.noPrice ? `<div class="small muted" style="margin-top:4px">${st.noPrice.toLocaleString()} card${st.noPrice === 1 ? " has" : "s have"} no price and ${st.noPrice === 1 ? "isn't" : "aren't"} counted in the ${wish ? "cost" : "value"}. <button class="linkbtn" id="dNoP">Details</button></div>` : ""}</div>
+    ${st.top.length || st.recent.length ? `<div class="dash2">
+      ${st.top.length ? `<div class="box" style="gap:0"><div class="row"><span class="label grow">Most valuable</span><button class="linkbtn small" data-dash="value">See all</button></div>
+        ${st.top.map(([k, e]) => `<button class="tap mvrow" data-mover="${esc(k)}" data-pv="${esc(e.img || "")}"><span class="nm">${esc(e.name)} <span class="small muted">${esc(e.set.toUpperCase())}${e.finish !== "nonfoil" ? " " + esc(e.finish) : ""}${e.qty > 1 ? " ×" + e.qty : ""}</span></span><span class="num small gold">${money((priceOf(e, e.finish) || 0) * e.qty)}</span></button>`).join("")}</div>` : ""}
+      ${st.recent.length ? `<div class="box" style="gap:0"><div class="row"><span class="label grow">Recently added</span><button class="linkbtn small" data-dash="recent">See all</button></div>
+        ${st.recent.map(([k, e]) => `<button class="tap mvrow" data-mover="${esc(k)}" data-pv="${esc(e.img || "")}"><span class="nm">${esc(e.name)} <span class="small muted">${esc(e.set.toUpperCase())}${e.qty > 1 ? " ×" + e.qty : ""}</span></span><span class="num small muted">${esc(scanWhen(st.when(e)))}</span></button>`).join("")}</div>` : ""}</div>` : ""}
     ${!wish && t.paidN ? `<div class="small">You paid <b class="num">${money(t.paid)}</b> for ${t.paidN.toLocaleString()} card${t.paidN === 1 ? "" : "s"} with a purchase price; they're worth <b class="num">${money(t.paidNow)}</b> now <b class="num ${t.paidNow >= t.paid ? "up" : "down"}">${signed(t.paidNow - t.paid)}${t.paid ? ` (${t.paidNow >= t.paid ? "+" : ""}${Math.round((t.paidNow - t.paid) / t.paid * 100)}%)` : ""}</b></div>` : ""}
     ${cv.binder === "all" ? (histVals.length >= 2 ? `<div class="box"><div class="kv"><span class="label">Collection value</span>
-        <span class="num small ${histVals.at(-1) >= histVals[0] ? "up" : "down"}">${signed(histVals.at(-1) - histVals[0])} since ${dayStr(S.hist[0].d)}</span></div>${spark(histVals)}</div>`
+        <span class="num small ${histVals.at(-1) >= histVals[0] ? "up" : "down"}">${signed(histVals.at(-1) - histVals[0])} since ${dayStr(S.hist[0].d)}</span></div>${spark(histVals)}
+        <div class="row wrap small" style="gap:4px 14px">${[[7, "7 days"], [30, "30 days"]].map(([n, l]) => { const c = histChange(n); return c == null ? `<span class="muted">${l}: not enough history yet</span>` : `<span>${l}: <b class="num ${c > 0 ? "up" : c < 0 ? "down" : ""}">${signed(c)}</b></span>`; }).join("")}
+          <span class="muted">Low <span class="num">${money(Math.min(...histVals))}</span> · High <span class="num">${money(Math.max(...histVals))}</span></span></div></div>`
       : `<p class="small muted" style="margin:0">Your value chart starts after prices update on two different days. Deckhand updates them automatically once a day when you open it.</p>`) : ""}
     ${moversHTML()}
     <div class="row"><input type="search" id="cq" class="grow" placeholder="Filter by name, set or type" value="${esc(cv.q)}">
       <select id="cs" aria-label="Sort"><option value="value">Value</option><option value="change">Price change</option><option value="name">Name</option><option value="set">Set</option><option value="scanned">Date scanned</option><option value="recent">Recently added</option></select></div>
     <div class="row wrap"><button class="btn sm" id="cRefresh">Update prices</button><button class="btn sm" id="cImp">Import CSV</button><button class="btn sm" id="cVal">Value breakdown</button><button class="btn sm" id="cMore">Backup / export</button><button class="btn sm" id="cSync">Sync</button>${INSTALL.prompt && !isStandalone() ? `<button class="btn sm" id="cInst">Install app</button>` : ""}<button class="btn sm ${cv.select ? "primary" : ""}" id="cSel">${cv.select ? "Done selecting" : "Select"}</button></div>
+    ${cv.fSet || cv.fRar ? `<div class="fchips small"><span class="muted">Showing only</span>${cv.fSet ? `<button class="chip" id="fSetX" aria-label="Stop filtering by set">${esc((st.sets[cv.fSet] || {}).name || cv.fSet.toUpperCase())} ✕</button>` : ""}${cv.fRar ? `<button class="chip rar-${esc(cv.fRar)}" id="fRarX" aria-label="Stop filtering by rarity">${cv.fRar === "mythic" ? "Mythics" : "Rares"} ✕</button>` : ""}</div>` : ""}
     <div id="clist"></div></div>`;
   $("#cs").value = cv.sort; updRefreshBtn();
   $("#cq").oninput = debounce(e => { cv.q = e.target.value; drawCollList(); }, 150);
@@ -943,6 +989,16 @@ function renderColl() {
   $("#cMore").onclick = ioSheet; $("#cSync").onclick = syncSheet; syncBadge(); const ci = $("#cInst"); if (ci) ci.onclick = installApp;
   $("#cImp").onclick = () => pickCSV({ kind: "coll" });
   $("#cVal").onclick = valueSheet;
+  v.querySelectorAll("[data-dash]").forEach(b => b.onclick = () => {
+    const d = b.dataset.dash;
+    if (d === "sets") return setsSheet();
+    if (d === "rare" || d === "mythic") { cv.fRar = d; cv.fSet = ""; }
+    else { cv.fRar = ""; cv.fSet = ""; if (d !== "all") cv.sort = d; }
+    showList();
+  });
+  const np = $("#dNoP"); if (np) np.onclick = valueSheet;
+  const fx = $("#fSetX"); if (fx) fx.onclick = () => { cv.fSet = ""; renderColl(); };
+  const rx = $("#fRarX"); if (rx) rx.onclick = () => { cv.fRar = ""; renderColl(); };
   $("#cSel").onclick = () => { cv.select = !cv.select; cv.sel.clear(); renderColl(); };
   $("#bChips").onclick = e => { const b = e.target.closest("button"); if (!b) return; if (b.dataset.b === "__manage") binderSheet(); else { cv.binder = b.dataset.b; renderColl(); } };
   v.querySelectorAll("[data-seen]").forEach(b => b.onclick = () => { S.alerts[b.dataset.seen].seen = true; save(); renderColl(); });
@@ -999,6 +1055,7 @@ function drawCollList() {
   const q = cv.q.trim().toLowerCase();
   let rows = Object.entries(S.coll).filter(([k, e]) =>
     (cv.binder === "all" ? !isWish(e.binder) : e.binder === cv.binder) &&
+    (!cv.fSet || e.set === cv.fSet) && (!cv.fRar || e.rarity === cv.fRar) &&
     (!q || (e.name + " " + e.set + " " + e.setName + " " + e.type).toLowerCase().includes(q)));
   const val = e => (priceOf(e, e.finish) || 0) * e.qty;
   const chg = e => { const c = phChange(e); return c ? c.d * e.qty : 0; };
@@ -1009,7 +1066,7 @@ function drawCollList() {
   const shown = rows.slice(0, 400);
   const el = $("#clist"), uses = deckUse();
   for (const k of [...cv.sel]) if (!S.coll[k]) cv.sel.delete(k);
-  if (!rows.length) { el.innerHTML = `<p class="muted">${q ? `No cards match “${esc(cv.q)}”.` : "Nothing in this binder yet. Add cards from Search or Scan and pick this binder."}</p>`; return; }
+  if (!rows.length) { el.innerHTML = `<p class="muted">${q || cv.fSet || cv.fRar ? `No cards match${q ? ` “${esc(cv.q)}”` : ""}${cv.fSet || cv.fRar ? " with this filter" : ""}.` : "Nothing in this binder yet. Add cards from Search or Scan and pick this binder."}</p>`; return; }
   let lastDay = null;
   const dayHead = e => {
     if (cv.sort !== "scanned") return "";
