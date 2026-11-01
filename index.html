@@ -405,10 +405,28 @@ let queue = Promise.resolve();
 // Scryfall requests take turns (Scryfall asks for ~10 per second at most). Something you're waiting on
 // (a card you picked, a search) can skip the line instead of waiting behind a long background price update.
 // A dropped connection or a "slow down" reply is retried before giving up.
-let sfLast = 0;
+// Scryfall's limits (scryfall.com/docs/api/rate-limits): card search, named lookup, random and collection are
+// 2 requests a second; everything else 10 a second. Going over gets a 429 and a 30-second block, and the browser
+// usually reports that block as "couldn't connect". Every request books its slot here before it goes out, so even
+// requests started at the same moment stay spaced out.
+let sfLast = 0, sfLastSlow = 0, sfPauseUntil = 0;
+const SF_SLOW = /^\/cards\/(search|named|random|collection)(\/|\?|$)/;
+const sfPathOf = path => { try { return path.startsWith("http") ? new URL(path).pathname : path.split("?")[0]; } catch (e) { return path; } };
+// Deckhand open in two tabs on one device shares one schedule (the limits are per device/connection, not per tab)
+const sfShared = (k, v) => { try { if (v !== undefined) localStorage.setItem("dh-sf-" + k, String(v)); return +localStorage.getItem("dh-sf-" + k) || 0; } catch (e) { return 0; } };
+function sfSlot(path) {
+  const now = Date.now(), slow = SF_SLOW.test(sfPathOf(path));
+  sfLast = Math.max(sfLast, sfShared("last")); sfPauseUntil = Math.max(sfPauseUntil, sfShared("pause")); if (slow) sfLastSlow = Math.max(sfLastSlow, sfShared("slow"));
+  const at = Math.max(now, sfPauseUntil, sfLast + 110, slow ? sfLastSlow + 520 : 0);
+  sfLast = at; sfShared("last", at); if (slow) { sfLastSlow = at; sfShared("slow", at); }
+  return at - now;
+}
+const sfPause = () => { sfPauseUntil = Math.max(sfPauseUntil, Date.now() + 30000); sfShared("pause", sfPauseUntil); };
+const SF_PAUSED = "Scryfall is pausing requests from this connection for about 30 seconds because too many arrived at once (this can happen when several devices on the same Wi-Fi use Deckhand together). Try again in a minute.";
+const SF_UNREACH = "Couldn't reach Scryfall. If Deckhand is busy on another device on the same Wi-Fi (updating prices, importing), Scryfall may be pausing requests for about 30 seconds, so try again in a minute. Otherwise check your connection, or whether an ad blocker or privacy extension is blocking api.scryfall.com.";
 function sf(path, body, opts = {}) {
   const once = async () => {
-    const wait = sfLast + 110 - Date.now(); if (wait > 0) await sleep(wait); sfLast = Date.now();
+    const wait = sfSlot(path); if (wait > 0) await sleep(wait);
     let r;
     try {
       r = await fetch(path.startsWith("http") ? path : API + path, {
@@ -416,18 +434,29 @@ function sf(path, body, opts = {}) {
         headers: body ? { "Accept": "application/json", "Content-Type": "application/json" } : { "Accept": "application/json" },
         body: body ? JSON.stringify(body) : undefined
       });
-    } catch (e) { throw Object.assign(new Error(navigator.onLine === false ? "You're offline. Check your internet connection." : "Couldn't reach Scryfall. Check your connection; if it keeps happening, an ad blocker or privacy extension may be blocking api.scryfall.com."), { net: true }); }
+    } catch (e) {
+      if (navigator.onLine === false) throw Object.assign(new Error("You're offline. Check your internet connection."), { net: true, offline: true });
+      // Scryfall's 30-second block usually arrives without the headers a browser needs to read it, so it looks like this too
+      throw Object.assign(new Error(SF_UNREACH), { net: true });
+    }
     const j = await r.json().catch(() => null);
-    if (!r.ok) { const e = new Error((j && j.details) || (r.status === 429 ? "Scryfall is busy, try again in a moment." : "Scryfall returned " + r.status)); e.status = r.status; e.data = j; throw e; }
+    if (r.status === 429) sfPause();
+    if (!r.ok) { const e = new Error(r.status === 429 ? SF_PAUSED : (j && j.details) || "Scryfall returned " + r.status); e.status = r.status; e.data = j; e.limited = r.status === 429; throw e; }
     return j;
   };
+  // background jobs (price updates, imports) can wait out a pause; something you're looking at gets one quick retry, then the message
+  const patient = !!(body || opts.queue);
   const run = async () => {
     for (let i = 0; ; i++) {
       try { return await once(); }
-      catch (e) { if (i >= 2 || !(e.net || e.status === 429 || e.status >= 500)) throw e; await sleep(e.status === 429 ? 1200 * (i + 1) : 500 * (i + 1)); }
+      catch (e) {
+        if (e.offline || !(e.net || e.status === 429 || e.status >= 500)) throw e;
+        if (e.limited ? (!patient || i >= 2) : i >= 2) throw e;
+        await sleep(e.limited ? 0 : (patient ? 2000 : 600) * (i + 1));         // a 429 pause is already booked into the next slot
+      }
     }
   };
-  // single lookups go straight away (still spaced out by sfLast); bulk batches (price updates, imports, legality checks) take turns
+  // single lookups go straight away (still spaced out by the slots); bulk batches (price updates, imports, legality checks) take turns
   if (opts.now || (!body && !opts.queue)) return run();
   const p = queue.then(run);
   queue = p.catch(() => {}).then(() => sleep(110));
@@ -630,7 +659,7 @@ function attachAutocomplete(inp, ul, onPick, opts = {}) {
     // Enter with no list showing: look up exactly what was typed (closest match)
     if (enterPicks && e.key === "Enter" && (ul.hidden || !items.length) && inp.value.trim().length >= 2 && !/[:<>=!"]/.test(inp.value)) {
       e.preventDefault(); const q = (opts.qty ? inp.value.replace(/^\s*\d+\s*x?\s+/i, "") : inp.value).trim();
-      sf("/cards/named?fuzzy=" + encodeURIComponent(q), null, { now: true }).then(c => onPick(c.name)).catch(er => toast(`No card found for “${q}”${er.status === 404 ? "" : ": " + er.message}`));
+      sf("/cards/named?fuzzy=" + encodeURIComponent(q), null, { now: true }).then(c => onPick(c.name)).catch(er => toast(er.status === 404 ? `No card found for “${q}”` : er.message));
       return;
     }
     if (ul.hidden || !items.length) return;

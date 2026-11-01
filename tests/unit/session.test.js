@@ -43,7 +43,7 @@ async function page(mode, plan) {
   const heads = $("#scSession").textContent.replace(/\s+/g, " ");
   ok(/Scanned this session/.test(heads) && /Add all 4/.test(heads), "list header with 'Add all 4': " + (heads.match(/Add all [^)]*\)/) || [""])[0]);
   // choose: pick Helix for the partial read, skip the Counterspell
-  w.document.querySelector('[data-pick][data-n="Lightning Helix"]').click(); await new Promise(r => setTimeout(r, 100));
+  w.document.querySelector('[data-pick][data-n="Lightning Helix"]').click(); for (let i = 0; i < 60 && !T.sc.items.some(x => x.card && x.card.name === "Lightning Helix"); i++) await new Promise(r => setTimeout(r, 50));
   const cs = T.sc.items.find(i => i.card && i.card.name === "Counterspell"); w.document.querySelector(`[data-skip="${cs.id}"]`).click();
   w.document.querySelector("#sesAll").click();
   const coll = Object.values(T.S().coll).map(e => e.name + "×" + e.qty).sort().join(", ");
