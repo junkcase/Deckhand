@@ -45,6 +45,9 @@ header.top{position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1
   display:flex;align-items:baseline;justify-content:space-between;gap:12px}
 header.top h1{margin:0;font:700 22px/1.1 var(--f-display);letter-spacing:.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 header.top .sub{font-size:13px;color:var(--muted);white-space:nowrap}
+header.top .hright{display:flex;align-items:center;gap:8px;min-width:0}
+.syncpill{border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:999px;padding:3px 10px;font:600 12px/1.4 var(--f-body);white-space:nowrap;cursor:pointer}
+.syncpill.ok{color:var(--ok)}.syncpill.warn{color:var(--danger);border-color:var(--danger)}.syncpill.busy{color:var(--accent)}
 main{padding:14px max(16px,env(safe-area-inset-right,0px)) calc(var(--nav-h) + env(safe-area-inset-bottom,0px) + 24px) max(16px,env(safe-area-inset-left,0px));max-width:900px;margin:0 auto}
 
 nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--surface);border-top:1px solid var(--line);
@@ -285,7 +288,7 @@ h2.sec{margin:6px 0 0;font:700 18px var(--f-display)}
 <body>
 <header class="top">
   <h1 id="viewTitle">Collection</h1>
-  <span class="sub num" id="viewSub"></span>
+  <span class="hright"><span class="sub num" id="viewSub"></span><button type="button" class="syncpill" id="syncPill" hidden></button></span>
 </header>
 <main id="view"></main>
 
@@ -380,18 +383,22 @@ function idbOpen() {
   return idb.p;
 }
 async function idbGet(k) { const db = await idbOpen(); return new Promise((res, rej) => { const q = db.transaction("kv").objectStore("kv").get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
+// several keys in ONE transaction: either all of them are saved or none (used to keep the cards and the sync record in step)
+async function idbSetMany(pairs) { const db = await idbOpen(); return new Promise((res, rej) => { const tx = db.transaction("kv", "readwrite"), st = tx.objectStore("kv"); for (const [k, v] of pairs) st.put(v, k); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error || new Error("aborted")); }); }
 async function idbSet(k, v) { const db = await idbOpen(); return new Promise((res, rej) => { const tx = db.transaction("kv", "readwrite"); tx.objectStore("kv").put(v, k); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error || new Error("aborted")); }); }
-let saveT = null, saving = null, saveWarned = false;
-function save() { staleIndex(); clearTimeout(saveT); saveT = setTimeout(flushSave, 250); if (typeof SYNC !== "undefined") { SYNC.dirty = true; scheduleSync(); } }
+let saveT = null, saving = null, saveWarned = false, pendingBase = null;
+function save() { staleIndex(); clearTimeout(saveT); saveT = setTimeout(flushSave, 250); if (typeof SYNC !== "undefined") { SYNC.dirty = true; scheduleSync(); syncBadge(); } }
 async function flushSave() {
   clearTimeout(saveT); saveT = null;
+  const base = pendingBase; pendingBase = null;
   if (idb.ok) {
     try {
-      saving = idbSet("state", S); await saving; saving = null;
+      saving = idbSetMany(base ? [["state", S], ["syncBase", base]] : [["state", S]]); await saving; saving = null;
       try { if (localStorage.getItem(KEY)) localStorage.removeItem(KEY); } catch (e) {}
       return true;
     } catch (e) { saving = null; idb.ok = false; }
   }
+  if (typeof SYNC !== "undefined" && base) SYNC.base = null;      // no database: the sync record can't be kept with the cards, so the next sync combines instead
   try { localStorage.setItem(KEY, JSON.stringify(S)); return true; }
   catch (e) { if (!saveWarned) { saveWarned = true; toast("Couldn't save: phone storage is full or blocked. Export a backup from Collection."); } return false; }
 }
@@ -1596,12 +1603,14 @@ async function pushGist(state) {
 function mergeSync(B, L, R) {
   // whole sections first: if one side didn't touch a section, the other side's version is the answer
   const out = {}, fast = {};
-  for (const k of SYNC_KEYS) { const bj = J_(B[k]), lj = J_(L[k]); if (lj === bj) fast[k] = R[k]; else if (J_(R[k]) === bj) fast[k] = L[k]; }
+  for (const k of SYNC_KEYS) { const bj = J_(B[k]), lj = J_(L[k]), rj = J_(R[k]); if (lj === bj || lj === rj) fast[k] = R[k]; else if (rj === bj) fast[k] = L[k]; }
   const done = r => { for (const k of SYNC_KEYS) if (k in fast) r[k] = fast[k] === undefined ? syncEmpty(k) : fast[k]; return r; };
   if (Object.keys(fast).length === SYNC_KEYS.length) return done(out);
   const coll = {};
   for (const k of new Set([...Object.keys(R.coll), ...Object.keys(L.coll), ...Object.keys(B.coll)])) {
-    const b = B.coll[k], l = L.coll[k], r = R.coll[k], q = (r ? r.qty : 0) + (l ? l.qty : 0) - (b ? b.qty : 0);
+    const b = B.coll[k], l = L.coll[k], r = R.coll[k];
+    if (l && r && J_(l) === J_(r)) { coll[k] = r; continue; }          // the same on both sides (e.g. an upload that landed but wasn't recorded): count it once
+    const q = (r ? r.qty : 0) + (l ? l.qty : 0) - (b ? b.qty : 0);
     if (q <= 0) continue;
     const src = l && (!b || J_(l) !== J_(b)) ? l : (r || l);
     if (src.qty === q) coll[k] = src; else { const o = Object.assign({}, src); o.qty = q; coll[k] = o; }
@@ -1633,10 +1642,28 @@ function mergeSync(B, L, R) {
   return done(out);
 }
 async function syncBase() { if (SYNC.base === undefined) { try { SYNC.base = idb.ok ? (await idbGet("syncBase")) || null : null; } catch (e) { SYNC.base = null; } } return SYNC.base; }
-async function setSyncBase(st) { SYNC.base = { state: JSON.parse(JSON.stringify(st)), at: Date.now() }; if (idb.ok) await idbSet("syncBase", SYNC.base).catch(() => {}); }
-function applySynced(st) {
+const baseTrusted = base => !!(base && base.id && base.id === S.meta.syncId);
+// The sync record ("what was last synced") and the cards are saved together, with a matching id. If they ever
+// disagree (a save that never landed, an old copy restored), this device's data can't be trusted to mean
+// "deleted here", so the next sync combines everything instead of removing anything.
+async function setSyncBase(st) {
+  const id = uid() + Date.now().toString(36);
+  SYNC.base = { state: JSON.parse(JSON.stringify(st)), at: Date.now(), id };
+  S.meta.syncId = id; pendingBase = SYNC.base;
+  await flushSave();
+}
+// a starting point that keeps everything from both sides: cards on both count once at the larger quantity, nothing is deleted
+function combineBase(L, R) {
+  const B = pickSync({}); B.coll = {};
+  for (const k in L.coll) if (R.coll[k]) B.coll[k] = Object.assign({}, L.coll[k], { qty: Math.min(L.coll[k].qty, R.coll[k].qty) });
+  return B;
+}
+function applySynced(st, from) {
   SYNC.undo = pickSync(JSON.parse(JSON.stringify(S)));
-  for (const d of Object.values(S.decks || {})) if (!(st.decks || {})[d.id]) trashDeck(d, "removed by a sync");
+  for (const d of Object.values(S.decks || {})) if (!(st.decks || {})[d.id]) trashDeck(d, "removed by a sync" + (from ? " from your " + from : ""));
+  // cards a sync takes off this device are listed for 30 days so they can be put back
+  const gone = []; for (const [k, e] of Object.entries(S.coll || {})) { const n = st.coll && st.coll[k] ? st.coll[k].qty : 0; if (n < e.qty) gone.push(Object.assign({}, e, { k, qty: e.qty - n })); }
+  if (gone.length) S.meta.syncRemoved = [{ id: uid(), at: Date.now(), from: from || "", cards: gone.slice(0, 8000) }, ...(S.meta.syncRemoved || [])].filter(x => Date.now() - x.at < 30 * 864e5).slice(0, 20);
   for (const k of SYNC_KEYS) S[k] = st[k];
   migrate(); save();
   if (!$("#sheetRoot").innerHTML) render(); else if ($("#syBody")) drawSync();
@@ -1646,23 +1673,26 @@ async function syncNow(manual) {
   const cfg = syncCfg(); if (!cfg || !cfg.gist || cfg.paused || SYNC.busy || SYNC.ask) return;
   if (!manual && (sc.busy || sc.gridBusy || ana.shooting)) { scheduleSync(5000); return; }        // don't slow down a scan in progress
   if (!navigator.onLine) { SYNC.err = "Offline: will sync when you're back online."; if ($("#syBody")) drawSync(); return; }
-  SYNC.busy = true; if ($("#syBody")) drawSync();
+  SYNC.busy = true; if ($("#syBody")) drawSync(); syncBadge();
   try {
     if (saveT) await flushSave();
-    const base = await syncBase(), wasDirty = SYNC.dirty; SYNC.dirty = false;
+    const base = await syncBase(), wasDirty = SYNC.dirty, trusted = baseTrusted(base); SYNC.dirty = false;
+    if (base && !trusted) SYNC.etag = null;                                                          // re-read the synced copy in full
     const remote = await readGist();
-    if (!remote && !wasDirty && base) { SYNC.at = Date.now(); SYNC.err = ""; return; }            // nothing new anywhere
+    if (!remote && !wasDirty && trusted) { SYNC.at = Date.now(); SYNC.err = ""; return; }            // nothing new anywhere
     const local = pickSync(S);
-    if (!remote && base && SYNC.lastJ && J_(local) === SYNC.lastJ) { SYNC.at = Date.now(); SYNC.err = ""; return; }   // only device settings changed
+    if (!remote && trusted && SYNC.lastJ && J_(local) === SYNC.lastJ) { SYNC.at = Date.now(); SYNC.err = ""; return; }   // only device settings changed
     if (!base) {                                                                                     // first sync on this device
       const rs = remote && remote.state, lc = syncCount(local) + Object.keys(local.decks).length, rc = rs ? syncCount(rs) + Object.keys(rs.decks).length : 0;
       if (!rs || !rc) { await pushGist(local); await setSyncBase(local); }
       else if (!lc) { applySynced(rs); await setSyncBase(rs); toast(`Loaded ${syncCount(rs).toLocaleString()} cards from your other device`); }
       else { SYNC.ask = { local, remote: rs }; syncSheet(); return; }
     } else {
-      const R = remote ? remote.state : base.state, merged = mergeSync(base.state, local, R);
+      const R = remote ? remote.state : base.state, from = remote && remote.info ? remote.info.device || "" : "";
+      const merged = mergeSync(trusted ? base.state : combineBase(local, R), local, R);
       const ms = J_(merged), changedHere = SYNC_KEYS.some(k => J_(merged[k]) !== J_(local[k]));
-      if (changedHere) { applySynced(merged); if (remote) { SYNC.from = remote.info.device || ""; toast(`Updated from your ${SYNC.from || "other device"}`, { label: "Undo", fn: undoSync }); } }
+      // 1. save the combined cards here first (the sync record stays as it was), 2. upload, 3. save the new sync record with the cards
+      if (changedHere) { applySynced(merged, from); clearTimeout(SYNC.t); SYNC.dirty = false; await flushSave(); if (remote) { SYNC.from = from; toast(`Updated from your ${from || "other device"}`); } }
       if (ms !== J_(R)) await pushGist(merged);
       await setSyncBase(merged); SYNC.lastJ = ms;
     }
@@ -1673,15 +1703,42 @@ async function syncNow(manual) {
   } finally { SYNC.busy = false; if ($("#syBody")) drawSync(); syncBadge(); }
 }
 function undoSync() { if (!SYNC.undo) return; for (const k of SYNC_KEYS) S[k] = SYNC.undo[k]; SYNC.undo = null; migrate(); save(); render(); toast("Put back how it was before the last sync"); }
-function scheduleSync(ms = 5000) { if (!syncCfg()) return; clearTimeout(SYNC.t); SYNC.t = setTimeout(() => syncNow(), ms); }
+function scheduleSync(ms = 2000) { if (!syncCfg()) return; clearTimeout(SYNC.t); SYNC.t = setTimeout(() => syncNow(), ms); }
 function startSyncLoop() {
   if (!syncCfg()) return;
-  clearInterval(SYNC.poll); SYNC.poll = setInterval(() => { if (!document.hidden) syncNow(); }, 30000);
+  clearInterval(SYNC.poll); SYNC.poll = setInterval(() => { if (!document.hidden) syncNow(); }, 15000);
   syncNow();
 }
-document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleSync(300); });
+// coming back: check for changes; leaving (switching apps, locking the phone): send what's waiting straight away
+document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleSync(300); else if (SYNC.dirty && syncCfg() && !SYNC.busy) { clearTimeout(SYNC.t); syncNow(); } });
 window.addEventListener("online", () => scheduleSync(500));
-function syncBadge() { const b = $("#cSync"); if (b) b.textContent = !syncCfg() ? "Sync" : SYNC.err ? "Sync ⚠" : SYNC.busy ? "Syncing…" : "Synced ✓"; }
+function syncBadge() {
+  const b = $("#cSync"); if (b) b.textContent = !syncCfg() ? "Sync" : SYNC.err ? "Sync ⚠" : SYNC.busy ? "Syncing…" : "Synced ✓";
+  // always-visible status on every screen: tap it to sync now and see details
+  const p = $("#syncPill"), cfg = syncCfg(); if (!p) return;
+  if (!cfg || !cfg.gist) { p.hidden = true; return; }
+  const st = cfg.paused ? ["Sync paused", "warn"] : !navigator.onLine ? ["Offline · saved here", "warn"] : SYNC.err ? ["Sync problem", "warn"] : SYNC.busy ? ["Syncing…", "busy"] : SYNC.dirty || saveT ? ["Saving…", "busy"] : ["Synced ✓", "ok"];
+  p.hidden = false; p.textContent = st[0]; p.className = "syncpill " + st[1];
+  p.title = SYNC.at ? "Last synced " + new Date(SYNC.at).toLocaleTimeString() : "";
+}
+document.addEventListener("click", e => { if (e.target && e.target.id === "syncPill") { if (!syncCfg().paused) syncNow(true); syncSheet(); } });
+window.addEventListener("offline", () => syncBadge());
+// cards a sync took off this device (another device removed them, or a stale copy did): put them back
+function syncRemovedHTML() {
+  const recs = (S.meta.syncRemoved || []).filter(x => !x.restored && Date.now() - x.at < 30 * 864e5);
+  if (!recs.length) return "";
+  return `<div class="box stack" style="gap:6px;margin-top:10px"><span class="label">Removed from this ${devName()} by a sync (last 30 days)</span>
+    ${recs.map(x => { const n = x.cards.reduce((a, e) => a + e.qty, 0); return `<div class="kv"><span class="grow small">${esc(new Date(x.at).toLocaleString())}${x.from ? ` · from your ${esc(x.from)}` : ""}: <b>${n.toLocaleString()} card${n === 1 ? "" : "s"}</b>
+      <span class="muted">${x.cards.slice(0, 4).map(e => `${e.qty}× ${esc(e.name)}`).join(", ")}${x.cards.length > 4 ? ", …" : ""}</span></span><button class="btn sm" data-unrm="${esc(x.id)}">Put back</button></div>`; }).join("")}
+    <span class="small muted">Decks removed by a sync are under Decks → Recently deleted.</span></div>`;
+}
+function restoreSyncRemoved(id) {
+  const x = (S.meta.syncRemoved || []).find(r => r.id === id); if (!x) return;
+  let n = 0;
+  for (const e of x.cards) { const k = e.k, c = Object.assign({}, e); delete c.k; if (S.coll[k]) S.coll[k].qty += c.qty; else S.coll[k] = c; n += c.qty; }
+  if (S.binders && x.cards.some(e => !S.binders[e.binder])) migrate();
+  x.restored = Date.now(); save(); toast(`Put back ${n.toLocaleString()} card${n === 1 ? "" : "s"}. They'll sync to your other devices.`);
+}
 async function connectSync(token) {
   setSyncCfg({ token });
   try {
@@ -1714,13 +1771,11 @@ function drawSync() {
         <button class="btn ghost" id="syLater">Decide later (sync stays paused)</button></div>`;
     const finish = async st => {
       SYNC.ask = null; SYNC.undo = pickSync(JSON.parse(JSON.stringify(S)));
-      try { applySynced(st); await pushGist(pickSync(S)); await setSyncBase(pickSync(S)); SYNC.at = Date.now(); SYNC.err = ""; toast("Synced", { label: "Undo", fn: undoSync }); }
+      try { applySynced(st); await flushSave(); await pushGist(pickSync(S)); await setSyncBase(pickSync(S)); SYNC.at = Date.now(); SYNC.err = ""; toast("Synced"); }
       catch (e) { SYNC.err = e.message; } drawSync(); syncBadge();
     };
     $("#syComb").onclick = () => {
-      const B = pickSync({}); B.coll = {};
-      for (const k in a.local.coll) if (a.remote.coll[k]) B.coll[k] = Object.assign({}, a.local.coll[k], { qty: Math.min(a.local.coll[k].qty, a.remote.coll[k].qty) });
-      finish(mergeSync(B, a.local, a.remote));
+      finish(mergeSync(combineBase(a.local, a.remote), a.local, a.remote));
     };
     $("#syTheirs").onclick = () => finish(a.remote);
     $("#syMine").onclick = () => finish(a.local);
@@ -1751,14 +1806,16 @@ function drawSync() {
       <div class="kv"><span>Status</span><b class="${SYNC.err ? "down" : "up"}">${cfg.paused ? "Paused" : SYNC.busy ? "Syncing…" : SYNC.err ? "Problem" : SYNC.at ? "Synced " + ago(SYNC.at) : "Waiting"}</b></div>
       ${SYNC.err ? `<div class="small down">${esc(SYNC.err)}</div>` : ""}
       ${SYNC.from ? `<div class="small muted">Last change came from your ${esc(SYNC.from)}.</div>` : ""}</div>
-    <p class="small muted">Syncs when Deckhand opens, when you come back to it, every 30 seconds while it's open, and a few seconds after you change something. Scan settings stay separate on each device.</p>
+    <p class="small muted">Every change is saved on this device at once and sent to your other devices about 2 seconds later. Deckhand also checks for changes from your other devices when it opens, when you come back to it, and every 15 seconds while it's open. Scan settings stay separate on each device.</p>
     <div class="menu">
       <button class="btn primary" id="syNow">${cfg.paused ? "Resume and sync now" : "Sync now"}</button>
       ${SYNC.undo ? `<button class="btn" id="syUndo">Undo the last sync on this device</button>` : ""}
       ${SYNC.err && /token/.test(SYNC.err) ? `<form class="row" id="syForm"><input type="password" id="syTok" class="grow" placeholder="Paste a new token" autocomplete="off"><button class="btn">Use token</button></form>` : ""}
       <button class="btn" id="syOld">Find a missing deck in earlier syncs</button>
+      ${syncRemovedHTML()}
       <button class="btn ghost" id="syOff">Stop syncing on this device</button></div>`;
   $("#syOld").onclick = () => { closeSheet(); oldDecksSheet(); };
+  el.querySelectorAll("[data-unrm]").forEach(b => b.onclick = () => { restoreSyncRemoved(b.dataset.unrm); drawSync(); });
   $("#syNow").onclick = () => { if (cfg.paused) { setSyncCfg(Object.assign({}, cfg, { paused: false })); startSyncLoop(); } else syncNow(true); };
   const u = $("#syUndo"); if (u) u.onclick = () => { undoSync(); drawSync(); };
   const f = $("#syForm"); if (f) f.onsubmit = e => { e.preventDefault(); const t = $("#syTok").value.trim(); if (t) { setSyncCfg(Object.assign({}, cfg, { token: t })); SYNC.err = ""; syncNow(true); } };
