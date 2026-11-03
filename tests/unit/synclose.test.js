@@ -78,5 +78,17 @@ const settle = () => new Promise(r => setTimeout(r, 400));
   // ---- 5. what a sync removes from this device can be put back
   const removed = F.S().meta.syncRemoved || [];
   ok(Array.isArray(removed), "removals by sync are recorded on the device");
+  // ---- 6. damaged or empty pieces don't crash sync or wipe anything
+  const g = Object.values(GH.gists)[0], saved = JSON.parse(JSON.stringify(g.files));
+  g.files = { "deckhand-sync.json": { content: JSON.stringify({ v: 1, chunks: 0, at: 0 }) } }; g.etag = '"empty"';
+  const before = D.cards(); await D.sync();
+  ok(!D.SYNC.err && D.cards() === before && JSON.parse(g.files["deckhand-sync.json"].content).chunks > 0, `an empty synced copy is filled from this device, nothing removed here (${D.SYNC.err || "ok"})`);
+  F.SYNC.base = { at: 1, id: F.S().meta.syncId }; await F.sync();
+  ok(!F.SYNC.err && F.cards() === D.cards(), `a damaged sync record doesn't crash and nothing is lost (${F.SYNC.err || "ok"}; phone ${F.cards()})`);
+  const st = await (async () => { const text = Object.keys(g.files).filter(k => /data/.test(k)).sort().map(k => g.files[k].content).join(""); return text; })();
+  g.files["deckhand-data-0.txt"] = { content: "J" + JSON.stringify({ coll: null, decks: null, hist: {} }) }; for (const k of Object.keys(g.files)) if (/deckhand-data-[1-9]/.test(k)) delete g.files[k];
+  g.files["deckhand-sync.json"] = { content: JSON.stringify({ v: 1, chunks: 1, at: Date.now(), device: "tablet" }) }; g.etag = '"weird"';
+  F.S().meta.syncId = "mismatch"; await F.sync();
+  ok(!F.SYNC.err && /Sol/.test(F.cards()) && /Ghalta/.test(F.decks()), `a synced copy with blank sections doesn't crash or wipe this device (${F.SYNC.err || "ok"}; ${F.cards()})`);
   process.exit();
 })();
