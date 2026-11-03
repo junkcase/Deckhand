@@ -1704,7 +1704,7 @@ async function syncNow(manual) {
     SYNC.err = e.message || String(e); SYNC.dirty = true;
     // keep the details so a problem that only happens on one device can be tracked down
     SYNC.errDetail = String(e && e.stack || e).split("\n").slice(0, 3).map(x => x.trim().replace(/\(?https?:\/\/[^)\s]*\/([^/)\s]+)\)?/g, "$1")).join(" ← ");
-    try { console.error("Deckhand sync:", e); } catch (er) {}
+    try { console.warn("Deckhand sync:", e); } catch (er) {}
     if (manual) toast("Sync failed: " + SYNC.err);
   } finally { SYNC.busy = false; if ($("#syBody")) drawSync(); syncBadge(); }
 }
