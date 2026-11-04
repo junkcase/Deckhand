@@ -1291,7 +1291,7 @@ function renderColl() {
       <button type="button" class="btn sm ${fChips.filter(c => c[0] !== "q").length ? "on" : ""}" id="cfTog" aria-expanded="${cv.fOpen}">Filters${fChips.filter(c => c[0] !== "q").length ? ` · ${fChips.filter(c => c[0] !== "q").length}` : ""}</button>
       <select id="cs" aria-label="Sort"><option value="value">Value</option><option value="change">Price change</option><option value="name">Name</option><option value="set">Set</option><option value="scanned">Date scanned</option><option value="recent">Recently added</option></select></div>
     ${collFilterPanel(cv.f, st.sets)}
-    <div class="row wrap"><button class="btn sm" id="cRefresh">Update prices</button><button class="btn sm" id="cImp">Import CSV</button><button class="btn sm" id="cVal">Value breakdown</button><button class="btn sm" id="cAlerts">Price alerts${nRules ? ` (${nRules})` : ""}</button><button class="btn sm" id="cMore">Backup / export</button><button class="btn sm" id="cSync">Sync</button>${INSTALL.prompt && !isStandalone() ? `<button class="btn sm" id="cInst">Install app</button>` : ""}<button class="btn sm ${cv.select ? "primary" : ""}" id="cSel">${cv.select ? "Done selecting" : "Select"}</button></div>
+    <div class="row wrap"><button class="btn sm" id="cRefresh">Update prices</button><button class="btn sm" id="cImp">Import CSV</button><button class="btn sm" id="cVal">Value breakdown</button><button class="btn sm" id="cDup">Duplicates</button><button class="btn sm" id="cAlerts">Price alerts${nRules ? ` (${nRules})` : ""}</button><button class="btn sm" id="cMore">Backup / export</button><button class="btn sm" id="cSync">Sync</button>${INSTALL.prompt && !isStandalone() ? `<button class="btn sm" id="cInst">Install app</button>` : ""}<button class="btn sm ${cv.select ? "primary" : ""}" id="cSel">${cv.select ? "Done selecting" : "Select"}</button></div>
     <div class="fchips small" id="cfChips">${chipsHTML(fChips)}</div>
     <div id="clist"></div></div>`;
   $("#cs").value = cv.sort; updRefreshBtn();
@@ -1300,7 +1300,7 @@ function renderColl() {
   $("#cRefresh").onclick = () => refreshPrices(false);
   $("#cMore").onclick = ioSheet; $("#cSync").onclick = syncSheet; syncBadge(); const ci = $("#cInst"); if (ci) ci.onclick = installApp;
   $("#cImp").onclick = () => pickCSV({ kind: "coll" });
-  $("#cVal").onclick = valueSheet;
+  $("#cVal").onclick = valueSheet; $("#cDup").onclick = dupSheet;
   v.querySelectorAll("[data-dash]").forEach(b => b.onclick = () => {
     const d = b.dataset.dash;
     if (d === "sets") return setsSheet();
@@ -1465,6 +1465,65 @@ function valueSheet() {
       <div class="box"><span class="label">If it still doesn't match ManaBox</span>
         <span class="small">ManaBox can show prices from different stores (TCGplayer market, low or mid, Card Kingdom, Cardmarket). Card Kingdom and TCGplayer mid run noticeably higher than TCGplayer market. Check which one ManaBox is set to. Prices also update at different times of day, so small differences are normal.</span></div>
     </div>`, () => render());
+}
+/* Duplicates: copies you own beyond what your decks use plus how many you like to keep, so you know what's safe
+   to trade or sell. The best copies (highest value) are the ones kept; the extras are the rest. */
+const dupOpt = { keep: 1, basics: false, sel: new Set() };
+function dupList(o) {
+  const X = cardIndex(), by = {};
+  for (const [k, e] of Object.entries(S.coll)) { if (isWish(e.binder)) continue; (by[e.name] = by[e.name] || []).push([k, e]); }
+  const rows = [];
+  for (const name in by) {
+    const ents = by[name], own = ents.reduce((a, [, e]) => a + e.qty, 0), first = ents[0][1];
+    if (!o.basics && (first.basic || /^Basic\b/.test(first.type || ""))) continue;
+    const per = X.decks.get(name), qs = per ? [...per.values()] : [];
+    const inDecks = !qs.length ? 0 : shareCopies() ? Math.max(...qs) : qs.reduce((a, q) => a + q, 0);       // shared copies: the biggest single deck; otherwise all decks together
+    const extra = own - inDecks - o.keep; if (extra <= 0) continue;
+    // keep the most valuable copies, list the rest
+    const units = []; for (const [k, e] of ents) for (let i = 0; i < e.qty; i++) units.push([k, e, priceOf(e, e.finish) || 0]);
+    units.sort((a, b) => b[2] - a[2] || (a[1].finish === "nonfoil") - (b[1].finish === "nonfoil"));
+    const take = units.slice(units.length - extra), moves = {};
+    for (const [k] of take) moves[k] = (moves[k] || 0) + 1;
+    rows.push({ name, own, inDecks, decks: per ? per.size : 0, extra, value: take.reduce((a, u) => a + u[2], 0), moves, img: first.img, set: first.set, card: first });
+  }
+  return rows.sort((a, b) => b.value - a.value || b.extra - a.extra || a.name.localeCompare(b.name));
+}
+function dupSheet() {
+  openSheet(`<div id="dupBody"></div>`, () => render());
+  const tradeId = (Object.values(S.binders).find(b => /trade/i.test(b.name) && !b.wish) || {}).id;
+  let to = tradeId || defaultBinder();
+  const draw = () => {
+    const el = $("#dupBody"); if (!el) return;
+    const rows = dupList(dupOpt), sel = dupOpt.sel; for (const n of [...sel]) if (!rows.some(r => r.name === n)) sel.delete(n);
+    const pick = sel.size ? rows.filter(r => sel.has(r.name)) : rows, n = pick.reduce((a, r) => a + r.extra, 0), val = pick.reduce((a, r) => a + r.value, 0);
+    el.innerHTML = `<h2>Duplicates</h2>
+      <p class="small muted" style="margin:4px 0 10px">Copies you own beyond what your decks use${shareCopies() ? " (a copy can count toward several decks, so the deck that needs the most counts)" : ""}, plus the number you keep. Your most valuable copies are the ones kept. Wishlists aren't counted.</p>
+      <div class="row wrap" style="gap:6px 14px"><span class="small">Keep outside decks</span><span class="seg" id="dupKeep">${[0, 1, 2, 4].map(v => `<button data-k="${v}" aria-pressed="${dupOpt.keep === v}">${v}</button>`).join("")}</span>
+        <label class="toggle"><input type="checkbox" id="dupBas" ${dupOpt.basics ? "checked" : ""}> Include basic lands</label></div>
+      ${!rows.length ? `<p class="small" style="margin-top:12px">No extra copies with these settings.</p>` : `
+      <div class="summary" style="margin-top:10px"><div><span class="label">${sel.size ? "Selected" : "Extra copies"}</span><b class="num">${n.toLocaleString()}</b></div><div><span class="label">Cards</span><b class="num">${pick.length.toLocaleString()}</b></div><div><span class="label">Worth</span><b class="num gold">${money(val)}</b></div></div>
+      <div class="row wrap" style="margin-top:8px"><select id="dupTo" class="grow" style="min-width:170px" aria-label="Move extras to">${Object.values(S.binders).filter(b => !b.wish).map(b => `<option value="${esc(b.id)}" ${b.id === to ? "selected" : ""}>${esc(b.name)}</option>`).join("")}</select>
+        <button class="btn primary" id="dupMove">Move ${sel.size ? "selected" : "all"} extras</button><button class="btn" id="dupCopy">Copy list</button></div>
+      <span class="small muted">${sel.size ? `${sel.size} selected · <button class="linkbtn" id="dupNone">clear</button>` : "Tap cards to pick some, or move them all."} Copies already in that binder stay where they are.</span>
+      <div class="list" style="margin-top:6px">${rows.map(r => `<div class="item ${sel.has(r.name) ? "picked" : ""}"><img loading="lazy" src="${esc(r.img || "")}" alt="">
+        <button class="tap" data-dup="${esc(r.name)}"><div class="name">${sel.has(r.name) ? "✓ " : ""}${r.extra}× ${esc(r.name)}</div>
+          <div class="meta small"><span class="muted">own ${r.own}${r.inDecks ? ` · ${r.inDecks} needed by ${r.decks === 1 ? "a deck" : r.decks + " decks"}` : " · in no deck"}${dupOpt.keep ? ` · keep ${dupOpt.keep}` : ""}</span></div></button>
+        <div class="right"><span class="price gold num">${money(r.value)}</span></div></div>`).join("")}</div>`}`;
+    $("#dupKeep").onclick = e => { const b = e.target.closest("button"); if (b) { dupOpt.keep = +b.dataset.k; draw(); } };
+    $("#dupBas").onchange = e => { dupOpt.basics = e.target.checked; draw(); };
+    el.querySelectorAll("[data-dup]").forEach(b => b.onclick = () => { const nm = b.dataset.dup; sel.has(nm) ? sel.delete(nm) : sel.add(nm); draw(); });
+    const nn = $("#dupNone"); if (nn) nn.onclick = () => { sel.clear(); draw(); };
+    const dt = $("#dupTo"); if (dt) dt.onchange = e => { to = e.target.value; };
+    const mv = $("#dupMove"); if (mv) mv.onclick = () => {
+      let moved = 0; const back = JSON.parse(JSON.stringify(S.coll));
+      for (const r of pick) for (const [k, q] of Object.entries(r.moves)) { const e = S.coll[k]; if (!e || e.binder === to) continue; takeCopies(k, Math.min(q, e.qty), { binder: to }); moved += Math.min(q, e.qty); }
+      sel.clear(); save(); draw();
+      toast(moved ? `Moved ${moved} card${moved === 1 ? "" : "s"} to ${S.binders[to].name}` : `They're already in ${S.binders[to].name}`, moved ? { label: "Undo", fn: () => { S.coll = back; save(); render(); draw(); } } : undefined);
+    };
+    const cp = $("#dupCopy"); if (cp) cp.onclick = async () => { const text = pick.map(r => `${r.extra} ${r.name}`).join("\n");
+      try { await navigator.clipboard.writeText(text); toast(`Copied ${pick.length} line${pick.length === 1 ? "" : "s"}`); } catch (e) { toast("Couldn't copy here"); } };
+  };
+  draw();
 }
 function binderSheet() {
   const draw = () => {
