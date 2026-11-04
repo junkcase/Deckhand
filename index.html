@@ -217,6 +217,9 @@ details>summary{cursor:pointer}.seg.wide button{flex:1}
 .summary button.tile:hover{background:var(--sunk)}.summary .tile b{display:block;font:700 22px/1.1 var(--f-display);overflow:hidden;text-overflow:ellipsis}
 .summary + .summary{margin-top:-1px}#dash>.summary:first-child{border-radius:12px 12px 0 0}#dash>.summary:nth-child(2){border-radius:0 0 12px 12px}.dash2{display:grid;grid-template-columns:1fr;gap:10px}@media (min-width:760px){.dash2{grid-template-columns:1fr 1fr}}
 .dash2 .mvrow{grid-template-columns:minmax(0,1fr) auto}.fchips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.ac li.haspr{display:flex;align-items:stretch}.ac li.haspr>button[data-i]{flex:1;min-width:0}
+.ac .prbtn{flex:none;width:auto;border:0;border-left:1px solid var(--line);background:var(--sunk);padding:0 12px;font:600 13px/1 var(--f-body);color:var(--accent);cursor:pointer}
+.prints .owned{position:absolute;top:6px;left:6px}.prints button{position:relative}
 .linkbtn{border:0;background:none;padding:0;color:var(--accent);font:inherit;text-decoration:underline;cursor:pointer}
 .meter{height:6px;border-radius:3px;background:var(--sunk);overflow:hidden}.meter>div{height:100%;background:var(--accent);border-radius:3px}.meter.sm{height:4px;margin-top:6px}
 .chip .x{border:0;background:none;padding:0 0 0 4px;font:inherit;cursor:pointer;color:inherit}
@@ -647,7 +650,7 @@ function attachAutocomplete(inp, ul, onPick, opts = {}) {
   let items = [], hl = -1;
   const show = (names, q) => {
     items = names; hl = -1;
-    ul.innerHTML = names.map((n, i) => { const own = ownedByName(n); return `<li><button type="button" data-i="${i}"><span>${hilite(n, q)}</span>${own ? `<span class="chip ok">own ${own}</span>` : ""}</button></li>`; }).join("");
+    ul.innerHTML = names.map((n, i) => { const own = ownedByName(n); return `<li${opts.onPrints ? ` class="haspr"` : ""}><button type="button" data-i="${i}"><span>${hilite(n, q)}</span>${own ? `<span class="chip ok">own ${own}</span>` : ""}</button>${opts.onPrints ? `<button type="button" class="prbtn" data-pr="${i}" aria-label="Pick a printing of ${esc(n)}">Printings</button>` : ""}</li>`; }).join("");
     ul.hidden = !names.length;
   };
   const remote = debounce(async q => {
@@ -672,12 +675,12 @@ function attachAutocomplete(inp, ul, onPick, opts = {}) {
     if (ul.hidden || !items.length) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault(); hl = (hl + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-      ul.querySelectorAll("button").forEach((b, i) => b.classList.toggle("hl", i === hl));
+      ul.querySelectorAll("button[data-i]").forEach((b, i) => b.classList.toggle("hl", i === hl));
     } else if (e.key === "Enter" && (hl >= 0 || enterPicks)) { e.preventDefault(); ul.hidden = true; onPick(items[hl >= 0 ? hl : 0]); }
     else if (e.key === "Escape") ul.hidden = true;
   });
   ul.addEventListener("pointerdown", e => e.preventDefault());
-  ul.onclick = e => { const b = e.target.closest("button"); if (b) { ul.hidden = true; onPick(items[+b.dataset.i]); } };
+  ul.onclick = e => { const b = e.target.closest("button"); if (!b) return; ul.hidden = true; if (b.dataset.pr != null) opts.onPrints(items[+b.dataset.pr]); else onPick(items[+b.dataset.i]); };
 }
 
 /* ---------- collection helpers ---------- */
@@ -2709,10 +2712,11 @@ async function showPrints(s, onPick, into) {
   try {
     const [r] = await Promise.all([sf(`/cards/search?q=${encodeURIComponent('!"' + s.name + '"')}&unique=prints&order=released&dir=desc`), loadSets().catch(() => null)]);
     let list = r.data || [], next = r.has_more ? r.next_page : null, q = "";
+    const ownedIds = {}; for (const e of Object.values(S.coll)) if (!isWish(e.binder)) ownedIds[e.id] = (ownedIds[e.id] || 0) + e.qty;
     const tile = (c, i) => {
       const nf = priceOf({ prices: c.prices }, "nonfoil"), fo = c.prices && c.prices.usd_foil != null ? parseFloat(c.prices.usd_foil) : null;
       return `<button data-i="${i}" aria-pressed="${c.id === s.id}" title="${esc(c.set_name)} #${esc(c.collector_number)}">
-        <img loading="lazy" src="${esc(imgOf(c))}" alt="">
+        <img loading="lazy" src="${esc(imgOf(c))}" alt="">${ownedIds[c.id] ? `<span class="chip ok owned">you own ${ownedIds[c.id]}</span>` : ""}
         <span class="pl1">${setIcon(c.set, c.rarity)}<b>${esc(c.set.toUpperCase())}</b><span class="num">#${esc(c.collector_number)}</span></span>
         <span class="pl2">${esc(c.set_name)}</span>
         <span class="pl3 num">${esc((c.released_at || "").slice(0, 4))} · ${c.prices && c.prices.usd != null ? money(nf) : fo != null ? money(fo) + " foil" : "—"}${c.prices && c.prices.usd != null && fo != null ? ` · <span class="gold">F ${money(fo)}</span>` : ""}</span>
@@ -4393,6 +4397,12 @@ const deckTab = {};
 
 const THEMES = ["Aristocrats", "Artifacts", "Blink", "Burn", "Cascade", "Control", "Counters (+1/+1)", "Dragons", "Elves", "Enchantments", "Equipment", "Goblins", "Graveyard", "Group Hug", "Infect", "Landfall", "Lifegain", "Mill", "Proliferate", "Reanimator", "Sacrifice", "Spellslinger", "Stax", "Superfriends", "Tokens", "Treasure", "Tribal", "Vampires", "Voltron", "Wheels", "Wizards", "Zombies"];
 // after adding a card from the deck's add box, open its card screen for this deck (Deck options can turn this off)
+// the printing of a card you own that a deck should use: the one you have most copies of (wishlists don't count)
+function ownedPrinting(name) {
+  const by = {}; for (const e of Object.values(S.coll)) if (e.name === name && !isWish(e.binder)) (by[e.id] = by[e.id] || { e, n: 0 }).n += e.qty;
+  const best = Object.values(by).sort((a, b) => b.n - a.n || (b.e.added || 0) - (a.e.added || 0))[0];
+  return best ? best.e : null;
+}
 function openAfterAdd(d, card) {
   if (S.settings && S.settings.openAfterAdd === false) return;
   const key = card.id + "|0"; if (d.cards[key]) openCard(d.cards[key], null, null, { deck: d, key });
@@ -4508,7 +4518,18 @@ function renderDeck(d) {
       toast(`Added ${P.qty > 1 ? P.qty + "× " : ""}${c.name} (${c.set.toUpperCase()} #${c.collector_number})`); openAfterAdd(d, c);
     } catch (er) { toast(er.status === 404 ? `No card found for ${P.set.toUpperCase()}${P.num ? " #" + P.num : ""}${P.name && !P.num ? " named " + P.name : ""}` : `Couldn't add it: ${er.message}`); }
   });
-  attachAutocomplete($("#dAdd"), $("#dAc"), async name => { const qty = parseAddLine($("#dAdd").value).qty; $("#dAdd").value = ""; try { const c_ = await sf("/cards/named?exact=" + encodeURIComponent(name), null, { now: true }); addToDeck(d, c_, qty, false); renderDeck(d); openAfterAdd(d, c_); const al = allocFor(name, d.id); toast(`Added ${qty > 1 ? qty + "× " : ""}${name} · ${al.own ? `you own ${al.own}${al.other ? `, ${al.other} in other decks` : ""}` : "not in your collection"}`); } catch (e) { toast(`Couldn't add “${name}”: ${e.message}`); } }, { qty: true });
+  const addedMsg = (name, qty, c) => { const al = allocFor(name, d.id); toast(`Added ${qty > 1 ? qty + "× " : ""}${name} (${(c.set || "").toUpperCase()} #${c.num || c.collector_number || ""}) · ${al.own ? `you own ${al.own}${al.other ? `, ${al.other} in other decks` : ""}` : "not in your collection"}`); };
+  attachAutocomplete($("#dAdd"), $("#dAc"), async name => {
+    const qty = parseAddLine($("#dAdd").value).qty; $("#dAdd").value = "";
+    const mine = ownedPrinting(name);
+    if (mine) { addToDeck(d, mine, qty, false); renderDeck(d); openAfterAdd(d, mine); addedMsg(name, qty, mine); return; }       // a printing you own, no lookup needed
+    try { const c_ = await sf("/cards/named?exact=" + encodeURIComponent(name), null, { now: true }); addToDeck(d, c_, qty, false); renderDeck(d); openAfterAdd(d, c_); addedMsg(name, qty, slim(c_)); } catch (e) { toast(`Couldn't add “${name}”: ${e.message}`); }
+  }, { qty: true, onPrints: name => {
+    const qty = parseAddLine($("#dAdd").value).qty; $("#dAdd").value = "";
+    const mine = ownedPrinting(name);
+    openSheet(`<h2>${esc(name)}</h2><p class="small muted" style="margin:4px 0 0">Tap a printing to add ${qty > 1 ? qty + " of it" : "it"} to “${esc(d.name)}”.${mine ? " Printings you own are marked." : ""}</p><div id="addPrBox"></div>`, () => render());
+    showPrints({ name, id: mine ? mine.id : "" }, picked => { addToDeck(d, picked, qty, false); closeSheet(); renderDeck(d); addedMsg(name, qty, slim(picked)); }, $("#addPrBox"));
+  } });
   $("#dTabs").onclick = e => { const b = e.target.closest("button"); if (!b) return; deckTab[d.id] = b.dataset.t; renderDeck(d); };
   const dt = deckTab[d.id] || "cards";
   if (dt === "suggest") drawSuggest(d); else if (dt === "balance") drawBalance(d); else if (dt === "upgrade") drawUpgrade(d);
