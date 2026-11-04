@@ -226,6 +226,7 @@ details>summary{cursor:pointer}.seg.wide button{flex:1}
 .setbar{display:flex;align-items:center;gap:8px}.setbar .meter{flex:1;height:6px;margin:0}.setbar .meter>span{display:block;height:100%;background:var(--accent);border-radius:inherit}
 img.hero{display:block;width:100%;height:auto;aspect-ratio:1672/941;object-fit:cover;border-radius:14px;margin:0 0 14px;background:#16202b}
 .sheet img.hero{border-radius:10px;margin-bottom:10px}
+#updBar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--nav-h) + env(safe-area-inset-bottom,0px) + 10px);z-index:60;width:min(640px,calc(100% - 24px));display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:var(--surface);border:2px solid var(--accent);box-shadow:0 8px 28px rgba(0,0,0,.25)}
 .linkbtn{border:0;background:none;padding:0;color:var(--accent);font:inherit;text-decoration:underline;cursor:pointer}
 .meter{height:6px;border-radius:3px;background:var(--sunk);overflow:hidden}.meter>div{height:100%;background:var(--accent);border-radius:3px}.meter.sm{height:4px;margin-top:6px}
 .chip .x{border:0;background:none;padding:0 0 0 4px;font:inherit;cursor:pointer;color:inherit}
@@ -1660,6 +1661,8 @@ function binderSheet() {
    the phone both survive. Settings such as scan options stay per device. The token stays on this device. */
 const SYNC_KEYS = ["coll", "decks", "binders", "alerts", "ph", "hist", "trade", "marks", "settings", "roles"];
 const SYNC_DESC = "Deckhand sync (managed by the Deckhand app)";
+// the version of the sync rules; raised whenever how devices combine their data changes
+var SYNC_V = 2;
 var SYNC = { cfg: undefined, busy: false, t: null, etag: null, base: undefined, dirty: true, err: "", at: 0, from: "", files: [], undo: null, poll: null, ask: null };
 // sync is set up: GitHub (a private gist) or Google (a file in the user's Drive)
 const isGoogleSync = (cfg = syncCfg()) => !!(cfg && cfg.kind === "google");
@@ -1758,7 +1761,7 @@ function trashDeck(d, why) {
 }
 async function pushGist(state) {
   const text = await packState(state), chunks = text.match(/[\s\S]{1,900000}/g) || [""], files = {};
-  files["deckhand-sync.json"] = { content: JSON.stringify({ v: 1, chunks: chunks.length, at: Date.now(), device: devName() }) };
+  files["deckhand-sync.json"] = { content: JSON.stringify({ v: 1, sv: SYNC_V, chunks: chunks.length, at: Date.now(), device: devName() }) };
   chunks.forEach((c, i) => files[`deckhand-data-${i}.txt`] = { content: c });
   for (const n of SYNC.files) if (/^deckhand-data-\d+\.txt$/.test(n) && !files[n]) files[n] = null;     // drop parts no longer used
   await gh("/gists/" + syncCfg().gist, { method: "PATCH", body: JSON.stringify({ files }) });
@@ -1785,14 +1788,14 @@ async function gdReadSync() {
   catch (e) { if (e.needTap) throw e; m = null; }
   if (!m || m.trashed) { setSyncCfg(Object.assign({}, syncCfg(), { file: null })); GDS.version = null; return { info: {}, state: null }; }     // file gone: the next upload makes a new one
   if (GDS.version && m.version === GDS.version) return null;                                            // unchanged since the last look
-  const info = { device: (m.appProperties || {}).device || "", at: +((m.appProperties || {}).at || 0) };
+  const info = { device: (m.appProperties || {}).device || "", at: +((m.appProperties || {}).at || 0), sv: +((m.appProperties || {}).sv || 0) };
   if (!+m.size) { GDS.version = m.version; return { info, state: null }; }
   const text = await ungzip(await (await gd(`/drive/v3/files/${id}?alt=media`)).arrayBuffer());
   GDS.version = m.version;
   return { info, state: pickSync(JSON.parse(text)) };
 }
 async function gdPushSync(state) {
-  const cfg = syncCfg(), meta = { appProperties: { deckhandSync: "1", device: devName(), at: String(Date.now()) } };
+  const cfg = syncCfg(), meta = { appProperties: { deckhandSync: "1", device: devName(), at: String(Date.now()), sv: String(SYNC_V) } };
   const body = new FormData();
   if (!cfg.file) Object.assign(meta, { name: GDS.file, parents: [cfg.folder], mimeType: "application/gzip" });
   body.append("metadata", new Blob([JSON.stringify(meta)], { type: "application/json" }));
@@ -1903,6 +1906,8 @@ async function syncNow(manual) {
     const wasDirty = SYNC.dirty, trusted = baseTrusted(base); SYNC.dirty = false;
     if (base && !trusted) SYNC.etag = null;                                                          // re-read the synced copy in full
     const remote = await readRemote();
+    // the synced copy was written by newer sync rules: don't merge or upload with older ones, ask for the update
+    if (remote && remote.info && +remote.info.sv > SYNC_V) { SYNC.dirty = true; SYNC.err = "Another device is using a newer version of Deckhand. Update this one to keep syncing; your changes here are saved."; SYNC.errDetail = ""; showUpdate(true); return; }
     if (!remote && !wasDirty && trusted) { SYNC.at = Date.now(); SYNC.err = ""; return; }            // nothing new anywhere
     const local = pickSync(S);
     if (!remote && trusted && SYNC.lastJ && J_(local) === SYNC.lastJ) { SYNC.at = Date.now(); SYNC.err = ""; return; }   // only device settings changed
@@ -5013,8 +5018,47 @@ async function boot() {
   if (S.meta.usedScan) setTimeout(() => getWorkers().catch(() => {}), 2500);
   const sc_ = syncCfg(); if (syncOn(sc_) && !sc_.paused) setTimeout(startSyncLoop, 600);
   if (gdCfg()) { setTimeout(gdAuto, 8000); loadGis().catch(() => {}); }
+  setTimeout(checkUpdate, 3000);          // remember which version this is
   if (Object.keys(S.coll).length && (!S.meta.pricedAt || Date.now() - S.meta.pricedAt > 20 * 36e5)) setTimeout(() => refreshPrices(true), 1500);
 }
+/* ---------- "a newer version is ready": a page left open (an app in the background, a tab on a tablet) keeps
+   running the version it loaded. Every few minutes, and when you come back to it, Deckhand compares the page on the
+   server with the one it started from; if they differ it offers Update now, which saves and syncs first. ---------- */
+const UPD = { base: null, avail: false, last: 0, busy: false };
+function hashText(t) { let h = 2166136261; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36) + ":" + t.length; }
+async function checkUpdate() {
+  if (UPD.busy || !navigator.onLine) return; UPD.busy = true; UPD.last = Date.now();
+  try {
+    const r = await fetch(location.pathname + "?update-check=" + Date.now(), { cache: "no-store" }); if (!r.ok) return;
+    const h = hashText(await r.text());
+    if (!UPD.base) UPD.base = h; else if (h !== UPD.base) showUpdate();
+  } catch (e) {} finally { UPD.busy = false; }
+}
+function showUpdate(needed) {
+  UPD.avail = true; let bar = $("#updBar");
+  if (!bar) { bar = document.createElement("div"); bar.id = "updBar"; bar.setAttribute("role", "status"); document.body.appendChild(bar); }
+  bar.innerHTML = `<span class="grow">${needed ? "<b>Update needed to keep syncing.</b> " : "<b>A new version of Deckhand is ready.</b> "}<span class="small">Your cards are saved and synced first.</span></span><button class="btn sm primary" id="updGo">Update now</button>`;
+  $("#updGo").onclick = runUpdate;
+}
+async function runUpdate() {
+  const b = $("#updGo"); if (b) { b.disabled = true; b.textContent = "Saving…"; }
+  try {
+    await flushSave();
+    if (syncOn() && SYNC.dirty && !(isGoogleSync() && !gdSignedIn())) {          // send what's waiting (skip if Google needs a tap)
+      if (b) b.textContent = "Syncing…";
+      for (let i = 0; i < 100 && SYNC.busy; i++) await sleep(100);
+      await Promise.race([syncNow(true), sleep(15000)]);
+      for (let i = 0; i < 100 && SYNC.busy; i++) await sleep(100);
+    }
+    await flushSave();
+    if (b) b.textContent = "Updating…";
+    const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration().catch(() => null);
+    if (reg) await Promise.race([reg.update().catch(() => {}), sleep(4000)]);
+  } catch (e) {}
+  location.reload();
+}
+setInterval(() => { if (!document.hidden) checkUpdate(); }, 5 * 6e4);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - UPD.last > 60000) checkUpdate(); });
 /* ---------- install as an app ---------- */
 const INSTALL = { prompt: null };
 if ("serviceWorker" in navigator && (location.protocol === "https:" || /^(localhost|127\.0\.0\.1)$/.test(location.hostname))) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
