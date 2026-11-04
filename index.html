@@ -2795,7 +2795,7 @@ function openCard(card, finish, binder, ctx) {
         <div><span class="label">Normal</span><b class="num">${money(p.usd)}</b></div><div><span class="label">Foil</span><b class="num">${money(p.usd_foil)}</b></div>
         <div><span class="label">Etched</span><b class="num">${money(p.usd_etched)}</b></div><div><span class="label">EUR</span><b class="num">${p.eur ? "€" + p.eur : "—"}</b></div></div>
       <div class="box stack" id="phBox" style="margin-top:10px;gap:6px${phHTML === null ? ";display:none" : ""}">${phHTML || `<span class="small muted">Loading price history…</span>`}</div>
-      ${hist.length >= 2 && !phHTML ? `<div class="box" style="margin-top:10px"><div class="kv"><span class="label">Your price history</span><span class="small muted num">${dayStr(hist[0][0])} → ${dayStr(hist.at(-1)[0])}</span></div>
+      ${hist.length >= 2 ? `<div class="box" id="phLocal" style="margin-top:10px${phHTML ? ";display:none" : ""}"><div class="kv"><span class="label">Your price history</span><span class="small muted num">${dayStr(hist[0][0])} → ${dayStr(hist.at(-1)[0])}</span></div>
         ${spark(hist.map(x => x[1]))}<div class="kv small num"><span>${money(hist[0][1])}</span><span class="${hist.at(-1)[1] >= hist[0][1] ? "up" : "down"}">${signed(hist.at(-1)[1] - hist[0][1])}</span><span>${money(hist.at(-1)[1])}</span></div></div>` : ""}
       <div class="box" style="margin-top:12px">
         ${(() => { const own = ownedByName(s.name), uses = deckUse()[s.name] || [], inDecks = uses.reduce((a, u) => a + u.qty, 0);
@@ -2848,10 +2848,13 @@ function openCard(card, finish, binder, ctx) {
         ${/^https:\/\/scryfall\.com\//.test(s.uri || "") ? `<a class="btn sm ghost" href="${esc(s.uri)}" target="_blank" rel="noopener">Open on Scryfall</a>` : ""}</div>
       <div id="printBox"></div>`;
     const fc = $("#faces"); if (fc) fc.querySelectorAll("img").forEach((im, i) => im.onclick = () => { fc.dataset.solo = fc.dataset.solo === String(i) ? "" : String(i); });
-    const phF = fin === "etched" ? "foil" : fin;
-    if (phH && phH.id === s.id) { if (phH.h && phH.h.row) wirePhChart($("#phBox"), phH.h, phF, phRange, phOff, (r, o) => { phRange = r; phOff = o; if (S.meta.phRange !== r) { S.meta.phRange = r; save(); } draw(); }); }
+    // the chart refreshes only its own box, so open panels (printings, editing) stay as they are
+    const phFill = () => { const box = myBody.querySelector("#phBox"); if (!box || !phH || phH.id !== s.id) return; const f = fin === "etched" ? "foil" : fin, html = phChartHTML(phH.h, f, phRange, phOff);
+      box.innerHTML = html || ""; box.style.display = html ? "" : "none"; const loc = myBody.querySelector("#phLocal"); if (loc) loc.style.display = html ? "none" : "";
+      if (html) wirePhChart(box, phH.h, f, phRange, phOff, (r, o) => { phRange = r; phOff = o; if (S.meta.phRange !== r) { S.meta.phRange = r; save(); } phFill(); }); };
+    if (phH && phH.id === s.id) phFill();
     else if (phWant !== s.id) { const id = phWant = s.id;
-      priceHistory(id).then(h => ({ id, h }), () => ({ id, h: null })).then(x => { if (x.id !== s.id || $("#sheetBody") !== myBody || !myBody.isConnected) return; const sc = $("#sheetBody").parentElement, st = sc && sc.scrollTop; phH = x; draw(); if (sc) sc.scrollTop = st; }); }
+      priceHistory(id).then(h => ({ id, h }), () => ({ id, h: null })).then(x => { if (x.id !== s.id || $("#sheetBody") !== myBody || !myBody.isConnected) return; phH = x; phFill(); }); }
 
     const fs = $("#finSeg"); if (fs) fs.onclick = e => { const b = e.target.closest("button"); if (b) { fin = b.dataset.f; draw(); } };
     $("#bSel").onchange = e => { bsel = e.target.value; S.meta.binder = bsel; save(); draw(); };
