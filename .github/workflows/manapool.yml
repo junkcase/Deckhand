@@ -1,7 +1,7 @@
 name: Store prices
 # Once a day: copy Mana Pool's and Card Kingdom's public price lists to the "data" branch, which Deckhand reads
-# (neither can be read straight from a website). The branch keeps only the latest copy; if one store's download
-# fails, yesterday's copy of that store stays.
+# (neither can be read straight from a website), and add today's prices to the price history behind the card charts.
+# The branch keeps only the latest copy; if one download fails, yesterday's copy of that part stays.
 on:
   schedule:
     - cron: "41 10 * * *"
@@ -14,7 +14,7 @@ concurrency:
 jobs:
   mirror:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,6 +30,18 @@ jobs:
         run: node tools/manapool-mirror.js "$RUNNER_TEMP/out" || echo "::warning::Mana Pool download failed; keeping yesterday's copy"
       - name: Card Kingdom
         run: node tools/cardkingdom-mirror.js "$RUNNER_TEMP/out" || echo "::warning::Card Kingdom download failed; keeping yesterday's copy"
+      - name: Price history (TCGplayer and Card Kingdom from MTGJSON, plus today's Mana Pool)
+        run: |
+          pip install -q ijson
+          mkdir -p "$RUNNER_TEMP/mtgjson" && cd "$RUNNER_TEMP/mtgjson"
+          if curl -sfo prices.json.xz https://mtgjson.com/api/v5/AllPrices.json.xz && xz -d prices.json.xz \
+            && curl -sfo csv.tar.xz https://mtgjson.com/api/v5/AllPrintingsCSVFiles.tar.xz && tar -xJf csv.tar.xz && find . -name cardIdentifiers.csv -exec cp {} ids.csv \; && test -s ids.csv; then
+            cp -r "$RUNNER_TEMP/out/history" history-yesterday 2>/dev/null || true
+            python3 "$GITHUB_WORKSPACE/tools/price-history.py" "$RUNNER_TEMP/out" prices.json ids.csv || { echo "::warning::Price history failed; keeping yesterday's copy"; rm -rf "$RUNNER_TEMP/out/history"; cp -r history-yesterday "$RUNNER_TEMP/out/history" 2>/dev/null || true; }
+          else
+            echo "::warning::MTGJSON download failed; keeping yesterday's price history"
+          fi
+          rm -rf "$RUNNER_TEMP/mtgjson"
       - name: Publish to the data branch (latest copy only)
         run: |
           cd "$RUNNER_TEMP/out"
