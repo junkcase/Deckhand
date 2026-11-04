@@ -1,6 +1,9 @@
 name: Inspect MTGJSON (temporary)
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/inspect-mtgjson.yml
 jobs:
   look:
     runs-on: ubuntu-latest
