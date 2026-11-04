@@ -1,6 +1,7 @@
-name: Mana Pool prices
-# Once a day: copy Mana Pool's public price list to the "data" branch, which Deckhand reads
-# (Mana Pool doesn't let websites read its API directly). The branch keeps only the latest copy.
+name: Store prices
+# Once a day: copy Mana Pool's and Card Kingdom's public price lists to the "data" branch, which Deckhand reads
+# (neither can be read straight from a website). The branch keeps only the latest copy; if one store's download
+# fails, yesterday's copy of that store stays.
 on:
   schedule:
     - cron: "41 10 * * *"
@@ -8,12 +9,12 @@ on:
 permissions:
   contents: write
 concurrency:
-  group: manapool-prices
+  group: store-prices
   cancel-in-progress: false
 jobs:
   mirror:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,8 +22,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Download and split the price list
-        run: node tools/manapool-mirror.js "$RUNNER_TEMP/out"
+      - name: Start from yesterday's copy
+        run: |
+          git clone -q --depth 1 -b data "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" "$RUNNER_TEMP/out" || mkdir -p "$RUNNER_TEMP/out"
+          rm -rf "$RUNNER_TEMP/out/.git"
+      - name: Mana Pool
+        run: node tools/manapool-mirror.js "$RUNNER_TEMP/out" || echo "::warning::Mana Pool download failed; keeping yesterday's copy"
+      - name: Card Kingdom
+        run: node tools/cardkingdom-mirror.js "$RUNNER_TEMP/out" || echo "::warning::Card Kingdom download failed; keeping yesterday's copy"
       - name: Publish to the data branch (latest copy only)
         run: |
           cd "$RUNNER_TEMP/out"
@@ -30,5 +37,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -qm "Mana Pool prices $(date -u +%F)"
+          git commit -qm "Store prices $(date -u +%F)"
           git push -q --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" data

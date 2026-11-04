@@ -28,7 +28,7 @@ async function main() {
   if (!r.ok) throw new Error("Mana Pool returned " + r.status);
   const { meta, shards } = convert(await r.json());
   if (meta.cards < 10000) throw new Error(`only ${meta.cards} priced cards; keeping yesterday's copy`);
-  const dir = path.join(out, "manapool"); fs.mkdirSync(dir, { recursive: true });
+  const dir = path.join(out, "manapool"); fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true });
   for (const [k, v] of Object.entries(shards)) fs.writeFileSync(path.join(dir, k + ".json"), JSON.stringify(v));
   fs.writeFileSync(path.join(dir, "meta.json"), JSON.stringify(meta));
   console.log(`wrote ${meta.cards} cards in ${Object.keys(shards).length} files, prices as of ${meta.as_of}`);
