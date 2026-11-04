@@ -1,0 +1,31 @@
+name: Tests in Safari's engine (WebKit)
+# Run by hand: the same browser tests, in WebKit, to catch iPhone/iPad problems before a friend does.
+on:
+  workflow_dispatch:
+jobs:
+  webkit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npx playwright install --with-deps webkit
+      - run: node build.js
+      - name: Browser tests in WebKit
+        run: |
+          fail=0
+          for t in *.test.js; do
+            case "$t" in gridtest.test.js|phototest.test.js) continue;; esac
+            echo "::group::$t"
+            out=$(timeout 600 node --require ./webkit-shim.js "$t" 2>&1); echo "$out"
+            echo "::endgroup::"
+            n_ok=$(echo "$out" | grep -c '^ok' || true); n_fail=$(echo "$out" | grep -c '^FAIL' || true)
+            echo "RESULT $t ok=$n_ok fail=$n_fail"
+            echo "$out" | grep -E '^FAIL|Error' | head -5 | sed "s/^/  [$t] /"
+          done
