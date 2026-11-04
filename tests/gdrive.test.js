@@ -66,8 +66,8 @@ async function run(opts, shot) {
   // Google's hour runs out: daily reminder on Collection, one tap signs in again and backs up
   await p.evaluate(() => { GD.tok = null; sessionStorage.removeItem("deckhand.gdtok"); setGdCfg(Object.assign(gdCfg(), { last: Date.now() - 26 * 36e5 })); closeSheet(); go("coll"); });
   R.nudge = await p.$eval("#gdNudge", e => e.textContent.replace(/\s+/g, " ")).catch(() => null);
-  const before = Object.keys(G.files).length; await p.click("#gdNow"); await p.waitForTimeout(800);
-  R.nudgeDone = [!(await p.$("#gdNudge")), Object.keys(G.files).length > before, await p.evaluate(() => window.__gsi) > R.signInsAfter];
+  const before = G.uploads.length; await p.click("#gdNow"); await p.waitForTimeout(800);
+  R.nudgeDone = [!(await p.$("#gdNudge")), G.uploads.length > before, await p.evaluate(() => window.__gsi) > R.signInsAfter];
   await p.evaluate(() => { setGdCfg(Object.assign(gdCfg(), { last: Date.now() - 26 * 36e5 })); render(); }); await p.click("#gdLater"); await p.waitForTimeout(100); R.snoozed = !(await p.$("#gdNudge"));
   // hostile file details from Drive are shown as text
   R.xss = await p.evaluate(() => { window.__x = 0; gdRestoreSheet([{ id: "\"><img src=x onerror=__x=1>", createdTime: new Date().toISOString(), appProperties: { device: "<img src=x onerror=__x=1>", cards: "5", decks: "<b>" } }]); return 1; });
