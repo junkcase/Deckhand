@@ -2961,7 +2961,9 @@ function renderScan() {
         <button class="round" id="photo" aria-label="Use a photo instead"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="12" cy="12" r="3.5"/></svg></button></div></div>
     <div class="row wrap">
       <span class="seg" id="scFin"><button data-f="nonfoil" aria-pressed="${sc.finish === "nonfoil"}">Normal</button><button data-f="foil" aria-pressed="${sc.finish === "foil"}">Foil</button></span>
-      <select id="scBinder" class="grow" aria-label="Add scanned cards to">${binderOptions(defaultBinder())}</select></div>
+      <select id="scBinder" class="grow" aria-label="Add scanned cards to"><optgroup label="Binders">${binderOptions(scanDeck() ? "" : defaultBinder())}</optgroup>${Object.keys(S.decks).length ? `<optgroup label="Straight into a deck">${Object.values(S.decks).sort((a, b) => (a.name || "").localeCompare(b.name || "")).map(d => `<option value="deck:${esc(d.id)}" ${scanDeck() && scanDeck().id === d.id ? "selected" : ""}>Deck: ${esc(d.name || "Untitled deck")}</option>`).join("")}</optgroup>` : ""}</select></div>
+    ${scanDeck() ? `<label class="toggle small"><input type="checkbox" id="scDeckColl" ${S.meta.scanDeckColl !== false ? "checked" : ""}> Also add them to my collection (${esc(binderName(defaultBinder()))}, or where a rule below sends them)</label>` : ""}
+    <div id="scRulesBox">${scanRulesHTML()}</div>
     <div class="box stack" style="gap:8px" id="scGrid">
       <div class="label">Scan a photo of several cards</div>
       <div class="small muted">Lay the cards in rows with small gaps on a plain surface and take the photo from straight above. Every card is read and listed below; the photo isn't kept.</div>
@@ -2997,7 +2999,9 @@ function renderScan() {
   const setFin = f => { sc.finish = f; $("#scFin").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x.dataset.f === f)); const cf = $("#camFoil"); if (cf) { cf.setAttribute("aria-pressed", f === "foil"); cf.querySelector("span").textContent = f === "foil" ? "Foil" : "Normal"; } };
   $("#scFin").onclick = e => { const b = e.target.closest("button"); if (b) setFin(b.dataset.f); };
   $("#camFoil").onclick = () => { setFin(sc.finish === "foil" ? "nonfoil" : "foil"); toast(sc.finish === "foil" ? "Scanning foils: new cards are added as foil" : "Scanning normal (non-foil) cards"); };
-  $("#scBinder").onchange = e => { S.meta.binder = e.target.value; save(); };
+  $("#scBinder").onchange = e => { const v = e.target.value; if (v.startsWith("deck:")) S.meta.scanDeck = v.slice(5); else { S.meta.scanDeck = null; S.meta.binder = v; } save(); renderScan(); };
+  const sdc = $("#scDeckColl"); if (sdc) sdc.onchange = e => { S.meta.scanDeckColl = e.target.checked; save(); };
+  wireScanRules();
   $("#scMode").onchange = e => { sc.mode = e.target.value; S.meta.scanMode = sc.mode; save(); };
   $("#scPhoto").onchange = e => { S.meta.fullPhoto = e.target.checked; save(); photoNote(); };
   $("#autoBtn").onclick = () => {
@@ -3041,7 +3045,7 @@ function drawSession() {
     if (it.state === "review") return `<div class="item">${pic}<button class="tap" data-pr="${esc(it.id)}"><div class="name">${esc(c.name)}</div>${meta}<div class="small ${it.exact ? "up" : it.conf === "medium" ? "gold" : "muted"}">${it.exact ? "Exact printing" : it.conf === "medium" ? "Likely match: please check" : "Name read clearly · tap to check the printing"}</div></button>
       <div class="right"><span class="stepper"><button data-dec="${esc(it.id)}" aria-label="One fewer">−</button><span class="num">${it.qty}</span><button data-inc="${esc(it.id)}" aria-label="One more">+</button></span>
       <span class="row" style="gap:4px"><button class="btn sm primary" data-add="${esc(it.id)}">Add</button><button class="btn sm ghost" data-skip="${esc(it.id)}">Skip</button></span></div></div>`;
-    if (it.state === "added") return `<div class="item">${pic}<div style="min-width:0"><div class="name">${esc(c.name)}</div>${meta}<div class="small up">Added ${it.qty}× to ${esc(binderName(it.binder))}</div></div>
+    if (it.state === "added") return `<div class="item">${pic}<div style="min-width:0"><div class="name">${esc(c.name)}</div>${meta}<div class="small up">Added ${it.qty}× to ${[it.deck && S.decks[it.deck] ? "deck " + esc(S.decks[it.deck].name) : "", it.binder ? esc(binderName(it.binder)) : ""].filter(Boolean).join(" and ")}${it.rule ? ` <span class="muted">(rule)</span>` : ""}</div></div>
       <div class="right"><button class="btn sm ghost" data-undo="${esc(it.id)}">Undo</button></div></div>`;
     if (it.state === "pick") return `<div class="item">${pic}<div style="min-width:0"><div class="name">Which card is it?</div>${it.read ? `<div class="small muted">Read “${esc(it.read)}”</div>` : ""}
       <div class="chips" style="margin-top:6px">${(it.cands || []).map(n => `<button data-pick="${esc(it.id)}" data-n="${esc(n)}">${esc(n)}</button>`).join("")}</div></div>
@@ -3054,7 +3058,7 @@ function drawSession() {
     <div class="row" id="sesConfirm" hidden><span class="grow small">Clear the list? Cards you already added stay in your collection.</span><button class="btn sm" id="sesYes">Clear</button><button class="btn sm ghost" id="sesNo">Keep</button></div>
     <div class="list" style="margin-top:8px">${list.map(row).join("")}</div>`;
   const find = id => sc.items.find(i => i.id === id), redraw = () => { saveSession(); drawSession(); scanHead(); };
-  const sa = $("#sesAll"); if (sa) sa.onclick = () => { const n = nReview; review.forEach(it => addItem(it, it.qty)); redraw(); toast(`Added ${n} cards to ${S.binders[defaultBinder()].name}`); };
+  const sa = $("#sesAll"); if (sa) sa.onclick = () => { review.forEach(it => addItem(it, it.qty)); redraw(); toast("Added " + addedSummary(review)); };
   $("#sesClear").onclick = () => { $("#sesConfirm").hidden = false; };
   $("#sesNo").onclick = () => { $("#sesConfirm").hidden = true; };
   $("#sesYes").onclick = () => { sc.items = []; redraw(); };
@@ -3063,7 +3067,9 @@ function drawSession() {
   el.querySelectorAll("[data-inc]").forEach(b => b.onclick = () => { find(b.dataset.inc).qty++; redraw(); });
   el.querySelectorAll("[data-dec]").forEach(b => b.onclick = () => { const it = find(b.dataset.dec); it.qty = Math.max(1, it.qty - 1); redraw(); });
   el.querySelectorAll("[data-fin]").forEach(b => b.onclick = () => { const it = find(b.dataset.fin), f = it.card.finishes; it.finish = f[(f.indexOf(it.finish) + 1) % f.length]; redraw(); });
-  el.querySelectorAll("[data-undo]").forEach(b => b.onclick = () => { const it = find(b.dataset.undo); addToColl(it.card, it.finish, -it.qty, it.binder); it.state = "review"; redraw(); toast("Taken back out of your collection"); });
+  el.querySelectorAll("[data-undo]").forEach(b => b.onclick = () => { const it = find(b.dataset.undo);
+    if (it.binder) addToColl(it.card, it.finish, -it.qty, it.binder, true); if (it.deck && S.decks[it.deck]) addToDeck(S.decks[it.deck], it.card, -it.qty, false, true);
+    it.state = "review"; it.binder = it.deck = it.rule = null; save(); redraw(); toast("Taken back out"); });
   el.querySelectorAll("[data-type]").forEach(b => b.onclick = () => { sc.fixId = b.dataset.type; const i = $("#scType"); i.placeholder = "Type the name of that card"; i.focus(); });
   el.querySelectorAll("[data-pick]").forEach(b => b.onclick = async () => {
     const it = find(b.dataset.pick);
@@ -3075,12 +3081,63 @@ function drawSession() {
     showPrints(it.card, picked => { setItemCard(it, picked, true); saveSession(); closeSheet(); });
   });
 }
+/* Where a scanned card goes: straight into a deck (and, unless switched off, the collection too), and into the
+   binder the first matching sort rule names, else the binder picked on the Scan screen. */
+const scanDeck = () => S.meta.scanDeck && S.decks[S.meta.scanDeck] ? S.decks[S.meta.scanDeck] : null;
+const RAR_RANK = { common: 1, uncommon: 2, rare: 3, mythic: 4 };
+const scanRules = () => ((S.settings && S.settings.scanRules) || []).filter(r => r && S.binders[r.binder]);
+function scanRuleMatch(r, card, finish) {
+  if (r.rar && (RAR_RANK[card.rarity] || 0) < RAR_RANK[r.rar]) return false;
+  if (r.min != null) { const p = priceOf(card, finish); if (p == null || p < r.min) return false; }
+  if (r.foil && finish === "nonfoil") return false;
+  return true;
+}
+function scanBinderFor(card, finish) {
+  if (S.settings.scanRulesOn !== false) for (const r of scanRules()) if (scanRuleMatch(r, card, finish)) return { binder: r.binder, rule: r.id };
+  return { binder: defaultBinder(), rule: null };
+}
+const scanRuleText = r => [r.rar ? { mythic: "Mythics", rare: "Rares and mythics", uncommon: "Uncommon or better", common: "Any rarity" }[r.rar] : "Any card", r.min != null ? `${money(r.min)} or more` : "", r.foil ? "foil" : ""].filter(Boolean).join(", ") + " → " + binderName(r.binder);
 function addItem(it, qty) {
   if (!it || !it.card) return;
-  it.binder = defaultBinder();
-  const k = addToColl(it.card, it.finish, qty, it.binder, true), at = Date.now(), e = S.coll[k];
-  if (e) { e.scanned = it.at || at; e.firstScanned = e.firstScanned || it.at || at; e.scans = (e.scans || 0) + qty; }
+  const d = scanDeck(); it.deck = d ? d.id : null; it.binder = null; it.rule = null;
+  if (d) addToDeck(d, it.card, qty, false, true);
+  if (!d || S.meta.scanDeckColl !== false) {
+    const dest = scanBinderFor(it.card, it.finish); it.binder = dest.binder; it.rule = dest.rule;
+    const k = addToColl(it.card, it.finish, qty, it.binder, true), at = Date.now(), e = S.coll[k];
+    if (e) { e.scanned = it.at || at; e.firstScanned = e.firstScanned || it.at || at; e.scans = (e.scans || 0) + qty; }
+  }
   it.state = "added"; it.qty = qty;
+}
+function addedSummary(items) {
+  const by = {}; for (const it of items) { const k = [it.deck && S.decks[it.deck] ? "deck " + S.decks[it.deck].name : "", it.binder ? binderName(it.binder) : ""].filter(Boolean).join(" and "); by[k] = (by[k] || 0) + it.qty; }
+  return Object.entries(by).map(([k, n]) => `${n} to ${k}`).join(", ");
+}
+function scanRulesHTML() {
+  const rules = scanRules(), on = S.settings.scanRulesOn !== false, bins = Object.values(S.binders).filter(b => !b.wish);
+  return `<details class="box" id="scRules" ${S.meta.scanRulesOpen ? "open" : ""}><summary class="small"><b>Sort into binders by rule</b> ${rules.length ? `· ${rules.length} rule${rules.length === 1 ? "" : "s"}${on ? "" : " (off)"}` : "· e.g. rares over $5 → Trade binder"}</summary>
+    <div class="stack" style="gap:6px;margin-top:8px">
+      ${rules.length ? `<label class="toggle small"><input type="checkbox" id="srOn" ${on ? "checked" : ""}> Use these rules (checked top to bottom; the first match decides, anything else goes to the binder above)</label>
+        ${rules.map((r, i) => `<div class="kv"><span class="grow small">${i + 1}. ${esc(scanRuleText(r))}</span>${i ? `<button class="btn sm ghost" data-srup="${esc(r.id)}" aria-label="Move up">↑</button>` : ""}<button class="btn sm ghost" data-srdel="${esc(r.id)}" aria-label="Delete rule">✕</button></div>`).join("")}` : ""}
+      <div class="row wrap" style="gap:6px"><select id="srRar" aria-label="Rarity"><option value="">Any rarity</option><option value="uncommon">Uncommon or better</option><option value="rare">Rare or mythic</option><option value="mythic">Mythic</option></select>
+        <input type="number" id="srMin" inputmode="decimal" min="0" step="0.01" placeholder="Min $" style="width:90px" aria-label="Minimum price">
+        <label class="toggle small"><input type="checkbox" id="srFoil"> Foil only</label>
+        <span class="small">→</span><select id="srBin" aria-label="Send to binder">${bins.map(b => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join("")}</select>
+        <button class="btn sm" id="srAdd">Add rule</button></div>
+      <span class="small muted">Prices are TCGplayer market prices for the finish you scanned. Rules apply when cards are added, in Review or Bulk.</span></div></details>`;
+}
+function wireScanRules() {
+  const box = $("#scRulesBox"); if (!box) return;
+  const redraw = () => { box.innerHTML = scanRulesHTML(); wireScanRules(); };
+  $("#scRules").ontoggle = e => { if (S.meta.scanRulesOpen !== e.target.open) { S.meta.scanRulesOpen = e.target.open; save(); } };
+  const on = $("#srOn"); if (on) on.onchange = e => { S.settings.scanRulesOn = e.target.checked; save(); redraw(); };
+  $("#srAdd").onclick = () => {
+    const rar = $("#srRar").value, min = parseFloat($("#srMin").value), foil = $("#srFoil").checked, binder = $("#srBin").value;
+    if (!rar && !(min > 0) && !foil) return toast("Pick a rarity, a minimum price or foil, so the rule doesn't catch everything");
+    S.settings.scanRules = [...((S.settings.scanRules) || []), { id: uid(), rar: rar || null, min: min > 0 ? Math.round(min * 100) / 100 : null, foil, binder }];
+    S.meta.scanRulesOpen = true; save(); redraw();
+  };
+  box.querySelectorAll("[data-srdel]").forEach(b => b.onclick = () => { S.settings.scanRules = S.settings.scanRules.filter(r => r.id !== b.dataset.srdel); save(); redraw(); });
+  box.querySelectorAll("[data-srup]").forEach(b => b.onclick = () => { const a = S.settings.scanRules, i = a.findIndex(r => r.id === b.dataset.srup); if (i > 0) { [a[i - 1], a[i]] = [a[i], a[i - 1]]; save(); redraw(); } });
 }
 function scStatus(t) { const el = $("#scStatus"); if (el) el.textContent = t; }
 function camHint(t) { const h = $("#camHint"); if (h && h.textContent !== t) h.textContent = t; }
