@@ -224,6 +224,8 @@ details>summary{cursor:pointer}.seg.wide button{flex:1}
 .setrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;width:100%;text-align:left;padding:8px 0;border:0;border-top:1px solid var(--line);background:none;font:inherit;color:inherit;cursor:pointer}
 .setrow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.setrow .setbar{grid-column:1 / -1}
 .setbar{display:flex;align-items:center;gap:8px}.setbar .meter{flex:1;height:6px;margin:0}.setbar .meter>span{display:block;height:100%;background:var(--accent);border-radius:inherit}
+img.hero{display:block;width:100%;height:auto;aspect-ratio:1672/941;object-fit:cover;border-radius:14px;margin:0 0 14px;background:#16202b}
+.sheet img.hero{border-radius:10px;margin-bottom:10px}
 .linkbtn{border:0;background:none;padding:0;color:var(--accent);font:inherit;text-decoration:underline;cursor:pointer}
 .meter{height:6px;border-radius:3px;background:var(--sunk);overflow:hidden}.meter>div{height:100%;background:var(--accent);border-radius:3px}.meter.sm{height:4px;margin-top:6px}
 .chip .x{border:0;background:none;padding:0 0 0 4px;font:inherit;cursor:pointer;color:inherit}
@@ -1076,6 +1078,8 @@ function go(t, extra) {
   document.querySelectorAll("nav.tabs button").forEach(b => b.setAttribute("aria-current", b.dataset.tab === t ? "page" : "false"));
   window.scrollTo(0, 0); render();
 }
+// the Deckhand banner, at the size the screen needs
+const heroImg = () => `<img class="hero" src="images/welcome-800.jpg" srcset="images/welcome-800.jpg 800w, images/welcome-1600.jpg 1600w" sizes="(min-width: 900px) 860px, 100vw" width="1672" height="941" alt="Deckhand">`;
 function setHead(title, sub = "") { $("#viewTitle").textContent = title; $("#viewSub").textContent = sub; }
 function render() {
   staleIndex();
@@ -1327,7 +1331,7 @@ function renderColl() {
   const v = $("#view");
   if (!Object.keys(S.coll).length && !Object.keys(S.alerts).length) {
     const fresh = !Object.keys(S.decks).length;
-    v.innerHTML = `<div class="empty">${fresh ? `<h2>Welcome to Deckhand</h2>
+    v.innerHTML = `<div class="empty">${fresh ? `${heroImg()}<h2>Welcome to Deckhand</h2>
       <p>Your Magic collection, a card scanner and a Commander deck builder, free. Your cards are saved on this device; nothing is shared unless you turn on Sync.</p>
       <ol class="welcome"><li><b>Bring your cards in:</b> import a CSV from ManaBox, Moxfield and most other apps, or scan them with your camera.</li>
         <li><b>Organize:</b> binders, wishlists, prices, daily and weekly movers.</li><li><b>Build decks:</b> pick a commander for suggestions, deck balance and upgrade ideas from your own cards.</li>
@@ -2008,7 +2012,7 @@ function drawSync() {
     return;
   }
   if (!syncOn(cfg)) {
-    el.innerHTML = `<h2>Sync across devices</h2>
+    el.innerHTML = `${heroImg()}<h2>Sync across devices</h2>
       <p class="small">Keep your collection, decks, binders and wants the same on all your devices. Pick one way and use the same one on every device.</p>
       <div class="box stack" style="gap:6px;margin:10px 0"><span class="label">With Google (easiest)</span>
         <span class="small">Saved to a “${GDS.folder}” folder in your Google Drive; Deckhand can only see the files it makes. Google allows an hour at a time, so after that the corner button says <b>Tap to sync</b>: one tap and it carries on. Your changes are saved on the device meanwhile. Daily Drive backups are switched on too.</span>
