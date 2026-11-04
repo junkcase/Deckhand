@@ -1264,7 +1264,7 @@ function renderColl() {
     <div class="chips scrollx" id="bChips"><button data-b="all" aria-pressed="${cv.binder === "all"}">All owned</button>
       ${Object.values(S.binders).map(b => `<button data-b="${esc(b.id)}" aria-pressed="${cv.binder === b.id}">${esc(b.name)} <span class="num">${counts[b.id] || 0}</span></button>`).join("")}
       <button data-b="__manage">＋ Manage binders</button></div>
-    ${backupNudge()}
+    ${backupNudge()}${gdNudge()}
     ${alertHits.length ? `<div class="box alert"><div class="row"><span class="label gold grow">Price alerts</span><button class="linkbtn small" id="alAll">All alerts</button>${alertHits.length > 1 ? `<button class="linkbtn small" id="alOkAll">OK to all</button>` : ""}</div>${alertHits.slice(0, 8).map(([k, a, l]) => `
       <div class="kv"><span class="grow">${esc(a.name)}${k.split("|")[1] !== "nonfoil" ? ` <span class="small muted">${esc(k.split("|")[1])}</span>` : ""} was <b class="num">${money(l.price)}</b> <span class="muted small">(${esc(l.text || "")}, ${esc(new Date(l.at).toLocaleDateString())})</span></span>
       <button class="btn sm" data-alert="${esc(k)}">View</button><button class="btn sm ghost" data-seen="${esc(k)}" data-l="${esc(l.id)}">OK</button></div>`).join("")}${alertHits.length > 8 ? `<span class="small muted">and ${alertHits.length - 8} more under All alerts</span>` : ""}</div>` : ""}
@@ -1318,6 +1318,7 @@ function renderColl() {
   $("#cAlerts").onclick = () => alertsSheet(); const aa = $("#alAll"); if (aa) aa.onclick = () => alertsSheet("hist");
   const ao = $("#alOkAll"); if (ao) ao.onclick = () => { for (const [, a, l] of alertHits) { l.seen = true; a.updated = Date.now(); } save(); renderColl(); };
   v.querySelectorAll("[data-mover]").forEach(b => b.onclick = () => { const e = S.coll[b.dataset.mover]; if (e) openCard(e, e.finish, e.binder); });
+  wireGdNudge();
   const bn = $("#bkNow"); if (bn) { bn.onclick = () => { backupNow(); renderColl(); }; $("#bkSync").onclick = syncSheet; $("#bkLater").onclick = () => { S.meta.backupSnooze = Date.now() + 7 * 864e5; save(); renderColl(); }; }
   const mp = $("#mvPer"); if (mp) mp.onclick = e => { const b = e.target.closest("button"); if (!b) return; S.meta.moversPeriod = +b.dataset.p; save(); renderColl(); };
   const mm = $("#mvMore"); if (mm) mm.onclick = () => { cv.moversMore = !cv.moversMore; renderColl(); };
@@ -1842,6 +1843,143 @@ function backupNow() {
   download(`deckhand-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(S), "application/json");
   toast("Backup saved to your downloads. Keep it somewhere safe (Drive, email to yourself…)");
 }
+/* ---------- Google Drive backup ----------
+   A daily copy of everything in a "Deckhand backups" folder in your Google Drive (this app can only see files it made).
+   Google lets a website use Drive for an hour at a time, so when a backup is due and that hour has passed, Deckhand
+   asks for one tap. GitHub sync keeps running on its own either way. */
+const GD = { cid: "209447163612-8ma7rsakde9dm8rdvvupsp9tvqtm2kr7.apps.googleusercontent.com", scope: "https://www.googleapis.com/auth/drive.file", tok: null, exp: 0, lib: null, busy: false, keep: 30, folderName: "Deckhand backups" };
+function gdCfg() { try { return JSON.parse(localStorage.getItem("deckhand.gdrive") || "null"); } catch (e) { return null; } }
+function setGdCfg(c) { try { c ? localStorage.setItem("deckhand.gdrive", JSON.stringify(c)) : localStorage.removeItem("deckhand.gdrive"); } catch (e) {} }
+(function () { try { const t = JSON.parse(sessionStorage.getItem("deckhand.gdtok") || "null"); if (t && t.exp > Date.now() + 60000) { GD.tok = t.tok; GD.exp = t.exp; } } catch (e) {} })();
+const gdSignedIn = () => !!(GD.tok && Date.now() < GD.exp - 60000);
+function loadGis() {
+  if (window.google && google.accounts && google.accounts.oauth2) return Promise.resolve();
+  if (GD.lib) return GD.lib;
+  return GD.lib = new Promise((res, rej) => { const sc = document.createElement("script"); sc.src = "https://accounts.google.com/gsi/client"; sc.async = true;
+    sc.onload = () => res(); sc.onerror = () => { GD.lib = null; rej(new Error("Couldn't load Google sign-in. Check your connection, or whether an ad blocker is blocking accounts.google.com.")); }; document.head.appendChild(sc); });
+}
+// must run from a tap: Google opens a small sign-in window (it closes by itself after the first time)
+async function gdSignIn() {
+  await loadGis();
+  return new Promise((res, rej) => {
+    const cfg = gdCfg();
+    const client = google.accounts.oauth2.initTokenClient({ client_id: GD.cid, scope: GD.scope, prompt: cfg ? "" : "consent", hint: cfg && cfg.email || undefined,
+      callback: r => { if (r.error) return rej(new Error(r.error === "access_denied" ? "Google Drive access wasn't allowed." : "Google sign-in failed (" + r.error + ").")); GD.tok = r.access_token; GD.exp = Date.now() + (+r.expires_in || 3600) * 1000;
+        try { sessionStorage.setItem("deckhand.gdtok", JSON.stringify({ tok: GD.tok, exp: GD.exp })); } catch (e) {} res(GD.tok); },
+      error_callback: e => rej(new Error(e && e.type === "popup_closed" ? "Google sign-in was closed before it finished." : e && e.type === "popup_failed_to_open" ? "The browser blocked Google's sign-in window. Allow pop-ups for this site and try again." : "Google sign-in failed.")) });
+    client.requestAccessToken();
+  });
+}
+async function gd(path, opts = {}) {
+  if (!gdSignedIn()) throw Object.assign(new Error("Sign in to Google again to use Drive (Google allows an hour at a time)."), { needTap: true });
+  let r;
+  try { r = await fetch(path.startsWith("http") ? path : "https://www.googleapis.com" + path, Object.assign({}, opts, { headers: Object.assign({ Authorization: "Bearer " + GD.tok }, opts.headers || {}) })); }
+  catch (e) { throw new Error("Couldn't reach Google Drive. Check your connection."); }
+  if (r.status === 401) { GD.tok = null; try { sessionStorage.removeItem("deckhand.gdtok"); } catch (e) {} throw Object.assign(new Error("Sign in to Google again to use Drive."), { needTap: true }); }
+  if (r.status === 403) { const j = await r.json().catch(() => ({})); throw new Error("Google Drive refused: " + ((j.error && j.error.message) || "no permission")); }
+  if (!r.ok) throw new Error("Google Drive returned " + r.status);
+  return r;
+}
+const gdq = q => encodeURIComponent(q);
+async function gdFolder() {
+  const cfg = gdCfg() || {};
+  if (cfg.folder) { try { const f = await (await gd(`/drive/v3/files/${cfg.folder}?fields=id,trashed`)).json(); if (!f.trashed) return f.id; } catch (e) { if (e.needTap) throw e; } }
+  const found = (await (await gd(`/drive/v3/files?q=${gdq(`name='${GD.folderName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`)}&fields=files(id)&spaces=drive`)).json()).files || [];
+  const id = found.length ? found[0].id : (await (await gd("/drive/v3/files?fields=id", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: GD.folderName, mimeType: "application/vnd.google-apps.folder" }) })).json()).id;
+  setGdCfg(Object.assign({}, gdCfg(), { folder: id })); return id;
+}
+async function gdList() {
+  const folder = await gdFolder();
+  const j = await (await gd(`/drive/v3/files?q=${gdq(`'${folder}' in parents and trashed=false`)}&orderBy=createdTime desc&pageSize=200&fields=files(id,name,createdTime,size,appProperties)`)).json();
+  return (j.files || []).filter(f => /^deckhand-backup-/.test(f.name));
+}
+async function gzipText(text) {
+  if (typeof CompressionStream === "undefined") return new Blob([text], { type: "application/json" });
+  return new Response(new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"))).blob();
+}
+async function ungzip(buf) {
+  const u = new Uint8Array(buf);
+  if (u[0] !== 0x1f || u[1] !== 0x8b) return new TextDecoder().decode(u);
+  return new Response(new Blob([u]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+}
+async function gdBackupNow(quiet) {
+  if (GD.busy) return; GD.busy = true;
+  try {
+    const folder = await gdFolder(), gz = typeof CompressionStream !== "undefined", now = new Date();
+    const cards = Object.values(S.coll).filter(e => !isWish(e.binder)).reduce((a, e) => a + e.qty, 0), decks = Object.keys(S.decks).length;
+    const meta = { name: `deckhand-backup-${new Date(now - now.getTimezoneOffset() * 6e4).toISOString().slice(0, 16).replace(":", "")}-${devName()}.json${gz ? ".gz" : ""}`, parents: [folder], mimeType: gz ? "application/gzip" : "application/json",
+      appProperties: { deckhand: "1", device: devName(), cards: String(cards), decks: String(decks) } };
+    const body = new FormData();
+    body.append("metadata", new Blob([JSON.stringify(meta)], { type: "application/json" }));
+    body.append("file", await gzipText(JSON.stringify(S)));
+    await gd("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id", { method: "POST", body });
+    // keep the newest ones; older copies go to Drive's trash (Google empties it after 30 days)
+    const all = await gdList();
+    for (const f of all.slice(GD.keep)) await gd(`/drive/v3/files/${f.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trashed: true }) }).catch(() => {});
+    setGdCfg(Object.assign({}, gdCfg(), { last: Date.now(), lastDevice: devName() })); S.meta.backupAt = Date.now(); save();
+    if (!quiet) toast("Backed up to Google Drive");
+    return true;
+  } finally { GD.busy = false; }
+}
+// once a day, from whichever device is open: quietly if Google's hour is still running, otherwise a one-tap reminder on Collection
+const gdDue = () => { const c = gdCfg(); return !!(c && c.on && Date.now() - (c.last || 0) > 20 * 36e5 && Date.now() > (c.snooze || 0)); };
+async function gdAuto() {
+  if (!gdDue() || !gdSignedIn() || !Object.keys(S.coll).length) return;
+  try { const all = await gdList(); const newest = all[0] ? Date.parse(all[0].createdTime) : 0;
+    if (Date.now() - newest < 20 * 36e5) { setGdCfg(Object.assign({}, gdCfg(), { last: newest })); return; }        // another device already did today's
+    await gdBackupNow(true); } catch (e) {}
+}
+function gdNudge() {
+  if (!gdDue()) return "";
+  const c = gdCfg();
+  return `<div class="box" id="gdNudge"><div class="row wrap"><span class="grow small"><b>Daily Google Drive backup</b> · last one ${c.last ? esc(scanWhen(c.last)) : "not made yet"}</span>
+    <button class="btn sm primary" id="gdNow">Back up now</button><button class="btn sm ghost" id="gdLater">Not today</button></div></div>`;
+}
+function wireGdNudge() {
+  const b = $("#gdNow"); if (!b) return;
+  b.onclick = async () => { b.disabled = true; b.textContent = "Backing up…"; try { if (!gdSignedIn()) await gdSignIn(); await gdBackupNow(); } catch (e) { toast(e.message); } render(); };
+  $("#gdLater").onclick = () => { setGdCfg(Object.assign({}, gdCfg(), { snooze: Date.now() + 12 * 36e5 })); render(); };
+}
+function gdSection() {
+  const c = gdCfg();
+  if (!c || !c.on) return `<div class="box stack" style="gap:6px"><span class="label">Google Drive backup</span>
+    <span class="small">A copy of everything (cards, decks, binders, alerts, price history) saved once a day to a “${GD.folderName}” folder in your Google Drive, keeping the last ${GD.keep}. Deckhand can only see the files it makes there.</span>
+    <div class="row"><button class="btn primary" id="gdOn">Connect Google Drive</button></div><div class="small muted" id="gdMsg"></div></div>`;
+  return `<div class="box stack" style="gap:6px"><span class="label">Google Drive backup</span>
+    <span class="small">${c.email ? `Google account ${esc(c.email)}. ` : ""}Last backup: <b>${c.last ? esc(scanWhen(c.last)) + (c.lastDevice ? " from your " + esc(c.lastDevice) : "") : "none yet"}</b>. Daily, keeping the last ${GD.keep}.</span>
+    <div class="row wrap"><button class="btn sm primary" id="gdBk">Back up now</button><button class="btn sm" id="gdRs">Restore from Drive</button><button class="btn sm ghost" id="gdOff">Stop Drive backups</button></div>
+    <div class="small muted" id="gdMsg">${gdSignedIn() ? "" : "Google allows an hour at a time, so these buttons may show a quick Google sign-in first."}</div></div>`;
+}
+function wireGdSection(redraw) {
+  const msg = t => { const m = $("#gdMsg"); if (m) m.textContent = t; };
+  const on = $("#gdOn"); if (on) on.onclick = async () => {
+    msg("Opening Google sign-in…");
+    try { await gdSignIn(); const about = await (await gd("/drive/v3/about?fields=user(emailAddress)")).json();
+      setGdCfg(Object.assign({}, gdCfg(), { on: true, email: about.user && about.user.emailAddress || "" })); msg("Making the first backup…"); await gdBackupNow(); redraw(); }
+    catch (e) { msg(e.message); } };
+  const bk = $("#gdBk"); if (bk) bk.onclick = async () => { msg("Backing up…"); try { if (!gdSignedIn()) await gdSignIn(); await gdBackupNow(); redraw(); } catch (e) { msg(e.message); } };
+  const rs = $("#gdRs"); if (rs) rs.onclick = async () => { msg("Looking for backups…"); try { if (!gdSignedIn()) await gdSignIn(); gdRestoreSheet(await gdList()); } catch (e) { msg(e.message); } };
+  const off = $("#gdOff"); if (off) off.onclick = () => { setGdCfg(null); GD.tok = null; try { sessionStorage.removeItem("deckhand.gdtok"); } catch (e) {} redraw(); toast("Drive backups stopped. The backups already in your Drive stay there."); };
+}
+// put a backup back: without Sync it replaces this device's data; with Sync it brings back anything missing and the next sync shares it
+async function restoreBackup(d) {
+  if (!d || typeof d.coll !== "object" || typeof d.decks !== "object") throw new Error("That isn't a Deckhand backup.");
+  S = d; migrate(); save(); render();
+}
+function gdRestoreSheet(files) {
+  const syncing = !!(syncCfg() && syncCfg().gist);
+  openSheet(`<h2>Restore from Google Drive</h2>
+    <p class="small muted" style="margin:4px 0 10px">${syncing ? "Sync is on, so restoring brings back everything in the backup that's missing now (cards, decks) and your other devices get it too. Nothing you have now is removed." : "Restoring replaces what's on this device with the backup. Make a backup first if you're not sure."}</p>
+    <div class="stack" id="gdRsList">${files.length ? files.map(f => { const a = f.appProperties || {}; return `<div class="kv"><span class="grow small"><b>${esc(new Date(f.createdTime).toLocaleString())}</b>${a.device ? ` · ${esc(a.device)}` : ""}${a.cards ? ` · ${(+a.cards).toLocaleString()} cards, ${esc(a.decks || "0")} decks` : ""}</span><button class="btn sm" data-gdr="${esc(f.id)}">Restore</button></div>`; }).join("") : `<p class="small muted">No backups in your Drive yet.</p>`}</div>
+    <div class="small muted" id="gdRsMsg"></div>`, () => render());
+  $("#gdRsList").querySelectorAll("[data-gdr]").forEach(b => b.onclick = async () => {
+    if (!syncing && b.dataset.sure !== "1") { b.dataset.sure = "1"; b.textContent = "Tap again to replace"; b.classList.add("danger"); return; }
+    $("#gdRsMsg").textContent = "Downloading…";
+    try { if (!gdSignedIn()) await gdSignIn(); const buf = await (await gd(`/drive/v3/files/${encodeURIComponent(b.dataset.gdr)}?alt=media`)).arrayBuffer();
+      await restoreBackup(JSON.parse(await ungzip(buf))); closeSheet(); toast(syncing ? "Backup restored. Syncing it to your other devices." : "Backup restored"); }
+    catch (e) { $("#gdRsMsg").textContent = "Couldn't restore: " + (e instanceof SyntaxError ? "the file isn't a Deckhand backup." : e.message); }
+  });
+}
 function backupNudge() {
   const cfg = syncCfg(), n = Object.keys(S.coll).length + Object.keys(S.decks).length;
   if ((cfg && cfg.gist && !cfg.paused) || n < 10) return "";
@@ -1863,11 +2001,14 @@ function ioSheet() {
       <button class="btn" id="ioImp">Import a CSV file</button>
     </div>
     <p class="small muted">CSV files from ManaBox, Moxfield, Deckbox, TCGplayer, Dragon Shield, Archidekt and most other apps work. You'll see a preview before anything is added.</p>
-    <div id="ioMsg" class="status"></div>`);
+    <div id="ioMsg" class="status"></div>
+    <div id="gdBox">${gdSection()}</div>`);
+  const drawGd = () => { const b = $("#gdBox"); if (b) { b.innerHTML = gdSection(); wireGdSection(drawGd); } }; wireGdSection(drawGd);
+  loadGis().catch(() => {});          // ready before the tap, so Google's window isn't blocked
   const stamp = new Date().toISOString().slice(0, 10);
   $("#ioBack").onclick = () => backupNow();
-  $("#ioRest").onclick = () => pickFile(".json,application/json", async f => {
-    try { const d = JSON.parse(await f.text()); if (!d || typeof d.coll !== "object" || typeof d.decks !== "object") throw 0; S = d; migrate(); save(); closeSheet(); render(); toast("Backup restored"); }
+  $("#ioRest").onclick = () => pickFile(".json,.gz,application/json,application/gzip", async f => {
+    try { await restoreBackup(JSON.parse(await ungzip(await f.arrayBuffer()))); closeSheet(); render(); toast("Backup restored"); }
     catch (e) { $("#ioMsg").textContent = "That file isn't a Deckhand backup."; }
   });
   $("#ioCsv").onclick = () => {
@@ -4418,6 +4559,7 @@ async function boot() {
   loadSets().then(() => { if (tab === "coll" && $("#clist")) drawCollList(); else if (tab === "scan") drawSession(); }).catch(() => {});
   if (S.meta.usedScan) setTimeout(() => getWorkers().catch(() => {}), 2500);
   const sc_ = syncCfg(); if (sc_ && sc_.gist && !sc_.paused) setTimeout(startSyncLoop, 600);
+  if (gdCfg()) { setTimeout(gdAuto, 8000); loadGis().catch(() => {}); }
   if (Object.keys(S.coll).length && (!S.meta.pricedAt || Date.now() - S.meta.pricedAt > 20 * 36e5)) setTimeout(() => refreshPrices(true), 1500);
 }
 /* ---------- install as an app ---------- */
