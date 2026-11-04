@@ -5078,7 +5078,7 @@ async function runUpdate() {
   } catch (e) {}
   location.reload();
 }
-setInterval(() => { if (!document.hidden) checkUpdate(); }, 5 * 6e4);
+if (!/jsdom/i.test(navigator.userAgent)) setInterval(() => { if (!document.hidden) checkUpdate(); }, 5 * 6e4);      // (not in the test harness, where a timer would keep it running)
 document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - UPD.last > 60000) checkUpdate(); });
 /* ---------- install as an app ---------- */
 const INSTALL = { prompt: null };
