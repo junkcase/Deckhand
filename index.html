@@ -1726,32 +1726,53 @@ async function findOldDecks(onProgress, maxVersions = 40, stop) {
     }
     return [...found.values()].sort((a, b) => b.at - a.at);
   }
-  const list = []; for (let page = 1; page <= 3 && list.length < maxVersions; page++) { const r = await (await gh(`/gists/${cfg.gist}/commits?per_page=100&page=${page}`)).json(); list.push(...r); if (r.length < 100) break; }
-  const vers = list.slice(0, maxVersions);
-  for (let i = 0; i < vers.length; i++) {
+  // GitHub keeps every version. Syncs happen every few seconds, so the newest few hundred can cover only hours:
+  // list them all, then check the newest few and a spread across the whole history (about evenly in time).
+  const list = OLDV.list && OLDV.gist === cfg.gist ? OLDV.list : [];
+  if (!list.length) { for (let page = 1; page <= 60; page++) { onProgress && onProgress(0, 0, found, `Listing synced versions… ${list.length}`); const r = await (await gh(`/gists/${cfg.gist}/commits?per_page=100&page=${page}`)).json(); list.push(...r); if (r.length < 100 || (stop && stop())) break; }
+    Object.assign(OLDV, { list, gist: cfg.gist }); }
+  const left = list.filter(v => !OLDV.checked.has(v.version)), pick = [];
+  for (const v of left.slice(0, Math.min(10, maxVersions))) pick.push(v);
+  const rest = left.filter(v => !pick.includes(v)), n = Math.max(0, maxVersions - pick.length);
+  if (rest.length && n) { const t0 = Date.parse(rest[rest.length - 1].committed_at), t1 = Date.parse(rest[0].committed_at), used = new Set();
+    for (let i = 0; i < n; i++) { const target = t1 - (t1 - t0) * (i + 0.5) / n; let best = -1, bd = Infinity;
+      for (let j = 0; j < rest.length; j++) { if (used.has(j)) continue; const dd = Math.abs(Date.parse(rest[j].committed_at) - target); if (dd < bd) { bd = dd; best = j; } }
+      if (best >= 0) { used.add(best); pick.push(rest[best]); } } }
+  pick.sort((a, b) => Date.parse(b.committed_at) - Date.parse(a.committed_at));
+  let failed = 0;
+  for (let i = 0; i < pick.length; i++) {
     if (stop && stop()) break;
-    onProgress && onProgress(i + 1, vers.length, found);
+    onProgress && onProgress(i + 1, pick.length, found, `Checking the version from ${new Date(pick[i].committed_at).toLocaleString()}…`);
     try {
-      const g = await parseGist(await (await gh(`/gists/${cfg.gist}/${vers[i].version}`)).json());
+      const g = await parseGist(await (await gh(`/gists/${cfg.gist}/${pick[i].version}`)).json()); OLDV.checked.add(pick[i].version);
       if (!g.state) continue;
-      for (const d of Object.values(g.state.decks || {})) if (!now.has(d.id) && !found.has(d.id)) found.set(d.id, { deck: d, at: Date.parse(vers[i].committed_at), device: (g.info && g.info.device) || "" });
-    } catch (e) {}
+      for (const d of Object.values(g.state.decks || {})) if (!now.has(d.id) && !OLDV.found.has(d.id)) OLDV.found.set(d.id, { deck: d, at: Date.parse(pick[i].committed_at), device: (g.info && g.info.device) || "" });
+    } catch (e) { failed++; }
   }
-  return [...found.values()].sort((a, b) => b.at - a.at);
+  for (const [k, v] of OLDV.found) if (!now.has(k)) found.set(k, v);
+  const out = [...found.values()].sort((a, b) => b.at - a.at);
+  return Object.assign(out, { total: list.length, checked: OLDV.checked.size, failed, oldest: list.length ? list[list.length - 1].committed_at : null });
 }
+const OLDV = { list: null, gist: null, checked: new Set(), found: new Map() };     // kept while the app is open, so "Keep looking" continues
 function oldDecksSheet() {
-  let stopped = false;
-  openSheet(`<h2>Find a missing deck</h2><p class="small muted">Looking through earlier versions of your synced copy on GitHub for decks that aren't on this device…</p><div id="odBody" class="stack"><div class="status" id="odMsg">Starting…</div></div>`, () => { stopped = true; render(); });
-  const draw = (items, done, i, n) => {
+  let stopped = false, busy = false;
+  openSheet(`<h2>Find a missing deck</h2><p class="small muted">Looking through earlier versions of your synced copy for decks that aren't on this device…</p><div id="odBody" class="stack"><div class="status">Starting…</div></div>`, () => { stopped = true; render(); });
+  const draw = (items, done, msg, res) => {
     const el = $("#odBody"); if (!el) return;
-    el.innerHTML = `<div class="status">${done ? `Checked ${n} earlier version${n === 1 ? "" : "s"}.` : `Checking version ${i} of ${n}…`}</div>
+    const more = res && res.total && res.checked < res.total;
+    el.innerHTML = `<div class="status">${done ? (res && res.total ? `Checked ${res.checked} of ${res.total} synced versions, back to ${esc(new Date(res.oldest).toLocaleDateString())}${res.failed ? ` (${res.failed} couldn't be read)` : ""}.` : `Checked the earlier copies.`) : esc(msg || "Working…")}</div>
       ${items.length ? `<div class="list">${items.map((x, k) => { const c = Object.values(x.deck.cards || {}).filter(c => !c.side).reduce((a, c) => a + c.qty, 0); return `<div class="item"><div class="tap" style="cursor:default"><div class="name">${esc(x.deck.name)}</div>
         <div class="meta small muted">${FORMATS[x.deck.format] || "Casual"} · ${c} cards · last seen ${esc(dayLabel(x.at))}${x.device ? ` (saved from your ${esc(x.device)})` : ""}</div></div>
-        <div class="right"><button class="btn sm primary" data-od="${k}">Restore</button></div></div>`; }).join("")}</div>` : done ? `<p class="small">No missing decks found in the synced history. If you built the deck on a device that wasn't syncing yet, it will only be on that device: open Deckhand there, in the same browser you used.</p>` : ""}`;
+        <div class="right"><button class="btn sm primary" data-od="${k}">Restore</button></div></div>`; }).join("")}</div>` : ""}
+      ${done && more ? `<button class="btn" id="odMore">Keep looking (${Math.min(80, res.total - res.checked)} more versions)</button>` : ""}
+      ${done && !items.length && !more ? `<p class="small">No missing decks in the synced history. If the deck was built on a device and lost there before that device synced, it never reached the synced copy: check that device's Decks → Recently deleted.</p>` : ""}`;
     el.querySelectorAll("[data-od]").forEach(b => b.onclick = () => { const x = items[+b.dataset.od]; S.decks[x.deck.id] = Object.assign(JSON.parse(JSON.stringify(x.deck)), { updated: Date.now() }); save(); b.textContent = "Restored ✓"; b.disabled = true; toast(`Restored “${x.deck.name}”`); });
+    const m = $("#odMore"); if (m) m.onclick = () => run();
   };
-  findOldDecks((i, n, f) => draw([...f.values()], false, i, n), 40, () => stopped)
-    .then(items => draw(items, true, 0, 40)).catch(e => { const m = $("#odBody"); if (m) m.innerHTML = `<div class="status">Couldn't read the history: ${esc(e.message)}</div>`; });
+  const run = () => { if (busy) return; busy = true;
+    findOldDecks((i, n, f, msg) => draw([...f.values()], false, msg || `Checking version ${i} of ${n}…`), 80, () => stopped)
+      .then(items => draw(items, true, "", items)).catch(e => { const m = $("#odBody"); if (m) m.innerHTML = `<div class="status">Couldn't read the history: ${esc(e.message)}</div>`; }).finally(() => { busy = false; }); };
+  run();
 }
 // Decks removed on this device (by you, or by a sync) are kept for 30 days so they can be put back
 function trashDeck(d, why) {
