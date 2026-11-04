@@ -220,6 +220,7 @@ details>summary{cursor:pointer}.seg.wide button{flex:1}
 .ac li.haspr{display:flex;align-items:stretch}.ac li.haspr>button[data-i]{flex:1;min-width:0}
 .ac .prbtn{flex:none;width:auto;border:0;border-left:1px solid var(--line);background:var(--sunk);padding:0 12px;font:600 13px/1 var(--f-body);color:var(--accent);cursor:pointer}
 .prints .owned{position:absolute;top:6px;left:6px}.prints button{position:relative}
+.mplink{color:var(--accent);text-decoration:none;white-space:nowrap}
 .linkbtn{border:0;background:none;padding:0;color:var(--accent);font:inherit;text-decoration:underline;cursor:pointer}
 .meter{height:6px;border-radius:3px;background:var(--sunk);overflow:hidden}.meter>div{height:100%;background:var(--accent);border-radius:3px}.meter.sm{height:4px;margin-top:6px}
 .chip .x{border:0;background:none;padding:0 0 0 4px;font:inherit;cursor:pointer;color:inherit}
@@ -4559,7 +4560,32 @@ function deckText(d) {
 /* Buy what's missing: the cards a deck needs that you don't have (the same count as "Not owned" on the deck),
    priced at the printing in the deck, with an optional search for each card's cheapest printing (Scryfall, TCGplayer
    market price). Copies as a TCGplayer Mass Entry list, or puts the cards on a wishlist. */
-const CHEAP = {};          // name -> { price, set, num } | null, for this session
+const CHEAP = {};          // name -> { price, set, num, id } | null, for this session
+/* Mana Pool prices: a daily copy of Mana Pool's public price list, split into small files by Scryfall ID
+   (tools/manapool-mirror.js, run by a GitHub Action; Mana Pool's own API can't be read from a website). */
+const MP = { base: "https://raw.githubusercontent.com/junkcase/Deckhand/data/manapool/", meta: null, shards: {}, err: "" };
+async function mpMeta() {
+  if (MP.meta && Date.now() - MP.meta.fetched < 30 * 6e4) return MP.meta;
+  const r = await fetch(MP.base + "meta.json", { cache: "no-cache" }); if (!r.ok) throw new Error(r.status === 404 ? "Mana Pool prices aren't set up yet" : "Couldn't load Mana Pool prices (" + r.status + ")");
+  MP.meta = Object.assign(await r.json(), { fetched: Date.now() }); return MP.meta;
+}
+// prices for these Scryfall IDs: id -> { low, nm, foil, etched, url } (cents to dollars); only the files needed are loaded, kept for the day
+async function mpPrices(ids) {
+  const meta = await mpMeta(), need = [...new Set(ids.filter(Boolean).map(id => String(id).slice(0, 2).toLowerCase()).filter(k => /^[0-9a-f]{2}$/.test(k)))];
+  await Promise.all(need.map(async k => {
+    if (MP.shards[k] && MP.shards[k].as_of === meta.as_of) return;
+    let c = null; try { c = idb.ok ? await idbGet("mp:" + k) : null; } catch (e) {}
+    if (c && c.as_of === meta.as_of) { MP.shards[k] = c; return; }
+    const r = await fetch(MP.base + k + ".json"); if (!r.ok && r.status !== 404) throw new Error("Couldn't load Mana Pool prices (" + r.status + ")");
+    MP.shards[k] = { as_of: meta.as_of, data: r.ok ? await r.json() : {} };
+    if (idb.ok) idbSet("mp:" + k, MP.shards[k]).catch(() => {});
+  }));
+  const out = {}, c$ = v => v == null ? null : v / 100;
+  for (const id of ids) { const sh = id && MP.shards[String(id).slice(0, 2).toLowerCase()], row = sh && sh.data[String(id).toLowerCase()];
+    if (row) out[id] = { low: c$(row[0]), nm: c$(row[1]), foil: c$(row[2]), etched: c$(row[3]), url: /^[a-z0-9][a-z0-9._-]*\/[^/?#\s]+\/[a-z0-9-]+$/i.test(row[4] || "") ? "https://manapool.com/card/" + row[4] : "" }; }
+  return out;
+}
+const mpPrice = p => p ? (p.low ?? p.nm ?? p.foil ?? p.etched) : null;
 function deckShortfall(d, side) {
   const need = {};
   for (const c of Object.values(d.cards)) { if (c.side && !side) continue; (need[c.name] = need[c.name] || { q: 0, c, side: true }).q += c.qty; if (!c.side) need[c.name].side = false; }
@@ -4569,13 +4595,20 @@ async function findCheapest(name) {
   if (name in CHEAP) return CHEAP[name];
   try {
     const r = await sf(`/cards/search?q=${encodeURIComponent(`!"${name.replace(/"/g, "")}" usd>0 game:paper`)}&unique=prints&order=usd&dir=asc`);
-    const c = (r.data || [])[0]; CHEAP[name] = c ? { price: priceOf(c, "nonfoil"), set: c.set, num: c.collector_number, setName: c.set_name } : null;
+    const c = (r.data || [])[0]; CHEAP[name] = c ? { price: priceOf(c, "nonfoil"), set: c.set, num: c.collector_number, setName: c.set_name, id: c.id } : null;
   } catch (e) { if (e.status === 404) CHEAP[name] = null; else throw e; }
   return CHEAP[name];
 }
 function buySheet(d) {
-  const o = { side: true, basics: false, busy: false, done: 0, err: "" };
+  const o = { side: true, basics: false, busy: false, done: 0, err: "", mp: {}, mpState: "loading", mpErr: "" };
   openSheet(`<div id="buyBody"></div>`, () => render());
+  const loadMP = async () => {
+    const ids = deckShortfall(d, true).flatMap(x => [x.c.id, CHEAP[x.c.name] && CHEAP[x.c.name].id]).filter(id => id && !(id in o.mp));
+    if (!ids.length) { if (o.mpState === "loading") o.mpState = "ok"; return; }
+    try { const got = await mpPrices(ids); for (const id of ids) o.mp[id] = got[id] || null; o.mpState = "ok"; }
+    catch (e) { o.mpState = "err"; o.mpErr = e.message; }
+    draw();
+  };
   const draw = () => {
     const el = $("#buyBody"); if (!el) return;
     const hasSide = Object.values(d.cards).some(c => c.side);
@@ -4583,6 +4616,11 @@ function buySheet(d) {
     const n = list.reduce((a, x) => a + x.q, 0), atDeck = list.reduce((a, x) => a + (priceOf(x.c) || 0) * x.q, 0), noDeckPrice = list.filter(x => priceOf(x.c) == null).length;
     const looked = list.filter(x => x.c.name in CHEAP), cheapTot = looked.reduce((a, x) => a + ((CHEAP[x.c.name] || {}).price ?? priceOf(x.c) ?? 0) * x.q, 0);
     const allLooked = list.length && looked.length === list.length;
+    // Mana Pool: the printing in the deck, or the cheapest printing once it's been found if Mana Pool has it cheaper
+    const mpOf = x => { const a = mpPrice(o.mp[x.c.id]), ch = CHEAP[x.c.name], b = ch && ch.id ? mpPrice(o.mp[ch.id]) : null;
+      return a == null && b == null ? null : b != null && (a == null || b < a) ? { price: b, url: o.mp[ch.id].url, set: ch.set } : { price: a, url: o.mp[x.c.id].url, set: x.c.set }; };
+    const mpRows = list.map(mpOf), mpTot = mpRows.reduce((a, m, i) => a + (m ? m.price * list[i].q : 0), 0), mpMissing = mpRows.filter(m => !m).length;
+    const mpAsOf = MP.meta && MP.meta.as_of ? new Date(MP.meta.as_of) : null;
     el.innerHTML = `<h2>Buy what's missing</h2>
       <p class="small muted" style="margin:4px 0 10px">Cards “${esc(d.name)}” needs that you don't have${shareCopies() ? "" : " free (copies used in other decks count as taken)"}. TCGplayer market prices from Scryfall${S.meta.pricedAt ? `, updated ${esc(dayLabel(S.meta.pricedAt))}` : ""}.</p>
       ${hasSide || basics.length ? `<div class="row wrap" style="gap:4px 14px">${hasSide ? `<label class="toggle"><input type="checkbox" id="bySide" ${o.side ? "checked" : ""}> Include sideboard</label>` : ""}${basics.length ? `<label class="toggle"><input type="checkbox" id="byBasic" ${o.basics ? "checked" : ""}> Include basic lands (${basics.reduce((a, x) => a + x.q, 0)})</label>` : ""}</div>` : ""}
@@ -4590,6 +4628,9 @@ function buySheet(d) {
       <div class="summary"><div><span class="label">Cards to buy</span><b class="num">${n}</b></div>
         <div><span class="label">At these printings</span><b class="num gold">${money(atDeck)}</b>${noDeckPrice ? `<span class="small muted">${noDeckPrice} without a price</span>` : ""}</div>
         <div><span class="label">Cheapest printings</span><b class="num ${allLooked ? "up" : "muted"}">${allLooked ? money(cheapTot) : looked.length ? "…" : "—"}</b>${allLooked && atDeck > cheapTot ? `<span class="small up">save ${money(atDeck - cheapTot)}</span>` : ""}</div></div>
+      <div class="box" style="gap:2px;padding:8px 12px"><div class="kv"><span class="grow"><b>Mana Pool</b> <span class="small muted">lowest listing${mpAsOf ? `, prices from ${esc(mpAsOf.toLocaleDateString())}` : ""}</span></span>
+        <b class="num ${o.mpState === "ok" && !mpMissing ? "gold" : ""}">${o.mpState === "loading" ? "…" : o.mpState === "err" ? "—" : money(mpTot)}</b></div>
+        <span class="small muted">${o.mpState === "err" ? esc(o.mpErr) : o.mpState === "ok" && mpMissing ? `${mpMissing} card${mpMissing === 1 ? " isn't" : "s aren't"} listed on Mana Pool, so the total leaves ${mpMissing === 1 ? "it" : "them"} out.` : o.mpState === "ok" ? "Tap a Mana Pool price below to open that card on Mana Pool." : "Loading Mana Pool prices…"}</span></div>
       ${allLooked ? "" : `<div class="row"><button class="btn sm" id="byFind" ${o.busy ? "disabled" : ""}>${o.busy ? `Finding cheapest printings… ${o.done}/${list.length}` : "Find the cheapest printings"}</button><span class="small muted grow">${o.busy ? "" : `about ${Math.max(1, Math.ceil(list.filter(x => !(x.c.name in CHEAP)).length / 2))} seconds`}</span></div>`}
       ${o.err ? `<div class="small down">${esc(o.err)}</div>` : ""}
       <div class="row wrap"><button class="btn primary" id="byCopy">Copy for TCGplayer</button><a class="btn" style="color:inherit;text-decoration:none" href="https://www.tcgplayer.com/massentry" target="_blank" rel="noopener">Open TCGplayer Mass Entry</a><button class="btn" id="byWish">Add to my wishlist</button></div>
@@ -4597,7 +4638,8 @@ function buySheet(d) {
       <div class="list" style="margin-top:6px">${list.map(x => { const ch = CHEAP[x.c.name], dp = priceOf(x.c); return `<div class="item"><img loading="lazy" src="${esc(x.c.img || "")}" alt="">
         <div class="tap" style="cursor:default"><div class="name">${x.q}× ${esc(x.c.name)}${x.side ? ` <span class="chip">sideboard</span>` : ""}</div>
           <div class="meta small"><span class="muted">${esc((x.c.set || "").toUpperCase())} #${esc(x.c.num || "")}</span><span class="num">${dp != null ? money(dp) + " ea" : "no price"}</span>
-          ${x.c.name in CHEAP ? (ch && ch.price != null ? `<span class="num ${dp == null || ch.price < dp ? "up" : "muted"}">cheapest ${money(ch.price)} · ${esc(ch.set.toUpperCase())}</span>` : `<span class="muted">no cheaper printing found</span>`) : ""}</div></div>
+          ${x.c.name in CHEAP ? (ch && ch.price != null ? `<span class="num ${dp == null || ch.price < dp ? "up" : "muted"}">cheapest ${money(ch.price)} · ${esc(ch.set.toUpperCase())}</span>` : `<span class="muted">no cheaper printing found</span>`) : ""}
+          ${(() => { const m = mpRows[list.indexOf(x)]; return m ? (m.url ? `<a class="num mplink" href="${esc(m.url)}" target="_blank" rel="noopener">Mana Pool ${money(m.price)}${m.set !== x.c.set ? " · " + esc((m.set || "").toUpperCase()) : ""} ↗</a>` : `<span class="num">Mana Pool ${money(m.price)}</span>`) : o.mpState === "ok" ? `<span class="muted">not on Mana Pool</span>` : ""; })()}</div></div>
         <div class="right"><span class="price gold num">${((ch && ch.price) ?? dp) != null ? money(((ch && ch.price) ?? dp) * x.q) : `<span class="muted">—</span>`}</span></div></div>`; }).join("")}</div>`}`;
     const sd = $("#bySide"); if (sd) sd.onchange = e => { o.side = e.target.checked; draw(); };
     const bb = $("#byBasic"); if (bb) bb.onchange = e => { o.basics = e.target.checked; draw(); };
@@ -4606,7 +4648,7 @@ function buySheet(d) {
       for (const x of list) { if (!$("#buyBody")) return; if (x.c.name in CHEAP) continue;
         try { await findCheapest(x.c.name); } catch (e) { o.err = "Stopped: " + e.message; break; }
         o.done++; draw(); }
-      o.busy = false; draw();
+      o.busy = false; draw(); loadMP();
     };
     const cp = $("#byCopy"); if (cp) cp.onclick = async () => { const text = list.map(x => `${x.q} ${x.c.name}`).join("\n");
       try { await navigator.clipboard.writeText(text); toast(`Copied ${list.length} line${list.length === 1 ? "" : "s"}. Paste them into TCGplayer Mass Entry`); }
@@ -4617,7 +4659,7 @@ function buySheet(d) {
       save(); toast(added ? `Put ${added} card${added === 1 ? "" : "s"} on ${w.name}` : `They're already on ${w.name}`);
     };
   };
-  draw();
+  draw(); loadMP();
 }
 function deckMenu(d) {
   openSheet(`<h2>${esc(d.name)}</h2>

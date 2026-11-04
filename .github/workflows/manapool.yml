@@ -1,0 +1,34 @@
+name: Mana Pool prices
+# Once a day: copy Mana Pool's public price list to the "data" branch, which Deckhand reads
+# (Mana Pool doesn't let websites read its API directly). The branch keeps only the latest copy.
+on:
+  schedule:
+    - cron: "41 10 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: manapool-prices
+  cancel-in-progress: false
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Download and split the price list
+        run: node tools/manapool-mirror.js "$RUNNER_TEMP/out"
+      - name: Publish to the data branch (latest copy only)
+        run: |
+          cd "$RUNNER_TEMP/out"
+          git init -q -b data
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "Mana Pool prices $(date -u +%F)"
+          git push -q --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" data
