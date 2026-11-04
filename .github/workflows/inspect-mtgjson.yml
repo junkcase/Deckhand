@@ -7,14 +7,28 @@ on:
 jobs:
   look:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools
       - run: |
+          pip install -q ijson
           cd "$RUNNER_TEMP"
-          for f in AllPrices.json.xz AllPricesToday.json.xz AllIdentifiers.json.xz AllPrintingsCSVFiles.tar.xz; do curl -sI "https://mtgjson.com/api/v5/$f" | grep -iE "^(HTTP|content-length)"; echo "^ $f"; done
-          curl -sfo prices.json.xz https://mtgjson.com/api/v5/AllPrices.json.xz && ls -la prices.json.xz
-          xz -dc prices.json.xz | head -c 1500; echo; echo ...
-          xz -dc prices.json.xz | wc -c
-          curl -sfo csv.tar.xz https://mtgjson.com/api/v5/AllPrintingsCSVFiles.tar.xz && tar -tJf csv.tar.xz | head -40
-          tar -xJf csv.tar.xz && find . -name "cardIdentifiers.csv" -exec sh -c 'head -3 "$1"; wc -l "$1"; ls -la "$1"' _ {} \;
-          free -m; df -h .
+          curl -sfo prices.json.xz https://mtgjson.com/api/v5/AllPrices.json.xz && xz -d prices.json.xz
+          curl -sfo csv.tar.xz https://mtgjson.com/api/v5/AllPrintingsCSVFiles.tar.xz && tar -xJf csv.tar.xz && find . -name cardIdentifiers.csv -exec cp {} ids.csv \;
+          mkdir -p out
+          /usr/bin/time -v python3 "$GITHUB_WORKSPACE/tools/price-history.py" out prices.json ids.csv 2>&1 | grep -E "history:|Maximum resident|Elapsed"
+          du -sh out/history; ls out/history | wc -l; cat out/history/meta.json; echo
+          gzip -c out/history/a1b.json | wc -c; ls -la out/history/a1b.json
+          python3 -c "
+          import json,glob
+          n=c=0;mx=0
+          for f in glob.glob('out/history/*.json'):
+            if f.endswith('meta.json'): continue
+            d=json.load(open(f))
+            for k,v in d.items():
+              for s,p in v.items(): n+=1; c+=len(p); mx=max(mx,len(p))
+          print('series',n,'points',c,'avg',c/max(n,1),'max',mx)
+          d=json.load(open('out/history/a1b.json')); k=next(iter(d)); print(k, json.dumps(d[k])[:600])
+          "
