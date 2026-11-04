@@ -1341,8 +1341,15 @@ function renderColl() {
   setHead("Collection", S.meta.pricedAt ? "Prices " + new Date(S.meta.pricedAt).toLocaleDateString() : "");
   const v = $("#view");
   if (!Object.keys(S.coll).length && !Object.keys(S.alerts).length) {
-    const fresh = !Object.keys(S.decks).length;
-    v.innerHTML = `<div class="empty">${fresh ? `${heroImg()}<h2>Welcome to Deckhand</h2>
+    const fresh = !Object.keys(S.decks).length, askGoogle = fresh && !syncOn() && !S.meta.skipSignIn;
+    // a new person: signing in with Google first keeps their cards backed up and on all their devices from the start
+    const signIn = askGoogle ? `<div class="box stack" id="eSignIn" style="gap:8px;margin:0 0 14px;text-align:center">
+        <b>Sign in to keep your cards safe</b>
+        <span class="small">Your collection and decks are saved to your own Google Drive and stay the same on your phone, tablet and computer. Deckhand can only see the files it makes there.</span>
+        <button class="btn primary" id="eGoogle" style="align-self:center;min-width:220px">Sign in with Google</button>
+        <div class="small muted" id="eGMsg"></div>
+        <button class="linkbtn small" id="eSkip" style="align-self:center">Skip for now</button></div>` : "";
+    v.innerHTML = `<div class="empty">${fresh ? `${heroImg()}${signIn}<h2>Welcome to Deckhand</h2>
       <p>Your Magic collection, a card scanner and a Commander deck builder, free. Your cards are saved on this device; nothing is shared unless you turn on Sync.</p>
       <ol class="welcome"><li><b>Bring your cards in:</b> import a CSV from ManaBox, Moxfield and most other apps, or scan them with your camera.</li>
         <li><b>Organize:</b> binders, wishlists, prices, daily and weekly movers.</li><li><b>Build decks:</b> pick a commander for suggestions, deck balance and upgrade ideas from your own cards.</li>
@@ -1358,6 +1365,11 @@ function renderColl() {
         <div class="row wrap"><button class="btn primary" id="eSync">Sync</button><button class="btn" id="eRest">Restore a backup</button></div></div></div>`;
     $("#eScan").onclick = () => go("scan"); $("#eSearch").onclick = () => go("search"); $("#eImp").onclick = () => pickCSV({ kind: "coll" });
     $("#eSync").onclick = syncSheet; $("#eRest").onclick = ioSheet; const ei = $("#eInst"); if (ei) ei.onclick = installApp;
+    if (askGoogle) {
+      loadGis().catch(() => {});                     // ready before the tap, so the sign-in window isn't blocked
+      $("#eGoogle").onclick = async () => { $("#eGMsg").textContent = "Opening Google sign-in…"; try { await connectGoogleSync(); renderColl(); toast("Signed in. Your cards will sync and back up to your Google Drive."); } catch (e) { $("#eGMsg").textContent = e.message || String(e); } };
+      $("#eSkip").onclick = () => { S.meta.skipSignIn = true; save(); flushSave(); renderColl(); toast("You can sign in any time from Sync."); };
+    }
     return;
   }
   const counts = {}; for (const e of Object.values(S.coll)) counts[e.binder] = (counts[e.binder] || 0) + e.qty;

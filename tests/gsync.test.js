@@ -62,6 +62,17 @@ const card = (id, name) => ({ id, oid: "o" + id, name, set: "cmm", setName: "CMM
   await B.waitForFunction(() => syncOn() && !SYNC.busy && Object.keys(S.coll).length, null, { timeout: 8000 }).catch(() => {});
   ok(await cards(B) === "Sol Ring×3" && await decks(B) === "Kiora", `the phone loads the collection and decks (${await cards(B)} · ${await decks(B)})`);
   ok(Object.values(G.files).filter(f => f.name === "deckhand-sync.json.gz").length === 1, "both devices use the same file");
+  // a friend's first open: Sign in with Google is right there on the welcome screen; Skip hides it
+  const C = await device(b, devices["Pixel 7"]); await C.evaluate(() => go("coll"));
+  const welcome = await C.$eval(".empty", e => e.textContent.replace(/\s+/g, " "));
+  ok(/Sign in to keep your cards safe/.test(welcome) && !!(await C.$("#eGoogle")) && !!(await C.$("#eSkip")), "a new device's welcome screen leads with Sign in with Google");
+  await C.screenshot({ path: __dirname + "/welcome_signin.png" });
+  await C.click("#eGoogle"); await C.waitForFunction(() => syncOn() && !SYNC.busy && Object.keys(S.coll).length, null, { timeout: 8000 }).catch(() => {});
+  ok(await cards(C) === "Sol Ring×3" && await C.evaluate(() => !document.querySelector("#eSignIn")), `one tap on it signs in and brings the cards over (${await cards(C)})`);
+  const D = await device(b, { viewport: { width: 1280, height: 900 } }); await D.evaluate(() => go("coll")); await D.click("#eSkip"); await D.waitForTimeout(150);
+  ok(!(await D.$("#eSignIn")) && !!(await D.$("#eSync")) && !(await D.evaluate(() => syncOn())), "Skip for now hides it; Sync is still there to sign in later");
+  await D.reload(); await D.waitForTimeout(500); await D.evaluate(() => go("coll"));
+  ok(!(await D.$("#eSignIn")), "and it stays hidden after reopening");
   // both directions
   await B.evaluate(c => { addToColl(c, "nonfoil", 2, "main"); S.decks.g = { id: "g", name: "Ghalta", format: "commander", cmdr: [], cards: {}, created: 2, updated: 2 }; save(); }, card("bolt", "Lightning Bolt"));
   await settle(B); await settle(A);
