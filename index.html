@@ -4396,7 +4396,8 @@ function renderDeck(d) {
   $("#view").innerHTML = `<div class="stack">
     <div class="row"><button class="btn sm ghost" id="back">← All decks</button><span class="grow"></span><button class="btn sm" id="dMenu">Deck options</button></div>
     <div class="summary"><div><span class="label">Main</span><b class="num">${st.mainN}${st.target ? `<span class="small muted">/${st.target}</span>` : ""}</b></div><div><span class="label">Value</span><b class="num gold">${money(st.value)}</b></div>
-      <div><span class="label">${shareCopies() ? "Not owned" : "Not owned or free"}</span><b class="num ${st.missing ? "down" : ""}">${st.missing}</b></div></div>
+      ${st.missing ? `<button class="tile" id="dBuy" title="Buy what's missing"><span class="label">${shareCopies() ? "Not owned" : "Not owned or free"}</span><b class="num down">${st.missing}</b><span class="small" style="color:var(--accent)">Buy what's missing ›</span></button>`
+        : `<div><span class="label">${shareCopies() ? "Not owned" : "Not owned or free"}</span><b class="num">0</b></div>`}</div>
     ${st.target ? `<div class="meter" title="${Math.round(st.done * 100)}% complete"><div style="width:${Math.round(st.done * 100)}%"></div></div>` : ""}
     <div class="box stack" style="gap:6px"><div class="row"><span class="label grow">Themes</span><span class="small muted">Started ${esc(dayLabel(d.created || d.updated))} · changed ${esc(dayLabel(d.updated))}</span></div>
       <div class="chips" id="dThemes">${(d.themes || []).map(t => `<span class="chip acc">${esc(t)} <button class="x" data-untheme="${esc(t)}" aria-label="Remove theme ${esc(t)}">×</button></span>`).join("")}
@@ -4430,6 +4431,7 @@ function renderDeck(d) {
   $("#dThemeGo").onclick = addTheme; $("#dThemeIn").onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); addTheme(); } };
   $("#view").querySelectorAll("[data-untheme]").forEach(b => b.onclick = () => { d.themes = (d.themes || []).filter(t => t !== b.dataset.untheme); d.updated = Date.now(); save(); renderDeck(d); });
   $("#dMenu").onclick = () => deckMenu(d);
+  const dby = $("#dBuy"); if (dby) dby.onclick = () => buySheet(d);
   $("#dFmt").onchange = e => { d.format = e.target.value; d.updated = Date.now(); save(); renderDeck(d); };
   $("#view").querySelectorAll("[data-cmdr]").forEach(sel => sel.onchange = () => {
     const i = +sel.dataset.cmdr, next = d.cmdr.slice(); if (sel.value) next[i] = sel.value; else next.splice(i);
@@ -4474,6 +4476,69 @@ function deckText(d) {
   const m = Object.values(d.cards).filter(c => !c.side && !cm.includes(c)).map(line), s = Object.values(d.cards).filter(c => c.side).map(line);
   return (cm.length ? "Commander\n" + cm.map(line).join("\n") + "\n\nDeck\n" : "") + m.join("\n") + (s.length ? "\n\nSideboard\n" + s.join("\n") : "");
 }
+/* Buy what's missing: the cards a deck needs that you don't have (the same count as "Not owned" on the deck),
+   priced at the printing in the deck, with an optional search for each card's cheapest printing (Scryfall, TCGplayer
+   market price). Copies as a TCGplayer Mass Entry list, or puts the cards on a wishlist. */
+const CHEAP = {};          // name -> { price, set, num } | null, for this session
+function deckShortfall(d, side) {
+  const need = {};
+  for (const c of Object.values(d.cards)) { if (c.side && !side) continue; (need[c.name] = need[c.name] || { q: 0, c, side: true }).q += c.qty; if (!c.side) need[c.name].side = false; }
+  return Object.values(need).map(x => ({ c: x.c, side: x.side, q: Math.max(0, x.q - allocFor(x.c.name, d.id).usable) })).filter(x => x.q > 0).sort((a, b) => a.c.name.localeCompare(b.c.name));
+}
+async function findCheapest(name) {
+  if (name in CHEAP) return CHEAP[name];
+  try {
+    const r = await sf(`/cards/search?q=${encodeURIComponent(`!"${name.replace(/"/g, "")}" usd>0 game:paper`)}&unique=prints&order=usd&dir=asc`);
+    const c = (r.data || [])[0]; CHEAP[name] = c ? { price: priceOf(c, "nonfoil"), set: c.set, num: c.collector_number, setName: c.set_name } : null;
+  } catch (e) { if (e.status === 404) CHEAP[name] = null; else throw e; }
+  return CHEAP[name];
+}
+function buySheet(d) {
+  const o = { side: true, basics: false, busy: false, done: 0, err: "" };
+  openSheet(`<div id="buyBody"></div>`, () => render());
+  const draw = () => {
+    const el = $("#buyBody"); if (!el) return;
+    const hasSide = Object.values(d.cards).some(c => c.side);
+    const all = deckShortfall(d, o.side), basics = all.filter(x => x.c.basic || /^Basic\b/.test(x.c.type || "")), list = o.basics ? all : all.filter(x => !basics.includes(x));
+    const n = list.reduce((a, x) => a + x.q, 0), atDeck = list.reduce((a, x) => a + (priceOf(x.c) || 0) * x.q, 0), noDeckPrice = list.filter(x => priceOf(x.c) == null).length;
+    const looked = list.filter(x => x.c.name in CHEAP), cheapTot = looked.reduce((a, x) => a + ((CHEAP[x.c.name] || {}).price ?? priceOf(x.c) ?? 0) * x.q, 0);
+    const allLooked = list.length && looked.length === list.length;
+    el.innerHTML = `<h2>Buy what's missing</h2>
+      <p class="small muted" style="margin:4px 0 10px">Cards “${esc(d.name)}” needs that you don't have${shareCopies() ? "" : " free (copies used in other decks count as taken)"}. TCGplayer market prices from Scryfall${S.meta.pricedAt ? `, updated ${esc(dayLabel(S.meta.pricedAt))}` : ""}.</p>
+      ${hasSide || basics.length ? `<div class="row wrap" style="gap:4px 14px">${hasSide ? `<label class="toggle"><input type="checkbox" id="bySide" ${o.side ? "checked" : ""}> Include sideboard</label>` : ""}${basics.length ? `<label class="toggle"><input type="checkbox" id="byBasic" ${o.basics ? "checked" : ""}> Include basic lands (${basics.reduce((a, x) => a + x.q, 0)})</label>` : ""}</div>` : ""}
+      ${!list.length ? `<p class="small">${all.length ? "Only basic lands are missing." : "You have every card in this deck."}</p>` : `
+      <div class="summary"><div><span class="label">Cards to buy</span><b class="num">${n}</b></div>
+        <div><span class="label">At these printings</span><b class="num gold">${money(atDeck)}</b>${noDeckPrice ? `<span class="small muted">${noDeckPrice} without a price</span>` : ""}</div>
+        <div><span class="label">Cheapest printings</span><b class="num ${allLooked ? "up" : "muted"}">${allLooked ? money(cheapTot) : looked.length ? "…" : "—"}</b>${allLooked && atDeck > cheapTot ? `<span class="small up">save ${money(atDeck - cheapTot)}</span>` : ""}</div></div>
+      ${allLooked ? "" : `<div class="row"><button class="btn sm" id="byFind" ${o.busy ? "disabled" : ""}>${o.busy ? `Finding cheapest printings… ${o.done}/${list.length}` : "Find the cheapest printings"}</button><span class="small muted grow">${o.busy ? "" : `about ${Math.max(1, Math.ceil(list.filter(x => !(x.c.name in CHEAP)).length / 2))} seconds`}</span></div>`}
+      ${o.err ? `<div class="small down">${esc(o.err)}</div>` : ""}
+      <div class="row wrap"><button class="btn primary" id="byCopy">Copy for TCGplayer</button><a class="btn" style="color:inherit;text-decoration:none" href="https://www.tcgplayer.com/massentry" target="_blank" rel="noopener">Open TCGplayer Mass Entry</a><button class="btn" id="byWish">Add to my wishlist</button></div>
+      <span class="small muted">Copy, then paste into TCGplayer's Mass Entry box. It finds sellers for every card at once.</span>
+      <div class="list" style="margin-top:6px">${list.map(x => { const ch = CHEAP[x.c.name], dp = priceOf(x.c); return `<div class="item"><img loading="lazy" src="${esc(x.c.img || "")}" alt="">
+        <div class="tap" style="cursor:default"><div class="name">${x.q}× ${esc(x.c.name)}${x.side ? ` <span class="chip">sideboard</span>` : ""}</div>
+          <div class="meta small"><span class="muted">${esc((x.c.set || "").toUpperCase())} #${esc(x.c.num || "")}</span><span class="num">${dp != null ? money(dp) + " ea" : "no price"}</span>
+          ${x.c.name in CHEAP ? (ch && ch.price != null ? `<span class="num ${dp == null || ch.price < dp ? "up" : "muted"}">cheapest ${money(ch.price)} · ${esc(ch.set.toUpperCase())}</span>` : `<span class="muted">no cheaper printing found</span>`) : ""}</div></div>
+        <div class="right"><span class="price gold num">${((ch && ch.price) ?? dp) != null ? money(((ch && ch.price) ?? dp) * x.q) : `<span class="muted">—</span>`}</span></div></div>`; }).join("")}</div>`}`;
+    const sd = $("#bySide"); if (sd) sd.onchange = e => { o.side = e.target.checked; draw(); };
+    const bb = $("#byBasic"); if (bb) bb.onchange = e => { o.basics = e.target.checked; draw(); };
+    const fd = $("#byFind"); if (fd) fd.onclick = async () => {
+      o.busy = true; o.err = ""; o.done = list.filter(x => x.c.name in CHEAP).length; draw();
+      for (const x of list) { if (!$("#buyBody")) return; if (x.c.name in CHEAP) continue;
+        try { await findCheapest(x.c.name); } catch (e) { o.err = "Stopped: " + e.message; break; }
+        o.done++; draw(); }
+      o.busy = false; draw();
+    };
+    const cp = $("#byCopy"); if (cp) cp.onclick = async () => { const text = list.map(x => `${x.q} ${x.c.name}`).join("\n");
+      try { await navigator.clipboard.writeText(text); toast(`Copied ${list.length} line${list.length === 1 ? "" : "s"}. Paste them into TCGplayer Mass Entry`); }
+      catch (e) { openSheet(`<h2>Copy this list</h2><textarea readonly style="min-height:200px" id="byTxt">${esc(text)}</textarea>`, () => buySheet(d)); const t = $("#byTxt"); t.focus(); t.select(); } };
+    const wb = $("#byWish"); if (wb) wb.onclick = () => {
+      let w = Object.values(S.binders).find(b => b.wish); if (!w) { w = S.binders.wish = { id: "wish", name: "Wishlist", wish: true }; }
+      let added = 0; for (const x of list) { const have = Object.values(S.coll).filter(e => e.binder === w.id && e.name === x.c.name).reduce((a, e) => a + e.qty, 0); if (x.q > have) { addToColl(x.c, "nonfoil", x.q - have, w.id, true); added += x.q - have; } }
+      save(); toast(added ? `Put ${added} card${added === 1 ? "" : "s"} on ${w.name}` : `They're already on ${w.name}`);
+    };
+  };
+  draw();
+}
 function deckMenu(d) {
   openSheet(`<h2>${esc(d.name)}</h2>
     <div class="stack" style="margin-top:12px">
@@ -4488,7 +4553,7 @@ function deckMenu(d) {
         <button class="btn primary" id="plGo">Add these cards</button><div class="status small" id="plMsg"></div>
         <button class="btn" id="dCsv">Or import a CSV file into this deck</button></div>
       <div class="box"><span class="label">Export</span><textarea id="ex" readonly>${esc(deckText(d))}</textarea><button class="btn" id="cp">Copy list</button></div>
-      <div class="box"><span class="label">Missing cards</span><div class="row wrap"><button class="btn" id="miss">Copy the cards I don't own</button><button class="btn" id="missW">Add them to my wishlist</button></div></div>
+      <div class="box"><span class="label">Missing cards</span><div class="row wrap"><button class="btn" id="miss">Buy what's missing</button></div><span class="small muted">Cost, cheapest printings, a TCGplayer list, or put them on your wishlist.</span></div>
       <div class="box"><button class="btn danger" id="del">Delete deck</button>
         <div class="row" id="delConfirm" hidden><span class="grow small">Delete “${esc(d.name)}” for good?</span><button class="btn sm danger" id="delYes">Delete</button><button class="btn sm" id="delNo">Keep</button></div></div>
     </div>`, () => render());
@@ -4499,17 +4564,7 @@ function deckMenu(d) {
   $("#dCsv").onclick = () => pickCSV({ kind: "deck", id: d.id });
   const copy = async (text, el) => { try { await navigator.clipboard.writeText(text); toast("Copied"); } catch (e) { if (el) { el.select(); } toast("Select the text and copy it"); } };
   $("#cp").onclick = () => copy($("#ex").value, $("#ex"));
-  const missingList = () => {
-    const need = {}; for (const c of Object.values(d.cards)) { need[c.name] = need[c.name] || { q: 0, c }; need[c.name].q += c.qty; }
-    return Object.values(need).map(x => ({ c: x.c, q: x.q - ownedByName(x.c.name) })).filter(x => x.q > 0);
-  };
-  $("#miss").onclick = () => { const l = missingList(); l.length ? copy(l.map(x => `${x.q} ${x.c.name}`).join("\n")) : toast("You own every card in this deck"); };
-  $("#missW").onclick = () => {
-    const l = missingList(); if (!l.length) { toast("You own every card in this deck"); return; }
-    let w = Object.values(S.binders).find(b => b.wish); if (!w) { w = S.binders.wish = { id: "wish", name: "Wishlist", wish: true }; }
-    for (const x of l) { const have = Object.values(S.coll).filter(e => e.binder === w.id && e.name === x.c.name).reduce((a, e) => a + e.qty, 0); if (x.q > have) addToColl(x.c, "nonfoil", x.q - have, w.id); }
-    toast(`Added ${l.length} cards to ${w.name}`);
-  };
+  $("#miss").onclick = () => { closeSheet(); buySheet(d); };
   $("#del").onclick = () => { $("#delConfirm").hidden = false; };
   $("#delNo").onclick = () => { $("#delConfirm").hidden = true; };
   $("#delYes").onclick = () => { trashDeck(d, "deleted"); delete S.decks[d.id]; save(); deckOpen = null; closeSheet(); toast("Deck deleted", { label: "Undo", fn: () => { S.decks[d.id] = d; S.meta.deckTrash = (S.meta.deckTrash || []).filter(x => x.deck.id !== d.id); save(); render(); } }); };
