@@ -40,7 +40,7 @@ async function run(ctxOpts, shot) {
   // Sets tile → sheet → pick MH3
   await p.click('#dash [data-dash="sets"]'); await p.waitForTimeout(200);
   R.sets = await p.$$eval("#sheetRoot [data-set]", a => a.map(x => x.dataset.set));
-  await p.click('#sheetRoot [data-set="mh3"]'); await p.waitForTimeout(300);
+  await p.click('#sheetRoot [data-set="mh3"]'); await p.waitForSelector("#sdMine"); await p.click("#sdMine"); await p.waitForTimeout(300);
   R.mh3 = (await p.$$eval("#clist .item .name", a => a.map(x => x.textContent))).sort(); R.rarGone = !(await p.$("#cfChips [data-fx=rarity]"));
   await p.fill("#cq", "zzz"); await p.waitForTimeout(300); R.noMatch = await p.$eval("#clist", e => e.textContent);
   await p.fill("#cq", ""); await p.waitForTimeout(300); await p.click("#cfChips [data-fx=set]"); await p.waitForTimeout(150);

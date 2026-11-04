@@ -221,6 +221,9 @@ details>summary{cursor:pointer}.seg.wide button{flex:1}
 .ac .prbtn{flex:none;width:auto;border:0;border-left:1px solid var(--line);background:var(--sunk);padding:0 12px;font:600 13px/1 var(--f-body);color:var(--accent);cursor:pointer}
 .prints .owned{position:absolute;top:6px;left:6px}.prints button{position:relative}
 .mplink{color:var(--accent);text-decoration:none;white-space:nowrap}
+.setrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;width:100%;text-align:left;padding:8px 0;border:0;border-top:1px solid var(--line);background:none;font:inherit;color:inherit;cursor:pointer}
+.setrow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.setrow .setbar{grid-column:1 / -1}
+.setbar{display:flex;align-items:center;gap:8px}.setbar .meter{flex:1;height:6px;margin:0}.setbar .meter>span{display:block;height:100%;background:var(--accent);border-radius:inherit}
 .linkbtn{border:0;background:none;padding:0;color:var(--accent);font:inherit;text-decoration:underline;cursor:pointer}
 .meter{height:6px;border-radius:3px;background:var(--sunk);overflow:hidden}.meter>div{height:100%;background:var(--accent);border-radius:3px}.meter.sm{height:4px;margin-top:6px}
 .chip .x{border:0;background:none;padding:0 0 0 4px;font:inherit;cursor:pointer;color:inherit}
@@ -1227,11 +1230,85 @@ function wireCollFilters(st) {
   $("#cfDone").onclick = () => { cv.fOpen = false; P.hidden = true; $("#cfTog").setAttribute("aria-expanded", "false"); };
   wireChips(st);
 }
+/* Set completion: how many different cards of each set you own (any finish, language or binder; wishlists don't
+   count). "Main set" means the set's numbered cards (Scryfall's printed size); "Everything" adds the bonus versions. */
+const setOpt = { sort: "n", all: false };
+function setOwned() {
+  const m = {};
+  for (const e of Object.values(S.coll)) { if (isWish(e.binder) || !e.set) continue; const x = m[e.set] = m[e.set] || { nums: new Set(), n: 0, val: 0 }; x.nums.add(String(e.num)); x.n += e.qty; x.val += (priceOf(e, e.finish) || 0) * e.qty; }
+  return m;
+}
+const isMainNum = (num, printed) => /^\d+$/.test(String(num)) && +num >= 1 && +num <= printed;
+function setProgress(code, nums, all) {
+  const z = SETS && SETS[code]; if (!z || !z.count) return null;
+  const main = !all && z.printed > 0 && z.printed < z.count;
+  const have = main ? [...nums].filter(n => isMainNum(n, z.printed)).length : nums.size, total = main ? z.printed : z.count;
+  return { have: Math.min(have, total), total, main, p: total ? Math.min(1, have / total) : 0 };
+}
 function setsSheet() {
-  const st = collStats(cv.binder), arr = Object.values(st.sets).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
-  openSheet(`<h2>Sets</h2><p class="small muted" style="margin:4px 0 10px">${arr.length} set${arr.length === 1 ? "" : "s"} in ${cv.binder === "all" ? "your collection" : esc(binderName(cv.binder))}. Tap one to see its cards.</p>
-    <div class="stack" style="gap:0">${arr.map(x => `<button class="tap mvrow" data-set="${esc(x.code)}"><span class="nm">${setIcon(x.code, "common")} ${esc(x.name)} <span class="small muted">${esc(x.code.toUpperCase())}</span></span><span class="num small muted">${x.n.toLocaleString()}</span><span class="num small">${money(x.val)}</span></button>`).join("")}</div>`, () => render());
-  $("#sheetRoot").querySelectorAll("[data-set]").forEach(b => b.onclick = () => { cv.f = collDefaultF(); cv.q = ""; cv.f.set = b.dataset.set; closeSheet(); showList(); });
+  openSheet(`<div id="setsBody"><p class="small muted">Loading sets…</p></div>`, () => render());
+  const draw = () => {
+    const el = $("#setsBody"); if (!el) return;
+    const st = collStats(cv.binder), own = setOwned();
+    const arr = Object.values(st.sets).map(x => Object.assign({}, x, { pr: own[x.code] ? setProgress(x.code, own[x.code].nums, setOpt.all) : null }));
+    const by = { n: (a, b) => b.n - a.n || a.name.localeCompare(b.name), done: (a, b) => ((b.pr && b.pr.p) || 0) - ((a.pr && a.pr.p) || 0) || b.n - a.n, name: (a, b) => a.name.localeCompare(b.name) };
+    arr.sort(by[setOpt.sort] || by.n);
+    el.innerHTML = `<h2>Sets</h2><p class="small muted" style="margin:4px 0 10px">${arr.length} set${arr.length === 1 ? "" : "s"} in ${cv.binder === "all" ? "your collection" : esc(binderName(cv.binder))}. Completion counts the different cards you own from each set, in any binder. Tap a set for what's missing.</p>
+      <div class="row wrap" style="gap:6px 12px"><span class="seg" id="setSort">${[["n", "Most cards"], ["done", "Most complete"], ["name", "A–Z"]].map(([k, l]) => `<button data-s="${k}" aria-pressed="${setOpt.sort === k}">${l}</button>`).join("")}</span>
+        <span class="seg" id="setAll"><button data-a="0" aria-pressed="${!setOpt.all}">Main set</button><button data-a="1" aria-pressed="${setOpt.all}">Everything</button></span></div>
+      <div class="stack" style="gap:0;margin-top:8px">${arr.map(x => `<button class="tap setrow" data-set="${esc(x.code)}"><span class="nm">${setIcon(x.code, "common")} ${esc(x.name)} <span class="small muted">${esc(x.code.toUpperCase())}</span></span>
+        <span class="num small muted">${x.n.toLocaleString()} card${x.n === 1 ? "" : "s"} · ${money(x.val)}</span>
+        ${x.pr ? `<span class="setbar"><span class="meter"><span style="width:${(x.pr.p * 100).toFixed(1)}%"></span></span><span class="num small">${x.pr.have}/${x.pr.total}${x.pr.p >= 1 ? " ✓" : ""}</span></span>` : `<span class="small muted">no set size</span>`}</button>`).join("")}</div>`;
+    $("#setSort").onclick = e => { const b = e.target.closest("button"); if (b) { setOpt.sort = b.dataset.s; draw(); } };
+    $("#setAll").onclick = e => { const b = e.target.closest("button"); if (b) { setOpt.all = b.dataset.a === "1"; draw(); } };
+    el.querySelectorAll("[data-set]").forEach(b => b.onclick = () => setDetail(b.dataset.set, () => setsSheet()));
+  };
+  loadSets().catch(() => {}).then(draw);
+}
+const SETCARDS = {};       // set code -> every printing in the set (this session)
+async function setCards(code) {
+  if (SETCARDS[code]) return SETCARDS[code];
+  const out = []; let url = `/cards/search?q=${encodeURIComponent("e:" + code)}&unique=prints&order=set&dir=asc&include_extras=true&include_variations=true`;
+  while (url) { const r = await sf(url); out.push(...(r.data || []).map(c => ({ id: c.id, name: c.name, num: c.collector_number, rarity: c.rarity, usd: priceOf(c, "nonfoil"), img: imgOf(c), card: c }))); url = r.has_more ? r.next_page : null; }
+  return SETCARDS[code] = out;
+}
+function setDetail(code, back) {
+  const z = (SETS && SETS[code]) || {}, o = { all: setOpt.all, rar: "", list: null, err: "" };
+  openSheet(`<div id="setD"></div>`, () => render());
+  const draw = () => {
+    const el = $("#setD"); if (!el) return;
+    const own = setOwned()[code], nums = own ? own.nums : new Set(), pr = setProgress(code, nums, o.all);
+    const main = pr && pr.main, inScope = c => !main || isMainNum(c.num, z.printed);
+    const miss = o.list ? o.list.filter(c => inScope(c) && !nums.has(String(c.num)) && (!o.rar || c.rarity === o.rar)) : [];
+    const cost = miss.reduce((a, c) => a + (c.usd || 0), 0), noPrice = miss.filter(c => c.usd == null).length;
+    el.innerHTML = `<div class="row"><button class="btn sm ghost" id="sdBack">← Sets</button></div>
+      <h2 style="margin-top:6px">${setIcon(code, "common")} ${esc(z.name || code.toUpperCase())} <span class="small muted">${esc(code.toUpperCase())}${z.year ? " · " + esc(z.year) : ""}</span></h2>
+      ${pr ? `<div class="setbar" style="margin:6px 0"><span class="meter"><span style="width:${(pr.p * 100).toFixed(1)}%"></span></span><span class="num"><b>${pr.have}</b> of ${pr.total} (${Math.floor(pr.p * 100)}%)</span></div>` : ""}
+      <div class="row wrap" style="gap:6px 12px">${z.printed > 0 && z.printed < z.count ? `<span class="seg" id="sdAll"><button data-a="0" aria-pressed="${!o.all}">Main set (${z.printed})</button><button data-a="1" aria-pressed="${o.all}">Everything (${z.count})</button></span>` : ""}
+        <button class="btn sm" id="sdMine" ${own ? "" : "disabled"}>Show my cards from this set</button></div>
+      ${!o.list ? `<div class="row" style="margin-top:10px"><button class="btn primary" id="sdLoad">Show missing cards</button><span class="small muted grow">${o.err ? `<span class="down">${esc(o.err)}</span>` : `loads the set list from Scryfall, a second or two`}</span></div>`
+      : `<div class="row wrap" style="margin-top:10px;gap:6px"><span class="chips" id="sdRar">${[["", "All"], ["mythic", "Mythic"], ["rare", "Rare"], ["uncommon", "Uncommon"], ["common", "Common"]].map(([k, l]) => `<button data-r="${k}" aria-pressed="${o.rar === k}">${l}</button>`).join("")}</span></div>
+        ${miss.length ? `<div class="summary" style="margin-top:8px"><div><span class="label">Missing</span><b class="num">${miss.length}</b></div><div><span class="label">To buy (1 each)</span><b class="num gold">${money(cost)}</b>${noPrice ? `<span class="small muted">${noPrice} without a price</span>` : ""}</div></div>
+          <div class="row wrap" style="margin-top:8px"><button class="btn" id="sdWish">Add to my wishlist</button><button class="btn" id="sdCopy">Copy list</button></div>
+          <div class="list" style="margin-top:6px">${miss.map(c => `<div class="item"><img loading="lazy" src="${esc(c.img)}" alt=""><button class="tap" data-sc="${esc(c.id)}"><div class="name">${esc(c.name)}</div>
+            <div class="meta small"><span class="muted">#${esc(c.num)} · ${esc(c.rarity || "")}</span></div></button><div class="right"><span class="price gold num">${c.usd != null ? money(c.usd) : `<span class="muted">—</span>`}</span></div></div>`).join("")}</div>`
+          : `<p class="small" style="margin-top:10px">${o.rar ? "Nothing missing at this rarity." : "You have every card. ✓"}</p>`}`}`;
+    $("#sdBack").onclick = () => { closeSheet(); back(); };
+    const sa = $("#sdAll"); if (sa) sa.onclick = e => { const b = e.target.closest("button"); if (b) { o.all = b.dataset.a === "1"; draw(); } };
+    $("#sdMine").onclick = () => { cv.f = collDefaultF(); cv.q = ""; cv.f.set = code; closeSheet(); showList(); };
+    const ld = $("#sdLoad"); if (ld) ld.onclick = async () => { ld.disabled = true; ld.textContent = "Loading…"; try { o.list = await setCards(code); } catch (e) { o.err = "Couldn't load the set: " + e.message; } draw(); };
+    const rr = $("#sdRar"); if (rr) rr.onclick = e => { const b = e.target.closest("button"); if (b) { o.rar = b.dataset.r; draw(); } };
+    el.querySelectorAll("[data-sc]").forEach(b => b.onclick = () => { const c = o.list.find(x => x.id === b.dataset.sc); if (c) openCard(c.card); });
+    const wb = $("#sdWish"); if (wb) wb.onclick = () => {
+      let w = Object.values(S.binders).find(x => x.wish); if (!w) w = S.binders.wish = { id: "wish", name: "Wishlist", wish: true };
+      const onW = new Set(Object.values(S.coll).filter(e => e.binder === w.id).map(e => e.id)); let n = 0;
+      for (const c of miss) if (!onW.has(c.id)) { addToColl(slim(c.card), "nonfoil", 1, w.id, true); n++; }
+      save(); toast(n ? `Put ${n} card${n === 1 ? "" : "s"} on ${w.name}` : `They're already on ${w.name}`);
+    };
+    const cp = $("#sdCopy"); if (cp) cp.onclick = async () => { const t = miss.map(c => `1 ${c.name} (${code.toUpperCase()}) ${c.num}`).join("\n");
+      try { await navigator.clipboard.writeText(t); toast(`Copied ${miss.length} line${miss.length === 1 ? "" : "s"}`); } catch (e) { toast("Couldn't copy here"); } };
+  };
+  loadSets().catch(() => {}).then(draw);
 }
 // jump from a dashboard number to the matching cards in the list below
 function showList() { renderColl(); const l = $("#cq"); if (l) l.scrollIntoView({ block: "start", behavior: "smooth" }); }
@@ -2696,10 +2773,11 @@ function loadSets() {
   setsP = (async () => {
     let c = null; try { c = idb.ok ? await idbGet("sets") : null; } catch (e) {}
     if (c && c.map) SETS = c.map;
-    if (!c || Date.now() - c.at > 7 * 864e5) {
+    const counted = c && c.map && Object.values(c.map).some(x => x.count != null);
+    if (!c || !counted || Date.now() - c.at > 7 * 864e5) {
       try {
         const r = await sf("/sets"), map = {};
-        for (const z of r.data || []) map[z.code] = { icon: z.icon_svg_uri || "", name: z.name, year: (z.released_at || "").slice(0, 4) };
+        for (const z of r.data || []) map[z.code] = { icon: z.icon_svg_uri || "", name: z.name, year: (z.released_at || "").slice(0, 4), count: z.card_count || 0, printed: z.printed_size || 0, type: z.set_type || "" };
         SETS = map; if (idb.ok) idbSet("sets", { at: Date.now(), map }).catch(() => {});
       } catch (e) { if (!SETS) { setsP = null; throw e; } }
     }
