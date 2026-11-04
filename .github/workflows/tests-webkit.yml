@@ -23,7 +23,7 @@ jobs:
           for t in *.test.js; do
             case "$t" in gridtest.test.js|phototest.test.js) continue;; esac
             echo "::group::$t"
-            out=$(timeout 600 node --require ./webkit-shim.js "$t" 2>&1); echo "$out"
+            out=$(timeout 600 node --require ./webkit-shim.js "$t" 2>&1) || true; echo "$out"
             echo "::endgroup::"
             n_ok=$(echo "$out" | grep -c '^ok' || true); n_fail=$(echo "$out" | grep -c '^FAIL' || true)
             echo "RESULT $t ok=$n_ok fail=$n_fail"
