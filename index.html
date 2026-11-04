@@ -992,6 +992,9 @@ async function refreshPrices(quiet) {
     const keepE = ["finish", "qty", "binder", "added"];
     for (const k in S.coll) { const e = S.coll[k], s = map[e.id]; if (s) { const keep = {}; keepE.forEach(f => keep[f] = e[f]); Object.assign(e, s, keep); } }
     for (const d of Object.values(S.decks)) for (const k in d.cards) { const c = d.cards[k], s = map[c.id]; if (s) { const keep = { qty: c.qty, side: c.side }; Object.assign(c, s, keep); } }
+    // each deck's value once a day (kept with the deck, so it syncs); history starts the first day this runs
+    for (const d of Object.values(S.decks)) { if (!Object.keys(d.cards).length) continue; const v = Math.round(deckStats(d).value * 100) / 100, day = today();
+      const h = d.vh = Array.isArray(d.vh) ? d.vh : [], last = h[h.length - 1]; if (last && last[0] === day) last[1] = v; else h.push([day, v]); if (h.length > 365) h.splice(0, h.length - 365); }
     for (const x of S.trade.get) if (map[x.card.id]) x.card = map[x.card.id];
     refreshMsg = "Filling in missing prices…"; updRefreshBtn();
     await priceFallback();
@@ -4257,10 +4260,57 @@ function drawRecList(d) {
     for (const p of [cmd && "commanders/" + edhSlug(cmd), t && "tags/" + themeSlugOf(d, t), cmd && t && `commanders/${edhSlug(cmd)}/${themeSlugOf(d, t)}`]) if (p && idb.ok) await idbSet("edh:" + p, null).catch(() => {});
     rs.data = null; drawSuggest(d); };
 }
+/* Deck value over time: one point a day, recorded when prices update. It includes cards added or removed, so a jump
+   can be a new card as well as a price change. */
+function deckValueHTML(d) {
+  const h = (d.vh || []).filter(x => Array.isArray(x)), cur = deckStats(d).value;
+  if (h.length < 2) return `<div class="box"><span class="label">Deck value</span><p class="small muted" style="margin:4px 0 0">Now ${money(cur)}. The value chart starts once prices have updated on two different days (Deckhand updates them once a day when it's open).</p></div>`;
+  const vals = h.map(x => x[1]), chg = days => { const base = today() - days; let t = null; for (const x of h) { if (x[0] <= base) t = x; else break; } return t ? vals.at(-1) - t[1] : null; };
+  return `<div class="box"><div class="kv"><span class="label">Deck value</span><span class="num small ${vals.at(-1) >= vals[0] ? "up" : "down"}">${signed(vals.at(-1) - vals[0])} since ${dayStr(h[0][0])}</span></div>${spark(vals)}
+    <div class="row wrap small" style="gap:4px 14px">${[[7, "7 days"], [30, "30 days"]].map(([n, l]) => { const c = chg(n); return c == null ? `<span class="muted">${l}: not enough history yet</span>` : `<span>${l}: <b class="num ${c > 0 ? "up" : c < 0 ? "down" : ""}">${signed(c)}</b></span>`; }).join("")}</div>
+    <span class="small muted">TCGplayer market prices from Scryfall, once a day. Includes cards you added or took out.</span></div>`;
+}
+/* Commander bracket check (Wizards' Commander Brackets): Game Changers (Scryfall's is:gamechanger, always current),
+   mass land denial and extra turns (Scryfall's community tags otag:mass-land-denial, otag:extra-turn), and tutors. Two-card combos can't be detected reliably, so they're left to you. */
+const BRK = { lists: null, p: null };
+async function bracketLists() {
+  if (BRK.lists) return BRK.lists;
+  if (BRK.p) return BRK.p;
+  return BRK.p = (async () => {
+    let c = null; try { c = idb.ok ? await idbGet("bracketLists") : null; } catch (e) {}
+    if (c && Date.now() - c.at < 7 * 864e5) return BRK.lists = { gc: new Set(c.gc), xt: new Set(c.xt), mld: new Set(c.mld) };
+    const names = async q => { const out = []; let url = `/cards/search?q=${encodeURIComponent(q)}&unique=cards`; while (url) { const r = await sf(url).catch(e => { if (e.status === 404) return { data: [] }; throw e; }); out.push(...(r.data || []).map(x => x.name)); url = r.has_more ? r.next_page : null; } return out; };
+    const gc = await names("is:gamechanger"), xt = await names("otag:extra-turn"), mld = await names("otag:mass-land-denial");      // Scryfall's official list and its community tags
+    if (idb.ok) idbSet("bracketLists", { at: Date.now(), gc, xt, mld }).catch(() => {});
+    return BRK.lists = { gc: new Set(gc), xt: new Set(xt), mld: new Set(mld) };
+  })().finally(() => { BRK.p = null; });
+}
+const BRACKETS = { 1: "Exhibition", 2: "Core", 3: "Upgraded", 4: "Optimized", 5: "cEDH" };
+function bracketOf(d, L) {
+  const main = Object.values(d.cards).filter(c => !c.side), names = [...new Set(main.map(c => c.name))];
+  const gc = names.filter(n => L.gc.has(n)), mld = names.filter(n => L.mld.has(n)), xt = names.filter(n => L.xt.has(n) && !L.mld.has(n));
+  const tutors = names.filter(n => { const c = main.find(x => x.name === n); return rolesOf(c).includes("Tutor"); });
+  let b = 2; const why = [];
+  if (gc.length > 3) { b = 4; why.push(`${gc.length} Game Changers (bracket 3 allows up to 3)`); } else if (gc.length) { b = Math.max(b, 3); why.push(`${gc.length} Game Changer${gc.length === 1 ? "" : "s"} (brackets 1–2 allow none)`); }
+  if (mld.length) { b = 4; why.push("mass land denial (only bracket 4 and up)"); }
+  if (xt.length >= 4) { b = 4; why.push(`${xt.length} extra-turn cards: enough to chain turns (brackets 1–3 keep extra turns low)`); }
+  if (tutors.length >= 4) { b = Math.max(b, 3); why.push(`${tutors.length} tutors (brackets 1–2 keep them sparse)`); }
+  return { b, why, gc, mld, xt, tutors };
+}
+function bracketHTML(d) {
+  if (d.format !== "commander") return "";
+  if (!BRK.lists) return `<div class="box" id="brBox"><span class="label">Commander bracket</span><p class="small muted" style="margin:4px 0 0">Checking the deck against the current Game Changers list…</p></div>`;
+  const r = bracketOf(d, BRK.lists), list = (lab, a) => a.length ? `<div class="small"><b>${lab} (${a.length}):</b> ${a.map(esc).join(", ")}</div>` : "";
+  return `<div class="box stack" style="gap:6px" id="brBox"><div class="kv"><span class="label">Commander bracket</span><b>${r.b === 2 ? "2 (Core) or lower" : r.b + " (" + BRACKETS[r.b] + ")"}${r.b === 4 ? " or higher" : ""}</b></div>
+    <span class="small">${r.why.length ? "Because of " + r.why.map(esc).join("; ") + "." : "No Game Changers, mass land denial, chains of extra turns or piles of tutors."}</span>
+    ${list("Game Changers", r.gc)}${list("Mass land denial", r.mld)}${list("Extra turns", r.xt)}${list("Tutors", r.tutors)}
+    <span class="small muted">Not checked: two-card combos (any early-game combo makes it bracket 4) and what the deck is built to do, which only you can judge. Bracket 1 is about a theme deck's intent; bracket 5 is for competitive (cEDH) decks. Brackets are a guide for talking with your playgroup, not strict rules. Game Changers from Scryfall's copy of the official list; mass land denial and extra turns from Scryfall's community card tags. Refreshed weekly.</span></div>`;
+}
 function drawBalance(d) {
   const el = $("#dPane"); if (!el) return;
   const g = deckGaps(d), main = Object.values(d.cards).filter(c => !c.side);
-  el.innerHTML = `${g.ranges ? `<p class="small muted">Suggested ranges for a Commander deck, from common deck-building guidance. They're a starting point, not rules: tune them to your deck.</p>` : `<p class="small muted">Card roles in this deck.</p>`}
+  if (d.format === "commander" && !BRK.lists) bracketLists().then(() => { const b = $("#brBox"); if (b) b.outerHTML = bracketHTML(d); }).catch(e => { const b = $("#brBox"); if (b) b.innerHTML = `<span class="label">Commander bracket</span><p class="small muted" style="margin:4px 0 0">Couldn't load the Game Changers list: ${esc(e.message)}</p>`; });
+  el.innerHTML = `${bracketHTML(d)}${deckValueHTML(d)}${g.ranges ? `<p class="small muted">Suggested ranges for a Commander deck, from common deck-building guidance. They're a starting point, not rules: tune them to your deck.</p>` : `<p class="small muted">Card roles in this deck.</p>`}
     <div class="box baltable"><div class="balrow head small muted"><span>Role</span><span>Now</span><span>Suggested</span><span></span><span></span></div>${(g.ranges || ROLES.map(r => [r, null, null])).map(([r, lo, hi]) => { const v = g.n[r] || 0, st = lo == null ? "" : v < lo ? "low" : v > hi ? "high" : "ok";
       return `<div class="balrow"><span class="bn">${ROLE_ICON[r] || ""} ${esc(r)}</span><b class="num">${v}</b>
         <span class="small muted">${lo != null && hi < 99 ? `${lo}–${hi}` : ""}</span>
