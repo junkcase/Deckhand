@@ -1,0 +1,17 @@
+name: Inspect MTGJSON (temporary)
+on:
+  workflow_dispatch:
+jobs:
+  look:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - run: |
+          cd "$RUNNER_TEMP"
+          for f in AllPrices.json.xz AllPricesToday.json.xz AllIdentifiers.json.xz AllPrintingsCSVFiles.tar.xz; do curl -sI "https://mtgjson.com/api/v5/$f" | grep -iE "^(HTTP|content-length)"; echo "^ $f"; done
+          curl -sfo prices.json.xz https://mtgjson.com/api/v5/AllPrices.json.xz && ls -la prices.json.xz
+          xz -dc prices.json.xz | head -c 1500; echo; echo ...
+          xz -dc prices.json.xz | wc -c
+          curl -sfo csv.tar.xz https://mtgjson.com/api/v5/AllPrintingsCSVFiles.tar.xz && tar -tJf csv.tar.xz | head -40
+          tar -xJf csv.tar.xz && find . -name "cardIdentifiers.csv" -exec sh -c 'head -3 "$1"; wc -l "$1"; ls -la "$1"' _ {} \;
+          free -m; df -h .
