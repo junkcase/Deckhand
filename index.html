@@ -350,7 +350,7 @@ function migrate() {
   S.coll = S.coll || {}; S.decks = S.decks || {}; S.meta = S.meta || {};
   if (!S.binders) S.binders = {
     main: { id: "main", name: "Collection" }, trade: { id: "trade", name: "Trade binder" }, wish: { id: "wish", name: "Wishlist", wish: true } };
-  S.settings = S.settings || {}; S.alerts = S.alerts || {}; for (const k in S.alerts) if (!S.alerts[k] || typeof S.alerts[k] !== "object") delete S.alerts[k]; else normAlert(S.alerts[k]); S.ph = S.ph || {}; S.hist = S.hist || []; S.trade = S.trade || { give: [], get: [] };
+  S.settings = S.settings || {}; S.alerts = S.alerts || {}; for (const k in S.alerts) if (!S.alerts[k] || typeof S.alerts[k] !== "object") delete S.alerts[k]; else normAlert(S.alerts[k]); S.ph = S.ph || {}; S.hist = S.hist || []; S.trade = S.trade || { give: [], get: [] }; if (!Array.isArray(S.trade.sell)) S.trade.sell = [];
   const nc = {};
   for (const k in S.coll) {
     const e = S.coll[k]; if (!e || !e.id) continue;
@@ -1497,7 +1497,7 @@ function drawCollList() {
   const selBar = !cv.select ? "" : `<div class="box selbar">
       <div class="row wrap"><b class="grow">${cv.sel.size ? `${cv.sel.size} selected (${nSel} card${nSel === 1 ? "" : "s"})` : "Tap cards to select them"}</b>
         <button class="btn sm ghost" id="sAll">Select all ${shown.length}</button>${cv.sel.size ? `<button class="btn sm ghost" id="sNone">Clear</button>` : ""}</div>
-      ${cv.sel.size ? `<div class="row wrap"><select id="sBin" class="grow" aria-label="Move selected to">${binderOptions(cv.binder !== "all" ? cv.binder : defaultBinder())}</select><button class="btn sm primary" id="sMove">Move</button><button class="btn sm" id="sAlert">Price alert</button><button class="btn sm danger" id="sDel">Remove</button></div>
+      ${cv.sel.size ? `<div class="row wrap"><select id="sBin" class="grow" aria-label="Move selected to">${binderOptions(cv.binder !== "all" ? cv.binder : defaultBinder())}</select><button class="btn sm primary" id="sMove">Move</button><button class="btn sm" id="sAlert">Price alert</button><button class="btn sm" id="sSell">Sell list</button><button class="btn sm danger" id="sDel">Remove</button></div>
       <div class="row" id="sDelC" hidden><span class="grow small">Remove ${nSel} cards from your collection?</span><button class="btn sm danger" id="sDelY">Remove</button><button class="btn sm ghost" id="sDelN">Keep</button></div>` : ""}</div>`;
   el.innerHTML = `${filtered ? `<p class="small muted" style="margin:0 0 6px">Showing ${nCards.toLocaleString()} of ${cv.lastN.ofCards.toLocaleString()} card${cv.lastN.ofCards === 1 ? "" : "s"}${rows.length > 1 ? ` (${rows.length.toLocaleString()} entries)` : ""}</p>` : ""}${selBar}<div class="list">${shown.map(([k, e]) => { const c = phChange(e), on = cv.sel.has(k); return `${dayHead(e)}
     <div class="item ${cv.select ? "selectable" : ""} ${on ? "picked" : ""}">${cv.select ? `<span class="check" aria-hidden="true">${on ? "✓" : ""}</span>` : `<img loading="lazy" src="${esc(e.img)}" alt="">`}
@@ -1514,6 +1514,7 @@ function drawCollList() {
     $("#sAll").onclick = () => { keys.forEach(k => cv.sel.add(k)); redraw(); };
     const sn = $("#sNone"); if (sn) sn.onclick = () => { cv.sel.clear(); redraw(); };
     const sa = $("#sAlert"); if (sa) sa.onclick = () => bulkAlertSheet([...cv.sel]);
+    const ssl = $("#sSell"); if (ssl) ssl.onclick = () => { let n = 0; for (const k of cv.sel) n += addToSell(k); cv.sel.clear(); cv.select = false; save(); renderColl(); toast(n ? `Put ${n} card${n === 1 ? "" : "s"} on your sell list (Trade tab)` : "They're already on your sell list", n ? { label: "Open", fn: () => { S.meta.tradeMode = "sell"; go("trade"); } } : undefined); };
     const sm = $("#sMove"); if (sm) sm.onclick = () => { const to = $("#sBin").value; let n = 0; for (const k of [...cv.sel]) { const e = S.coll[k]; if (e && e.binder !== to) { n += e.qty; takeCopies(k, e.qty, { binder: to }); } } cv.sel.clear(); save(); renderColl(); toast(`Moved ${n} card${n === 1 ? "" : "s"} to ${S.binders[to].name}`); };
     const sd = $("#sDel"); if (sd) { sd.onclick = () => { $("#sDelC").hidden = false; }; $("#sDelN").onclick = () => { $("#sDelC").hidden = true; };
       $("#sDelY").onclick = () => { const back = {}; for (const k of cv.sel) if (S.coll[k]) { back[k] = S.coll[k]; delete S.coll[k]; } cv.sel.clear(); save(); renderColl(); toast(`Removed ${Object.keys(back).length} entries`, { label: "Undo", fn: () => { Object.assign(S.coll, back); save(); renderColl(); } }); }; }
@@ -1600,7 +1601,7 @@ function dupSheet() {
       ${!rows.length ? `<p class="small" style="margin-top:12px">No extra copies with these settings.</p>` : `
       <div class="summary" style="margin-top:10px"><div><span class="label">${sel.size ? "Selected" : "Extra copies"}</span><b class="num">${n.toLocaleString()}</b></div><div><span class="label">Cards</span><b class="num">${pick.length.toLocaleString()}</b></div><div><span class="label">Worth</span><b class="num gold">${money(val)}</b></div></div>
       <div class="row wrap" style="margin-top:8px"><select id="dupTo" class="grow" style="min-width:170px" aria-label="Move extras to">${Object.values(S.binders).filter(b => !b.wish).map(b => `<option value="${esc(b.id)}" ${b.id === to ? "selected" : ""}>${esc(b.name)}</option>`).join("")}</select>
-        <button class="btn primary" id="dupMove">Move ${sel.size ? "selected" : "all"} extras</button><button class="btn" id="dupCopy">Copy list</button></div>
+        <button class="btn primary" id="dupMove">Move ${sel.size ? "selected" : "all"} extras</button><button class="btn" id="dupSell">Add to sell list</button><button class="btn" id="dupCopy">Copy list</button></div>
       <span class="small muted">${sel.size ? `${sel.size} selected · <button class="linkbtn" id="dupNone">clear</button>` : "Tap cards to pick some, or move them all."} Copies already in that binder stay where they are.</span>
       <div class="list" style="margin-top:6px">${rows.map(r => `<div class="item ${sel.has(r.name) ? "picked" : ""}"><img loading="lazy" src="${esc(r.img || "")}" alt="">
         <button class="tap" data-dup="${esc(r.name)}"><div class="name">${sel.has(r.name) ? "✓ " : ""}${r.extra}× ${esc(r.name)}</div>
@@ -1617,6 +1618,7 @@ function dupSheet() {
       sel.clear(); save(); draw();
       toast(moved ? `Moved ${moved} card${moved === 1 ? "" : "s"} to ${S.binders[to].name}` : `They're already in ${S.binders[to].name}`, moved ? { label: "Undo", fn: () => { S.coll = back; save(); render(); draw(); } } : undefined);
     };
+    const ds = $("#dupSell"); if (ds) ds.onclick = () => { let n = 0; for (const r of pick) for (const [k, q] of Object.entries(r.moves)) n += addToSell(k, q); save(); toast(n ? `Put ${n} card${n === 1 ? "" : "s"} on your sell list (Trade tab)` : "They're already on your sell list", n ? { label: "Open", fn: () => { closeSheet(); S.meta.tradeMode = "sell"; go("trade"); } } : undefined); };
     const cp = $("#dupCopy"); if (cp) cp.onclick = async () => { const text = pick.map(r => `${r.extra} ${r.name}`).join("\n");
       try { await navigator.clipboard.writeText(text); toast(`Copied ${pick.length} line${pick.length === 1 ? "" : "s"}`); } catch (e) { toast("Couldn't copy here"); } };
   };
@@ -3974,12 +3976,91 @@ function tradeTotals() {
   const get = S.trade.get.reduce((a, g) => a + (priceOf(g.card, g.finish) || 0) * g.qty, 0);
   return { give, get };
 }
+/* Sell list: cards from your collection you'd sell or trade in, priced three ways: TCGplayer market (what they've
+   been selling for), Mana Pool's lowest listing (roughly what you'd list for there) and Card Kingdom's buylist (cash
+   they'd pay you now for near-mint copies, only while they're buying). */
+const sellQ = { mp: {}, ck: {}, state: "idle", err: "" };
+function addToSell(key, qty) {
+  const e = S.coll[key]; if (!e || isWish(e.binder)) return 0;
+  const L = S.trade.sell = S.trade.sell || [], x = L.find(i => i.key === key), cur = x ? x.qty : 0, n = Math.max(0, Math.min(e.qty - cur, qty || e.qty));
+  if (!n) return 0; if (x) x.qty += n; else L.push({ key, qty: n }); return n;
+}
+function sellRows() { const L = (S.trade.sell || []).filter(x => S.coll[x.key]); for (const x of L) x.qty = Math.min(x.qty, S.coll[x.key].qty); return L; }
+function sellLoad() {
+  const ids = sellRows().map(x => S.coll[x.key].id).filter(id => !(id in sellQ.mp) || !(id in sellQ.ck));
+  if (!ids.length || sellQ.state === "loading") return;
+  sellQ.state = "loading";
+  Promise.allSettled([mpPrices(ids), ckPrices(ids)]).then(([a, b]) => {
+    for (const id of ids) { if (a.status === "fulfilled") sellQ.mp[id] = a.value[id] || null; if (b.status === "fulfilled") sellQ.ck[id] = b.value[id] || null; }
+    sellQ.err = [a, b].filter(r => r.status === "rejected").map(r => r.reason.message).join("; "); sellQ.state = "done";
+    if (tab === "trade" && S.meta.tradeMode === "sell") renderTrade();
+  });
+}
+function sellQuote(x) {
+  const e = S.coll[x.key], foil = e.finish !== "nonfoil", m = sellQ.mp[e.id], c = sellQ.ck[e.id];
+  const tcg = priceOf(e, e.finish), mp = m ? (foil ? (e.finish === "etched" ? m.etched ?? m.foil : m.foil) : m.low) : null;
+  const ckBuy = c ? (foil ? c.buyFoil : c.buy) : null, want = c ? (foil ? c.wantFoil : c.want) : 0;
+  return { e, tcg, mp, mpUrl: m && m.url, ck: ckBuy, want, ckN: ckBuy != null ? Math.min(x.qty, want) : 0, ckUrl: c && c.url, mpKnown: e.id in sellQ.mp, ckKnown: e.id in sellQ.ck };
+}
+function renderSell() {
+  const L = sellRows(); sellLoad();
+  const Q = L.map(x => Object.assign({ x }, sellQuote(x))), n = L.reduce((a, x) => a + x.qty, 0);
+  const tTcg = Q.reduce((a, q) => a + (q.tcg || 0) * q.x.qty, 0), tMp = Q.reduce((a, q) => a + (q.mp || 0) * q.x.qty, 0), tCk = Q.reduce((a, q) => a + (q.ck || 0) * q.ckN, 0);
+  const ckCards = Q.reduce((a, q) => a + q.ckN, 0), loading = sellQ.state === "loading";
+  const asOf = st => st.meta && st.meta.as_of ? new Date(st.meta.as_of).toLocaleDateString() : "";
+  return `<div class="summary"><div><span class="label">Cards</span><b class="num">${n}</b></div><div><span class="label">TCGplayer market</span><b class="num gold">${money(tTcg)}</b></div>
+      <div><span class="label">Card Kingdom pays</span><b class="num up">${loading && !ckCards ? "…" : money(tCk)}</b><span class="small muted">${ckCards} of ${n} card${n === 1 ? "" : "s"}</span></div></div>
+    <div class="box" style="gap:2px;padding:8px 12px"><div class="kv"><span class="grow">Mana Pool <span class="small muted">lowest listing, what similar copies list for</span></span><b class="num">${loading && !tMp ? "…" : money(tMp)}</b></div>
+      <span class="small muted">Card Kingdom's buylist is cash for near-mint copies (less for played ones; they pay more in store credit), only for cards they're buying right now and up to how many they want. ${asOf(CK) ? "Card Kingdom prices from " + esc(asOf(CK)) + ", " : ""}${asOf(MP) ? "Mana Pool from " + esc(asOf(MP)) + ", " : ""}TCGplayer from Scryfall.${sellQ.err ? ` <span class="down">${esc(sellQ.err)}</span>` : ""}</span></div>
+    <div class="ac"><input type="search" id="slq" placeholder="Add cards from your collection" autocomplete="off"><ul id="sll" hidden></ul></div>
+    ${L.length ? `<div class="list" id="sList">${Q.map((q, i) => `<div class="item" data-i="${i}"><img src="${esc(q.e.img)}" alt="">
+      <div style="min-width:0"><div class="name">${esc(q.e.name)}</div>
+        <div class="meta"><span>${esc(q.e.set.toUpperCase())} #${esc(q.e.num)}</span>${q.e.finish !== "nonfoil" ? `<span class="chip foil">${esc(q.e.finish)}</span>` : ""}${q.e.cond && q.e.cond !== "NM" ? `<span class="chip warn">${esc(q.e.cond)}</span>` : ""}</div>
+        <div class="meta small"><span class="num">TCG ${money(q.tcg)}</span>
+          ${q.mp != null ? (q.mpUrl ? `<a class="mplink num" href="${esc(q.mpUrl)}" target="_blank" rel="noopener">Mana Pool ${money(q.mp)} ↗</a>` : `<span class="num">Mana Pool ${money(q.mp)}</span>`) : q.mpKnown ? `<span class="muted">not on Mana Pool</span>` : ""}
+          ${q.ck != null && q.want > 0 ? (q.ckUrl ? `<a class="mplink num up" href="${esc(q.ckUrl)}" target="_blank" rel="noopener">CK buys ${money(q.ck)}${q.want < q.x.qty ? ` (wants ${q.want})` : ""} ↗</a>` : `<span class="num up">CK buys ${money(q.ck)}</span>`) : q.ckKnown ? `<span class="muted">CK isn't buying</span>` : ""}</div></div>
+      <div class="right"><span class="stepper"><button data-d="-1" aria-label="One fewer">−</button><span class="num">${q.x.qty}</span><button data-d="1" aria-label="One more">+</button></span></div></div>`).join("")}</div>
+      <div class="box stack" style="gap:8px"><div class="row wrap"><button class="btn" id="sCsv">Export CSV</button><button class="btn" id="sSold">Mark as sold…</button><button class="btn ghost" id="sClear">Clear list</button></div>
+        <div class="row" id="sSoldC" hidden><span class="grow small">Take these ${n} cards out of your collection?</span><button class="btn sm primary" id="sSoldY">Yes, they're sold</button><button class="btn sm ghost" id="sSoldN">Keep</button></div></div>`
+    : `<p class="small muted" style="margin:0">Type a name above to add cards you own. You can also add them from Collection → Duplicates, or Collection → Select.</p>`}`;
+}
+function wireSell() {
+  const gq = $("#slq"), gl = $("#sll");
+  gq.oninput = () => {
+    const q = norm(gq.value.trim()); if (!q) { gl.hidden = true; return; }
+    const hits = Object.entries(S.coll).filter(([, e]) => !isWish(e.binder) && norm(e.name).includes(q)).slice(0, 10);
+    gl.innerHTML = hits.map(([k, e]) => `<li><button type="button" data-k="${esc(k)}"><span>${hilite(e.name, gq.value)} <span class="muted small">${esc(e.set.toUpperCase())}${e.finish !== "nonfoil" ? " " + esc(e.finish) : ""} · ${esc(binderName(e.binder))}</span></span><span class="num small">×${e.qty}</span></button></li>`).join("");
+    gl.hidden = !hits.length;
+  };
+  gq.addEventListener("blur", () => setTimeout(() => gl.hidden = true, 250));
+  gl.addEventListener("pointerdown", e => e.preventDefault());
+  gl.onclick = e => { const b = e.target.closest("button"); if (b) { addToSell(b.dataset.k, 1); save(); renderTrade(); } };
+  const sl = $("#sList"); if (sl) sl.onclick = e => { const b = e.target.closest("button[data-d]"); if (!b) return; const L = sellRows(), x = L[+b.closest(".item").dataset.i];
+    x.qty = Math.min(S.coll[x.key].qty, x.qty + +b.dataset.d); if (x.qty <= 0) S.trade.sell.splice(S.trade.sell.indexOf(x), 1); save(); renderTrade(); };
+  const cv_ = $("#sCsv"); if (cv_) cv_.onclick = () => {
+    const q = v => `"${String(v ?? "").replace(/"/g, '""')}"`, f = v => v == null ? "" : v.toFixed(2);
+    const lines = sellRows().map(x => { const r = sellQuote(x); return [q(r.e.name), q(r.e.set.toUpperCase()), q(r.e.num), r.e.finish, r.e.cond || "NM", x.qty, f(r.tcg), f(r.mp), r.want > 0 ? f(r.ck) : "", r.want].join(","); });
+    download(`deckhand-sell-list-${new Date().toISOString().slice(0, 10)}.csv`, ["Name,Set,Number,Finish,Condition,Quantity,TCGplayer market,Mana Pool lowest,Card Kingdom buys,Card Kingdom wants", ...lines].join("\n"), "text/csv");
+  };
+  const sc = $("#sClear"); if (sc) sc.onclick = () => { const back = S.trade.sell; S.trade.sell = []; save(); renderTrade(); toast("Sell list cleared", { label: "Undo", fn: () => { S.trade.sell = back; save(); renderTrade(); } }); };
+  const ss = $("#sSold"); if (ss) { ss.onclick = () => { $("#sSoldC").hidden = false; }; $("#sSoldN").onclick = () => { $("#sSoldC").hidden = true; };
+    $("#sSoldY").onclick = () => { const back = JSON.parse(JSON.stringify({ coll: S.coll, sell: S.trade.sell })); let n = 0;
+      for (const x of sellRows()) { const e = S.coll[x.key]; e.qty -= x.qty; n += x.qty; if (e.qty <= 0) delete S.coll[x.key]; }
+      S.trade.sell = []; save(); renderTrade(); toast(`${n} card${n === 1 ? "" : "s"} taken out of your collection`, { label: "Undo", fn: () => { S.coll = back.coll; S.trade.sell = back.sell; save(); renderTrade(); } }); }; }
+}
 function renderTrade() {
+  const mode = S.meta.tradeMode === "sell" ? "sell" : "trade", modeSeg = `<span class="seg wide" id="trMode"><button data-m="trade" aria-pressed="${mode === "trade"}">Trade with a friend</button><button data-m="sell" aria-pressed="${mode === "sell"}">Sell list${(S.trade.sell || []).length ? ` (${sellRows().reduce((a, x) => a + x.qty, 0)})` : ""}</button></span>`;
+  if (mode === "sell") {
+    const n = sellRows().reduce((a, x) => a + x.qty, 0); setHead("Trade", n ? `${n} card${n === 1 ? "" : "s"} to sell` : "");
+    $("#view").innerHTML = `<div class="stack">${modeSeg}${renderSell()}</div>`;
+    $("#trMode").onclick = e => { const b = e.target.closest("button"); if (b) { S.meta.tradeMode = b.dataset.m; save(); renderTrade(); } };
+    wireSell(); return;
+  }
   const t = tradeTotals(), diff = t.get - t.give, big = Math.max(t.give, t.get), pct = big ? Math.abs(diff) / big : 0;
   setHead("Trade", (S.trade.give.length || S.trade.get.length) ? `${money(t.give)} for ${money(t.get)}` : "");
   const verdict = !big ? "Add cards to both sides to compare." : pct < 0.05 ? "About even" : diff > 0 ? `You come out ${money(diff)} ahead` : `You give up ${money(-diff)} more`;
   const fins = (s, cur) => s.finishes.length > 1 ? `<button class="chip ${cur !== "nonfoil" ? "foil" : ""}" data-fin>${cur === "nonfoil" ? "normal" : cur}</button>` : (cur !== "nonfoil" ? `<span class="chip foil">${cur}</span>` : "");
-  $("#view").innerHTML = `<div class="stack">
+  $("#view").innerHTML = `<div class="stack">${modeSeg}
     <div class="summary"><div><span class="label">You give</span><b class="num down">${money(t.give)}</b></div><div><span class="label">You get</span><b class="num up">${money(t.get)}</b></div>
       <div><span class="label">Difference</span><b class="num">${signed(diff)}</b></div></div>
     <div class="box"><div class="scale" aria-hidden="true"><div class="g" style="width:${big ? t.give / (t.give + t.get) * 100 : 50}%"></div><div class="r" style="flex:1"></div></div>
@@ -4006,6 +4087,7 @@ function renderTrade() {
       <div class="row" id="tConfirm" hidden><span class="grow small">Remove the cards you give from your collection and add the ones you get?</span><button class="btn sm primary" id="tYes">Yes, trade</button><button class="btn sm" id="tNo">Not yet</button></div>
     </div>` : ""}
   </div>`;
+  $("#trMode").onclick = e => { const b = e.target.closest("button"); if (b) { S.meta.tradeMode = b.dataset.m; save(); renderTrade(); } };
   const gq = $("#tgq"), gl = $("#tgl");
   gq.oninput = () => {
     const q = norm(gq.value.trim()); if (q.length < 1) { gl.hidden = true; return; }
@@ -4035,12 +4117,12 @@ function renderTrade() {
   if (done) {
     done.onclick = () => { $("#tConfirm").hidden = false; };
     $("#tNo").onclick = () => { $("#tConfirm").hidden = true; };
-    $("#tClear").onclick = () => { S.trade = { give: [], get: [] }; save(); renderTrade(); };
+    $("#tClear").onclick = () => { S.trade = { give: [], get: [], sell: S.trade.sell || [] }; save(); renderTrade(); };
     $("#tYes").onclick = () => {
       const bin = $("#tBin").value;
       for (const g of S.trade.give) { const e = S.coll[g.key]; if (!e) continue; e.qty -= g.qty; if (e.qty <= 0) delete S.coll[g.key]; }
       for (const g of S.trade.get) addToColl(g.card, g.finish, g.qty, bin);
-      S.trade = { give: [], get: [] }; save(); renderTrade(); toast("Trade done. Your collection is updated.");
+      S.trade = { give: [], get: [], sell: S.trade.sell || [] }; save(); renderTrade(); toast("Trade done. Your collection is updated.");
     };
   }
 }
@@ -4930,25 +5012,38 @@ const CHEAP = {};          // name -> { price, set, num, id } | null, for this s
 /* Mana Pool prices: a daily copy of Mana Pool's public price list, split into small files by Scryfall ID
    (tools/manapool-mirror.js, run by a GitHub Action; Mana Pool's own API can't be read from a website). */
 const MP = { base: "https://raw.githubusercontent.com/junkcase/Deckhand/data/manapool/", meta: null, shards: {}, err: "" };
-async function mpMeta() {
-  if (MP.meta && Date.now() - MP.meta.fetched < 30 * 6e4) return MP.meta;
-  const r = await fetch(MP.base + "meta.json", { cache: "no-cache" }); if (!r.ok) throw new Error(r.status === 404 ? "Mana Pool prices aren't set up yet" : "Couldn't load Mana Pool prices (" + r.status + ")");
-  MP.meta = Object.assign(await r.json(), { fetched: Date.now() }); return MP.meta;
+const CK = { base: "https://raw.githubusercontent.com/junkcase/Deckhand/data/cardkingdom/", meta: null, shards: {}, name: "Card Kingdom", key: "ck" };
+MP.name = "Mana Pool"; MP.key = "mp";
+async function storeMeta(st) {
+  if (st.meta && Date.now() - st.meta.fetched < 30 * 6e4) return st.meta;
+  const r = await fetch(st.base + "meta.json", { cache: "no-cache" }); if (!r.ok) throw new Error(r.status === 404 ? st.name + " prices aren't set up yet" : "Couldn't load " + st.name + " prices (" + r.status + ")");
+  st.meta = Object.assign(await r.json(), { fetched: Date.now() }); return st.meta;
 }
-// prices for these Scryfall IDs: id -> { low, nm, foil, etched, url } (cents to dollars); only the files needed are loaded, kept for the day
-async function mpPrices(ids) {
-  const meta = await mpMeta(), need = [...new Set(ids.filter(Boolean).map(id => String(id).slice(0, 2).toLowerCase()).filter(k => /^[0-9a-f]{2}$/.test(k)))];
+// the rows for these Scryfall IDs; only the small files needed are loaded, kept until the next daily copy
+async function storeRows(st, ids) {
+  const meta = await storeMeta(st), need = [...new Set(ids.filter(Boolean).map(id => String(id).slice(0, 2).toLowerCase()).filter(k => /^[0-9a-f]{2}$/.test(k)))];
   await Promise.all(need.map(async k => {
-    if (MP.shards[k] && MP.shards[k].as_of === meta.as_of) return;
-    let c = null; try { c = idb.ok ? await idbGet("mp:" + k) : null; } catch (e) {}
-    if (c && c.as_of === meta.as_of) { MP.shards[k] = c; return; }
-    const r = await fetch(MP.base + k + ".json"); if (!r.ok && r.status !== 404) throw new Error("Couldn't load Mana Pool prices (" + r.status + ")");
-    MP.shards[k] = { as_of: meta.as_of, data: r.ok ? await r.json() : {} };
-    if (idb.ok) idbSet("mp:" + k, MP.shards[k]).catch(() => {});
+    if (st.shards[k] && st.shards[k].as_of === meta.as_of) return;
+    let c = null; try { c = idb.ok ? await idbGet(st.key + ":" + k) : null; } catch (e) {}
+    if (c && c.as_of === meta.as_of) { st.shards[k] = c; return; }
+    const r = await fetch(st.base + k + ".json"); if (!r.ok && r.status !== 404) throw new Error("Couldn't load " + st.name + " prices (" + r.status + ")");
+    st.shards[k] = { as_of: meta.as_of, data: r.ok ? await r.json() : {} };
+    if (idb.ok) idbSet(st.key + ":" + k, st.shards[k]).catch(() => {});
   }));
-  const out = {}, c$ = v => v == null ? null : v / 100;
-  for (const id of ids) { const sh = id && MP.shards[String(id).slice(0, 2).toLowerCase()], row = sh && sh.data[String(id).toLowerCase()];
-    if (row) out[id] = { low: c$(row[0]), nm: c$(row[1]), foil: c$(row[2]), etched: c$(row[3]), url: /^[a-z0-9][a-z0-9._-]*\/[^/?#\s]+\/[a-z0-9-]+$/i.test(row[4] || "") ? "https://manapool.com/card/" + row[4] : "" }; }
+  const out = {}; for (const id of ids) { const sh = id && st.shards[String(id).slice(0, 2).toLowerCase()], row = sh && sh.data[String(id).toLowerCase()]; if (row) out[id] = row; }
+  return out;
+}
+const c$ = v => v == null ? null : v / 100;
+// Mana Pool: id -> { low, nm, foil, etched, url }
+async function mpPrices(ids) {
+  const rows = await storeRows(MP, ids), out = {};
+  for (const id in rows) { const row = rows[id]; out[id] = { low: c$(row[0]), nm: c$(row[1]), foil: c$(row[2]), etched: c$(row[3]), url: /^[a-z0-9][a-z0-9._-]*\/[^/?#\s]+\/[a-z0-9-]+$/i.test(row[4] || "") ? "https://manapool.com/card/" + row[4] : "" }; }
+  return out;
+}
+// Card Kingdom buylist: id -> { buy, buyFoil, want, wantFoil, url } (cash prices for near-mint copies; want = how many they're buying)
+async function ckPrices(ids) {
+  const rows = await storeRows(CK, ids), out = {};
+  for (const id in rows) { const row = rows[id]; out[id] = { buy: c$(row[0]), buyFoil: c$(row[1]), want: +row[2] || 0, wantFoil: +row[3] || 0, url: /^mtg\/[a-z0-9-]+\/[a-z0-9-]+$/i.test(row[4] || "") ? "https://www.cardkingdom.com/" + row[4] : "" }; }
   return out;
 }
 const mpPrice = p => p ? (p.low ?? p.nm ?? p.foil ?? p.etched) : null;
