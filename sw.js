@@ -1,8 +1,8 @@
 // Deckhand offline helper. The app page is fetched fresh whenever you're online (so updates arrive right
 // away) and the saved copy is used when you're offline. The text reader's files are kept after first use.
 // Card data, prices, sync and EDHREC always go straight to the network.
-const CACHE = "deckhand-v3";
-const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/maskable-512.png", "./icons/apple-touch-icon.png", "./images/welcome-800.jpg"];
+const CACHE = "deckhand-v4";
+const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/maskable-512.png", "./icons/apple-touch-icon.png", "./images/welcome-800.jpg", "./images/welcome-1600.jpg"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener("fetch", e => {

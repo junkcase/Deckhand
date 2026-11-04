@@ -42,7 +42,12 @@ button{cursor:pointer}
 
 header.top{position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid var(--line);
   padding:calc(env(safe-area-inset-top,0px) + 10px) max(16px,env(safe-area-inset-right,0px)) 10px max(16px,env(safe-area-inset-left,0px));
-  display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+  display:flex;align-items:center;justify-content:space-between;gap:12px}
+header.top .brand{display:flex;align-items:center;gap:9px;min-width:0}
+header.top .logo{width:30px;height:30px;border-radius:8px;background:#fff;object-fit:contain;padding:1px;flex:none;box-shadow:0 0 0 1px var(--line)}
+#splash{position:fixed;inset:0;z-index:100;background:#0f141b;display:flex;align-items:center;justify-content:center;transition:opacity .35s ease}
+#splash img{width:min(92vw,900px);height:auto;max-height:80vh;object-fit:contain;border-radius:14px}
+#splash.out{opacity:0;pointer-events:none}
 header.top h1{margin:0;font:700 22px/1.1 var(--f-display);letter-spacing:.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 header.top .sub{font-size:13px;color:var(--muted);white-space:nowrap}
 header.top .hright{display:flex;align-items:center;gap:8px;min-width:0}
@@ -301,7 +306,7 @@ h2.sec{margin:6px 0 0;font:700 18px var(--f-display)}
 </head>
 <body>
 <header class="top">
-  <h1 id="viewTitle">Collection</h1>
+  <span class="brand"><img class="logo" src="icons/icon-192.png" alt="" width="30" height="30"><h1 id="viewTitle">Collection</h1></span>
   <span class="hright"><span class="sub num" id="viewSub"></span><button type="button" class="syncpill" id="syncPill" hidden></button></span>
 </header>
 <main id="view"></main>
@@ -2069,7 +2074,7 @@ function drawSync() {
     };
     return;
   }
-  el.innerHTML = `<h2>Sync across devices</h2>
+  el.innerHTML = `${heroImg()}<h2>Sync across devices</h2>
     <div class="box stack" style="gap:6px">
       <div class="kv"><span>Account</span><b>${isGoogleSync(cfg) ? esc(cfg.email || "Google") + ` <span class="small muted">Google Drive</span>` : "@" + esc(cfg.login || "") + ` <span class="small muted">GitHub</span>`}</b></div>
       ${isGoogleSync(cfg) && !gdSignedIn() && !cfg.paused ? `<div class="row wrap"><span class="small grow">Google's hour has run out. Your changes are saved here.</span><button class="btn sm primary" id="syGTap">Sign in and sync</button></div>` : ""}
@@ -5185,7 +5190,19 @@ function deckMenu(d) {
 }
 
 /* ---------- start ---------- */
+// the Deckhand banner while the installed app opens (about a second; a tap skips it)
+function splash() {
+  if (!isStandalone() || sessionStorage.getItem("dh-splash")) return () => {};
+  try { sessionStorage.setItem("dh-splash", "1"); } catch (e) {}
+  const el = document.createElement("div"); el.id = "splash"; el.setAttribute("aria-hidden", "true");
+  el.innerHTML = `<img src="images/welcome-1600.jpg" alt="">`; document.body.appendChild(el);
+  const t0 = Date.now(); let gone = false;
+  const hide = () => { if (gone) return; gone = true; el.classList.add("out"); setTimeout(() => el.remove(), 400); };
+  el.onclick = hide; setTimeout(hide, 4000);
+  return () => setTimeout(hide, Math.max(0, 1100 - (Date.now() - t0)));
+}
 async function boot() {
+  const splashDone = splash();
   let stored = null;
   if (idb.ok) { try { stored = await idbGet("state"); } catch (e) { idb.ok = false; } }
   if (stored && stored.coll) { S = stored; migrate(); applySearchPrefs(); sc.mode = S.meta.scanMode || "ask"; sc.auto = S.meta.autoCap !== false; }
@@ -5199,6 +5216,7 @@ async function boot() {
   const sc_ = syncCfg(); if (syncOn(sc_) && !sc_.paused) setTimeout(startSyncLoop, 600);
   if (gdCfg()) { setTimeout(gdAuto, 8000); loadGis().catch(() => {}); }
   setTimeout(checkUpdate, 3000);          // remember which version this is
+  splashDone();
   if (Object.keys(S.coll).length && (!S.meta.pricedAt || Date.now() - S.meta.pricedAt > 20 * 36e5)) setTimeout(() => refreshPrices(true), 1500);
 }
 /* ---------- "a newer version is ready": a page left open (an app in the background, a tab on a tablet) keeps
