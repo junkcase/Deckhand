@@ -435,7 +435,7 @@ let queue = Promise.resolve();
 // 2 requests a second; everything else 10 a second. Going over gets a 429 and a 30-second block, and the browser
 // usually reports that block as "couldn't connect". Every request books its slot here before it goes out, so even
 // requests started at the same moment stay spaced out.
-let sfLast = 0, sfLastSlow = 0, sfPauseUntil = 0, sfSent = 0, sfSentSlow = 0;
+let sfLast = 0, sfLastSlow = 0, sfPauseUntil = 0, sfSent = -1e9, sfSentSlow = -1e9;
 const SF_SLOW = /^\/cards\/(search|named|random|collection)(\/|\?|$)/;
 const sfPathOf = path => { try { return path.startsWith("http") ? new URL(path).pathname : path.split("?")[0]; } catch (e) { return path; } };
 // Deckhand open in two tabs on one device shares one schedule (the limits are per device/connection, not per tab)
@@ -455,8 +455,9 @@ function sf(path, body, opts = {}) {
     const wait = sfSlot(path); if (wait > 0) await sleep(wait);
     // timers can fire late on a busy device: also keep the real gap since the last request actually sent
     const slow = SF_SLOW.test(sfPathOf(path));
-    for (let g; (g = Math.max(sfSent + 110, slow ? sfSentSlow + 520 : 0) - Date.now()) > 0;) await sleep(g);
-    sfSent = Date.now(); if (slow) sfSentSlow = sfSent;
+    // (measured with the steady page timer, which can't stand still or jump back like the clock can)
+    for (let g; (g = Math.max(sfSent + 110, slow ? sfSentSlow + 520 : 0) - performance.now()) > 0;) await sleep(g);
+    sfSent = performance.now(); if (slow) sfSentSlow = sfSent;
     let r;
     try {
       r = await fetch(path.startsWith("http") ? path : API + path, {
