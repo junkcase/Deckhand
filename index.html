@@ -264,6 +264,10 @@ details>summary{cursor:pointer}.seg.wide button{flex:1}
 .curve-x{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;font-size:11px;color:var(--muted);text-align:center}
 .hand{display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:6px}
 .hand img{width:100%;border-radius:5px;display:block}
+.hand .hc{border:0;padding:0;background:none;border-radius:6px;cursor:default}.hand.picking .hc{cursor:pointer}
+.hand .hc.sel{outline:3px solid var(--accent);outline-offset:2px;opacity:.55}
+table.odds{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}table.odds th,table.odds td{padding:3px 4px;text-align:right;border-bottom:1px solid var(--line)}
+table.odds th:first-child,table.odds td:first-child{text-align:left}
 .issues{margin:0;padding-left:18px;font-size:14px;display:flex;flex-direction:column;gap:3px}
 
 .ac{position:relative}
@@ -4491,8 +4495,7 @@ function renderDeck(d) {
         <span>${"WUBRG".split("").filter(c => st.colors[c]).map(c => `<i class="pip p${c}">${c}</i><span class="small num" style="margin-right:6px">${st.colors[c]}</span>`).join("")}</span></div>
       <div class="curve">${st.curve.map(v => `<div class="bar" style="height:${v / max * 100}%"><span class="num">${v || ""}</span></div>`).join("")}</div>
       <div class="curve-x"><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7+</span></div></div>
-      <div class="box"><div class="row"><span class="label grow">Sample hand</span><button class="btn sm" id="hNew">Draw 7</button><button class="btn sm" id="hOne" ${hand.deck === d.id && hand.cards.length ? "" : "disabled"}>Draw 1</button></div>
-        <div class="hand" id="hand">${hand.deck === d.id ? hand.cards.map(c => `<img src="${esc(c.imgN || c.img)}" alt="${esc(c.name)}">`).join("") : ""}</div></div>` : ""}
+      ${playtestHTML(d)}` : ""}
     <div class="list" id="dl">${cmdCards.length ? `<div class="group-h"><span>Commander</span><span class="num">${cmdCards.length}</span></div>${cmdCards.map(row).join("")}` : ""}
       ${group(mainRest, "") || (cmdCards.length ? "" : `<div class="empty" style="border:0"><p>No cards yet. Type above, or use Deck options → Paste a deck list.</p></div>`)}${group(st.side, "Side")}</div></div></div>`;
   $("#back").onclick = () => go("decks");
@@ -4536,7 +4539,7 @@ function renderDeck(d) {
   if (dt === "suggest") drawSuggest(d); else if (dt === "balance") drawBalance(d); else if (dt === "upgrade") drawUpgrade(d);
   const pk = $("#dPick"), pk2 = $("#dPick2"); if (pk) drawCmdrPicker(d, pk, false); else if (pk2) drawCmdrPicker(d, pk2, true);
   if (cmd && d.cmdr.length && (!themeSug[d.id] || themeSug[d.id].cmd !== deckCommanderName(d))) loadThemeSuggestions(d); else drawThemeSug(d);
-  const hn = $("#hNew"); if (hn) { hn.onclick = () => { newHand(d); renderDeck(d); }; $("#hOne").onclick = () => { if (hand.lib.length) hand.cards.push(hand.lib.pop()); renderDeck(d); }; }
+  wirePlaytest(d);
   $("#dl").onclick = e => {
     const b = e.target.closest("button"); if (!b) return;
     const k = b.dataset.inc || b.dataset.dec || b.dataset.open, c = d.cards[k]; if (!c) return;
@@ -4545,11 +4548,71 @@ function renderDeck(d) {
     else openCard(c, null, null, { deck: d, key: k });
   };
 }
-const hand = { deck: null, cards: [], lib: [] };
-function newHand(d) {
+/* Playtest: a sample game from the deck's library (the main deck, without the commander). London mulligan: draw 7,
+   then put one card on the bottom per mulligan; in Commander the first mulligan is free. Land odds are exact
+   (hypergeometric) from the land count, so they're the same every time, unlike a sample hand. */
+const hand = { deck: null, cards: [], lib: [], turn: 0, mull: 0, bottom: 0, sel: new Set(), onDraw: false };
+const isLandCard = c => typeOf(c.type) === "Land";
+function deckLibrary(d) {
   const lib = []; for (const [k, c] of Object.entries(d.cards)) if (!c.side && !(d.format === "commander" && d.cmdr.includes(k))) for (let i = 0; i < c.qty; i++) lib.push(c);
-  for (let i = lib.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [lib[i], lib[j]] = [lib[j], lib[i]]; }
-  hand.deck = d.id; hand.cards = lib.splice(-7); hand.lib = lib;
+  return lib;
+}
+function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+function newHand(d, mull = 0) {
+  const lib = shuffle(deckLibrary(d));
+  Object.assign(hand, { deck: d.id, cards: lib.splice(-7), lib, turn: 1, mull, sel: new Set(),
+    bottom: Math.max(0, mull - (d.format === "commander" && mull > 0 ? 1 : 0)) });     // Commander: first mulligan free
+  if (hand.onDraw && !hand.bottom) hand.cards.push(hand.lib.pop());
+}
+// hypergeometric: chance of at least k successes when drawing n from N with K successes
+const lnF = (() => { const t = [0]; return n => { for (let i = t.length; i <= n; i++) t[i] = t[i - 1] + Math.log(i); return t[n]; }; })();
+const lnC = (n, k) => k < 0 || k > n ? -Infinity : lnF(n) - lnF(k) - lnF(n - k);
+const hyp = (N, K, n, k) => Math.exp(lnC(K, k) + lnC(N - K, n - k) - lnC(N, n));
+const atLeast = (N, K, n, k) => { n = Math.min(n, N); let p = 0; for (let i = k; i <= Math.min(n, K); i++) p += hyp(N, K, n, i); return Math.min(1, p); };
+function landOdds(d) {
+  const lib = deckLibrary(d), N = lib.length, K = lib.filter(isLandCard).length;
+  if (N < 8) return null;
+  const between = (lo, hi) => { let p = 0; for (let i = lo; i <= hi; i++) p += hyp(N, K, 7, i); return p; };
+  const drops = [1, 2, 3, 4, 5].map(t => ({ t, play: atLeast(N, K, 7 + t - 1, t), draw: atLeast(N, K, 7 + t, t) }));
+  return { N, K, avg: 7 * K / N, keep: between(2, 5), few: between(0, 1), many: between(6, 7), drops };
+}
+const pctS = p => (p >= 0.995 && p < 1 ? ">99" : p > 0 && p < 0.005 ? "<1" : Math.round(p * 100)) + "%";
+function playtestHTML(d) {
+  const on = hand.deck === d.id && hand.cards.length, o = landOdds(d), lands = on ? hand.cards.filter(isLandCard).length : 0;
+  const picking = on && hand.bottom > 0;
+  return `<div class="box stack" style="gap:8px" id="pt"><div class="row wrap"><span class="label grow">Playtest</span>
+      <span class="seg" id="ptWho"><button data-w="play" aria-pressed="${!hand.onDraw}">On the play</button><button data-w="draw" aria-pressed="${hand.onDraw}">On the draw</button></span></div>
+    <div class="row wrap"><button class="btn sm primary" id="hNew">${on ? "New hand" : "Draw 7"}</button>
+      <button class="btn sm" id="hMull" ${on && !picking ? "" : "disabled"}>Mulligan</button>
+      <button class="btn sm" id="hOne" ${on && !picking && hand.lib.length ? "" : "disabled"}>Next turn (draw 1)</button></div>
+    ${on ? `<div class="small"><b>Turn ${hand.turn}</b> · ${hand.onDraw ? "on the draw" : "on the play"} · ${hand.cards.length} in hand, <b>${lands} land${lands === 1 ? "" : "s"}</b> · ${hand.lib.length} left in library${hand.mull ? ` · ${hand.mull} mulligan${hand.mull === 1 ? "" : "s"}${d.format === "commander" ? " (first one free)" : ""}` : ""}</div>` : ""}
+    ${picking ? `<div class="row wrap"><span class="small grow"><b>Tap ${hand.bottom} card${hand.bottom === 1 ? "" : "s"} to put on the bottom</b> (${hand.sel.size} picked)</span><button class="btn sm primary" id="hBottom" ${hand.sel.size === hand.bottom ? "" : "disabled"}>Put on the bottom</button></div>` : ""}
+    <div class="hand ${picking ? "picking" : ""}" id="hand">${on ? hand.cards.map((c, i) => `<button type="button" class="hc ${hand.sel.has(i) ? "sel" : ""}" data-hc="${i}" ${picking ? "" : "tabindex=-1"} aria-label="${esc(c.name)}"><img src="${esc(c.imgN || c.img)}" alt="${esc(c.name)}"></button>`).join("") : ""}</div>
+    ${o ? `<details class="small" ${S.meta.ptOddsOpen ? "open" : ""} id="ptOdds"><summary><b>Land odds</b> · ${o.K} lands in ${o.N} cards, ${o.avg.toFixed(1)} in an average opening hand</summary>
+      <div class="stack" style="gap:4px;margin-top:6px">
+        <div>Opening 7 has <b>2–5 lands: ${pctS(o.keep)}</b> · 0–1: ${pctS(o.few)} · 6–7: ${pctS(o.many)}</div>
+        <table class="odds"><tr><th>Make your land drop on</th>${o.drops.map(x => `<th>T${x.t}</th>`).join("")}</tr>
+          <tr><td>On the play</td>${o.drops.map(x => `<td class="${x.play < 0.8 ? "down" : ""}">${pctS(x.play)}</td>`).join("")}</tr>
+          <tr><td>On the draw</td>${o.drops.map(x => `<td class="${x.draw < 0.8 ? "down" : ""}">${pctS(x.draw)}</td>`).join("")}</tr></table>
+        <span class="muted">Chance of having at least that many lands by that turn, before mulligans and card draw. Lands are counted from card types${d.format === "commander" ? "; the commander isn't in the library" : ""}.</span></div></details>` : ""}
+  </div>`;
+}
+function wirePlaytest(d) {
+  const el = $("#pt"); if (!el) return;
+  const redraw = () => { el.outerHTML = playtestHTML(d); wirePlaytest(d); };
+  $("#ptWho").onclick = e => { const b = e.target.closest("button"); if (!b) return; hand.onDraw = b.dataset.w === "draw"; if (hand.deck === d.id && hand.cards.length) newHand(d); redraw(); };
+  $("#hNew").onclick = () => { newHand(d); redraw(); };
+  $("#hMull").onclick = () => { newHand(d, hand.mull + 1); redraw(); };
+  $("#hOne").onclick = () => { if (hand.lib.length) { hand.cards.push(hand.lib.pop()); hand.turn++; } redraw(); };
+  $("#hand").onclick = e => { const b = e.target.closest("[data-hc]"); if (!b || !hand.bottom) return; const i = +b.dataset.hc;
+    if (hand.sel.has(i)) hand.sel.delete(i); else if (hand.sel.size < hand.bottom) hand.sel.add(i); redraw(); };
+  const hb = $("#hBottom"); if (hb) hb.onclick = () => {
+    const keep = [], bot = []; hand.cards.forEach((c, i) => (hand.sel.has(i) ? bot : keep).push(c));
+    hand.lib.unshift(...bot); hand.cards = keep; hand.bottom = 0; hand.sel = new Set();
+    if (hand.onDraw) hand.cards.push(hand.lib.pop());
+    redraw();
+  };
+  const od = $("#ptOdds"); if (od) od.ontoggle = () => { if (!!S.meta.ptOddsOpen !== od.open) { S.meta.ptOddsOpen = od.open; save(); } };
 }
 function deckText(d) {
   const line = c => `${c.qty} ${c.name} (${c.set.toUpperCase()}) ${c.num}`;
