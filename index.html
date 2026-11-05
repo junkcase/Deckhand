@@ -369,7 +369,7 @@ const KEY = "deckhand.v1";
 let S = {};
 try { const t = localStorage.getItem(KEY); if (t) S = JSON.parse(t); } catch (e) {}
 function migrate() {
-  S.coll = S.coll || {}; S.decks = S.decks || {}; S.meta = S.meta || {};
+  S.coll = S.coll || {}; S.decks = S.decks || {}; S.meta = S.meta || {}; if (!S.lists || typeof S.lists !== "object") S.lists = {};
   if (!S.binders) S.binders = {
     main: { id: "main", name: "Collection" }, trade: { id: "trade", name: "Trade binder" }, wish: { id: "wish", name: "Wishlist", wish: true } };
   S.settings = S.settings || {}; S.alerts = S.alerts || {}; for (const k in S.alerts) if (!S.alerts[k] || typeof S.alerts[k] !== "object") delete S.alerts[k]; else normAlert(S.alerts[k]); S.ph = S.ph || {}; S.hist = S.hist || []; S.trade = S.trade || { give: [], get: [] }; if (!Array.isArray(S.trade.sell)) S.trade.sell = [];
@@ -1421,7 +1421,7 @@ function renderColl() {
     <div class="chips scrollx" id="bChips"><button data-b="all" aria-pressed="${cv.binder === "all"}">All owned</button>
       ${Object.values(S.binders).map(b => `<button data-b="${esc(b.id)}" aria-pressed="${cv.binder === b.id}">${esc(b.name)} <span class="num">${counts[b.id] || 0}</span></button>`).join("")}
       <button data-b="__manage">＋ Manage binders</button></div>
-    ${backupNudge()}${gdNudge()}
+    ${backupNudge()}${gdNudge()}${incomingNote()}
     ${alertHits.length ? `<div class="box alert"><div class="row"><span class="label gold grow">Price alerts</span><button class="linkbtn small" id="alAll">All alerts</button>${alertHits.length > 1 ? `<button class="linkbtn small" id="alOkAll">OK to all</button>` : ""}</div>${alertHits.slice(0, 8).map(([k, a, l]) => `
       <div class="kv"><span class="grow">${esc(a.name)}${k.split("|")[1] !== "nonfoil" ? ` <span class="small muted">${esc(k.split("|")[1])}</span>` : ""} was <b class="num">${money(l.price)}</b> <span class="muted small">(${esc(l.text || "")}, ${esc(new Date(l.at).toLocaleDateString())})</span></span>
       <button class="btn sm" data-alert="${esc(k)}">View</button><button class="btn sm ghost" data-seen="${esc(k)}" data-l="${esc(l.id)}">OK</button></div>`).join("")}${alertHits.length > 8 ? `<span class="small muted">and ${alertHits.length - 8} more under All alerts</span>` : ""}</div>` : ""}
@@ -1468,6 +1468,7 @@ function renderColl() {
   });
   const np = $("#dNoP"); if (np) np.onclick = valueSheet;
   wireCollFilters(st);
+  const ig = $("#inGo"); if (ig) ig.onclick = () => { const ls = onTheWay(); sv.mode = "lists"; lv.open = ls.length === 1 ? ls[0].id : null; lv.idx = -1; go("search"); };
   $("#cSel").onclick = () => { cv.select = !cv.select; cv.sel.clear(); renderColl(); };
   $("#bChips").onclick = e => { const b = e.target.closest("button"); if (!b) return; if (b.dataset.b === "__manage") binderSheet(); else { cv.binder = b.dataset.b; cv.limit = COLL_PAGE; renderColl(); } };
   v.querySelectorAll("[data-seen]").forEach(b => b.onclick = () => { const a = S.alerts[b.dataset.seen], l = a && a.log.find(x => x.id === b.dataset.l); if (l) { l.seen = true; a.updated = Date.now(); save(); } renderColl(); });
@@ -1727,10 +1728,10 @@ function binderSheet() {
    every 30 s while open, and a few seconds after a change. Changes from two devices are combined card by
    card (counts are added up as changes, not overwritten), so cards added on the tablet and cards removed on
    the phone both survive. Settings such as scan options stay per device. The token stays on this device. */
-const SYNC_KEYS = ["coll", "decks", "binders", "alerts", "ph", "hist", "trade", "marks", "settings", "roles"];
+const SYNC_KEYS = ["coll", "decks", "binders", "alerts", "ph", "hist", "trade", "marks", "settings", "roles", "lists"];
 const SYNC_DESC = "Deckhand sync (managed by the Deckhand app)";
 // the version of the sync rules; raised whenever how devices combine their data changes
-var SYNC_V = 2;
+var SYNC_V = 3;          // 3: card lists (Search → Lists) sync too
 var SYNC = { cfg: undefined, busy: false, t: null, etag: null, base: undefined, dirty: true, err: "", at: 0, from: "", files: [], undo: null, poll: null, ask: null };
 // sync is set up: GitHub (a private gist) or Google (a file in the user's Drive)
 const isGoogleSync = (cfg = syncCfg()) => !!(cfg && cfg.kind === "google");
@@ -1943,7 +1944,7 @@ function mergeSync(B, L, R) {
   }
   out.coll = coll;
   const stamp = x => (x && (x.updated || x.at)) || 0;
-  for (const key of ["decks", "binders", "alerts", "marks", "settings", "roles"]) {
+  for (const key of ["decks", "binders", "alerts", "marks", "settings", "roles", "lists"]) {
     const b = B[key] || {}, l = L[key] || {}, r = R[key] || {}, o = {};
     for (const k of new Set([...Object.keys(r), ...Object.keys(l), ...Object.keys(b)])) {
       const bs = J_(b[k]), ls = J_(l[k]), rs = J_(r[k]); let v;
@@ -2738,17 +2739,180 @@ function drawStaples() {
     save(); toast(n ? `Put ${n} cards on ${w.name}` : `They're already on ${w.name}`); drawStaples();
   };
 }
+/* ================= LISTS =================
+   Paste a list of cards (from Moxfield, Archidekt, Arena, a Mana Pool or TCGplayer list, an order email…), then go
+   through them one at a time: check the printing and finish, how many, which binder, and add or skip. Lists are
+   saved and synced. Until its cards are added, a list shows under "Incoming" (not in the collection yet), with a reminder on the Collection tab. */
+const lv = { open: null, idx: 0, msg: "" };
+const LIST_HEAD = /^(deck|main|mainboard|sideboard|side|sb|commanders?|companion|about|maybeboard|considering|tokens?)\s*:?\s*$/i;
+function parseListText(text) {
+  const out = [];
+  for (const raw of String(text || "").split(/\r?\n/)) {
+    let l = raw.replace(/\t/g, " ").trim(); if (!l) continue;
+    if (LIST_HEAD.test(l) || /^[A-Z][A-Z &'/-]*\s*\(\d+\)\s*$/.test(l) || /^\d+\s+cards?$/i.test(l) || /^\/\//.test(l) || /^#/.test(l)) continue;     // section headings, counts, comments
+    let finish = "nonfoil";
+    if (/\*F\*|\(foil\)|\s-\s*foil\b|\bfoil$/i.test(l)) { finish = "foil"; l = l.replace(/\s*(\*F\*|\(foil\)|-\s*foil\b|\bfoil$)/ig, " ").trim(); }
+    if (/\*E\*|\(etched\)/i.test(l)) { finish = "etched"; l = l.replace(/\s*(\*E\*|\(etched\))/ig, " ").trim(); }
+    l = l.replace(/^SB:\s*/i, "").replace(/\s+\$\s?\d[\d,]*(\.\d{1,2})?\s*$/, "").replace(/\s+\d+\.\d{2}\s*$/, "").trim();      // a price at the end
+    const P = parseAddLine(l.replace(/^(\d+)x\s+/i, "$1 ")); if (!P.name && !P.set) continue;
+    const name = P.name.replace(/\s+/g, " ").trim();
+    out.push({ id: uid(), line: raw.trim(), qty: P.qty, name, set: P.set, num: P.num, finish, card: null, st: "todo" });
+  }
+  return out;
+}
+const listIdent = it => it.set && it.num ? { set: it.set, collector_number: it.num } : it.set && it.name ? { name: it.name.split(" // ")[0], set: it.set } : { name: it.name.split(" // ")[0] };
+async function lookupList(items, onProgress) {
+  const need = items.filter(it => !it.card);
+  for (let i = 0; i < need.length; i += 75) {
+    const chunk = need.slice(i, i + 75), r = await sf("/cards/collection", { identifiers: chunk.map(listIdent) }), data = r.data || [];
+    for (const it of chunk) { const c = matchIdent(data, listIdent(it)); if (c) setListCard(it, c); }
+    onProgress && onProgress(Math.min(i + 75, need.length), need.length);
+  }
+  // typos and partial names: Scryfall's closest match, a few at a time
+  for (const it of need.filter(x => !x.card).slice(0, 15)) {
+    try { const c = await sf("/cards/named?fuzzy=" + encodeURIComponent(it.name)); setListCard(it, c, true); } catch (e) { it.st = "missing"; }
+  }
+  for (const it of items) if (!it.card && it.st === "todo") it.st = "missing";
+}
+function setListCard(it, c, guessed) {
+  it.card = slim(c); it.guess = !!guessed;
+  if (!it.card.finishes.includes(it.finish)) it.finish = it.card.finishes[0] || "nonfoil";
+  if (it.st === "missing") it.st = "todo";
+}
+const listLeft = l => (l.items || []).filter(it => it.st === "todo").reduce((a, it) => a + it.qty, 0);
+const listDone = l => (l.items || []).filter(it => it.st === "added").reduce((a, it) => a + it.qty, 0);
+// lists with cards still to add: "Incoming", not in the collection yet
+const onTheWay = () => Object.values(S.lists || {}).filter(l => listLeft(l) > 0);
+function incomingNote() {
+  const ls = onTheWay(), n = ls.reduce((a, l) => a + listLeft(l), 0); if (!n) return "";
+  return `<div class="box row wrap" id="inNote" style="gap:8px;border-color:var(--accent)"><span class="grow small"><b>${n} incoming card${n === 1 ? "" : "s"}</b> on ${ls.length === 1 ? "“" + esc(ls[0].name) + "”" : ls.length + " lists"}: not in your collection yet.</span><button class="btn sm" id="inGo">Review and add</button></div>`;
+}
+const touchList = l => { l.updated = Date.now(); save(); };
+function renderLists() {
+  const v = $("#sres"); if (!v) return;
+  const L = lv.open && S.lists[lv.open];
+  if (!L) { lv.open = null; return drawListIndex(v); }
+  drawList(v, L);
+}
+function drawListIndex(v) {
+  const all = Object.values(S.lists).sort((a, b) => b.updated - a.updated), way = all.filter(l => listLeft(l) > 0), rest = all.filter(l => !way.includes(l));
+  const row = l => { const n = l.items.reduce((a, it) => a + it.qty, 0), done = listDone(l), left = listLeft(l);
+    return `<button class="tap setrow" data-list="${esc(l.id)}"><span class="nm">${esc(l.name)} ${l.order ? `<span class="chip ${left ? "acc" : "ok"}">${left ? "Order" : "Order arrived"}</span>` : ""}</span>
+      <span class="num small muted">${n} card${n === 1 ? "" : "s"} · ${done} added${left ? ` · ${left} to go` : " ✓"}</span>
+      <span class="setbar"><span class="meter"><span style="width:${n ? (done / n * 100).toFixed(1) : 0}%"></span></span></span></button>`; };
+  v.innerHTML = `<div class="stack">
+    <div class="box stack" style="gap:8px"><span class="label">New list</span>
+      <input type="text" id="lsName" maxlength="60" placeholder="Name, e.g. Mana Pool order Nov 5">
+      <textarea id="lsText" rows="7" placeholder="One card per line, e.g.&#10;4 Lightning Bolt&#10;1 Sol Ring (CMM) 410&#10;4x Kira Nerys, Firebrand $0.76&#10;Counterspell"></textarea>
+      <label class="toggle"><input type="checkbox" id="lsOrder"> It's an order (marked “Order”, so you know it's coming in the mail)</label>
+      <div class="row"><button class="btn primary" id="lsGo">Look up the cards</button><span class="small muted grow" id="lsMsg">${esc(lv.msg)}</span></div>
+      <span class="small muted">Works with lists copied or exported from Mana Pool, TCGplayer, Moxfield, Archidekt and MTG Arena. Section headings and prices are ignored. The cards wait under Incoming and only go into your collection when you add them.</span></div>
+    ${way.length ? `<h2 class="sec">Incoming</h2><p class="small muted" style="margin:-4px 0 4px">Not in your collection yet. Open a list to check each card and add it.</p><div class="stack" style="gap:0">${way.map(row).join("")}</div>` : ""}
+    ${rest.length ? `<h2 class="sec">Finished</h2><div class="stack" style="gap:0">${rest.map(row).join("")}</div>` : ""}</div>`;
+  lv.msg = "";
+  v.querySelectorAll("[data-list]").forEach(b => b.onclick = () => { lv.open = b.dataset.list; lv.idx = -1; renderLists(); window.scrollTo(0, 0); });
+  $("#lsGo").onclick = async () => {
+    const items = parseListText($("#lsText").value), msg = $("#lsMsg");
+    if (!items.length) { msg.textContent = "Paste one card per line, like “4 Lightning Bolt”."; return; }
+    const order = $("#lsOrder").checked, id = uid(), now = Date.now();
+    const name = $("#lsName").value.trim() || `${order ? "Order" : "List"} ${new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+    const btn = $("#lsGo"); btn.disabled = true; msg.textContent = `Looking up ${items.length} card${items.length === 1 ? "" : "s"}…`;
+    try { await lookupList(items, (d, n) => { if (msg.isConnected) msg.textContent = `Looking up ${d} of ${n}…`; }); }
+    catch (e) { btn.disabled = false; msg.textContent = "Lookup failed: " + String(e.message).replace(/\.$/, "") + ". Nothing was saved; try again."; return; }
+    S.lists[id] = { id, name, order, created: now, updated: now, items };
+    save(); lv.open = id; lv.idx = -1; if (tab === "search" && sv.mode === "lists") renderLists();
+  };
+}
+function drawList(v, L) {
+  const items = L.items, n = items.reduce((a, it) => a + it.qty, 0), done = listDone(L), left = listLeft(L);
+  const todo = items.filter(it => it.st === "todo"), missing = items.filter(it => it.st === "missing");
+  if (lv.idx < 0 || !items[lv.idx] || items[lv.idx].st === "missing") { const i = items.findIndex(it => it.st === "todo"); lv.idx = i; }
+  const it = lv.idx >= 0 ? items[lv.idx] : null, c = it && it.card, pos = it ? items.filter(x => x.st !== "missing").indexOf(it) + 1 : 0, nCards = items.filter(x => x.st !== "missing").length;
+  const bin = L.binder && S.binders[L.binder] && !isWish(L.binder) ? L.binder : defaultBinder();
+  const stLabel = x => x.st === "added" ? `<span class="chip ok">Added ${x.qty}</span>` : x.st === "skipped" ? `<span class="chip">Skipped</span>` : x.st === "missing" ? `<span class="chip warn">Not found</span>` : `<span class="chip">To do</span>`;
+  v.innerHTML = `<div class="stack">
+    <div class="row wrap"><button class="btn sm ghost" id="lBack">← All lists</button><span class="grow"></span>${left ? `<span class="chip acc">Incoming${L.order ? " · order" : ""}</span>` : `<span class="chip ok">All done</span>`}</div>
+    <div class="row wrap" style="align-items:baseline"><h2 class="grow" style="margin:0">${esc(L.name)}</h2><span class="num small muted">${done} of ${n} added${left ? ` · ${left} to go` : ""}</span></div>
+    <div class="meter"><div style="width:${n ? (done / n * 100).toFixed(1) : 0}%"></div></div>
+    ${left ? `<span class="small muted">The ${left} card${left === 1 ? "" : "s"} still to go ${left === 1 ? "isn't" : "aren't"} in your collection until you add ${left === 1 ? "it" : "them"}.</span>` : ""}
+    ${missing.length ? `<div class="box stack" style="gap:6px"><span class="small"><b>${missing.length} line${missing.length === 1 ? "" : "s"} not found.</b> Type the right name and press Enter:</span>
+      ${missing.map(x => `<div class="row"><span class="small grow" style="min-width:0">“${esc(x.line)}”</span><input type="text" class="lFix" data-fix="${esc(x.id)}" value="${esc(x.name)}" style="width:min(220px,50%)" autocomplete="off"><button class="btn sm ghost" data-ldrop="${esc(x.id)}" aria-label="Remove line">✕</button></div>`).join("")}</div>` : ""}
+    ${c ? `<div class="box stack lstep" style="gap:8px">
+      <div class="row" style="justify-content:space-between"><span class="label">Card ${pos} of ${nCards}</span>${it.st !== "todo" ? stLabel(it) : ""}</div>
+      <div class="row" style="align-items:flex-start;gap:12px"><button class="tap" id="lImg" style="flex:none;width:min(42%,190px)" aria-label="Open ${esc(c.name)}"><img src="${esc(c.imgN || c.img)}" alt="" style="width:100%;border-radius:8px;display:block;aspect-ratio:63/88;object-fit:cover;background:var(--sunk)"></button>
+        <div class="stack" style="gap:6px;min-width:0;flex:1">
+          <div class="name" style="font-weight:700;font-size:18px">${esc(c.name)}</div>
+          <div class="small muted">${setIcon(c.set, c.rarity)} ${esc(c.setName || "")} · ${esc(c.set.toUpperCase())} #${esc(c.num)}</div>
+          ${it.guess ? `<span class="small gold">Closest match to “${esc(it.name)}”: check it's right.</span>` : ""}
+          <div class="row wrap" style="gap:6px"><span class="num">${money(priceOf(c, it.finish))}</span>${tagChips(c, it.finish)}</div>
+          ${c.finishes.length > 1 ? `<span class="seg" id="lFin">${c.finishes.map(f => `<button data-f="${esc(f)}" aria-pressed="${f === it.finish}">${f === "nonfoil" ? "Normal" : esc(f[0].toUpperCase() + f.slice(1))}</button>`).join("")}</span>` : ""}
+          <button class="btn sm" id="lPrints" style="align-self:flex-start">Other printings</button>
+          <span class="small muted">From your list: “${esc(it.line)}”</span></div></div>
+      <div id="lPrBox"></div>
+      <div class="row wrap"><span class="stepper"><button id="lDec" aria-label="Fewer">−</button><span class="num" id="lQ">${it.qty}</span><button id="lInc" aria-label="More">+</button></span>
+        <select id="lBin" class="grow" aria-label="Binder">${binderOptions(bin)}</select></div>
+      <div class="row wrap">${it.st === "added" ? `<button class="btn" id="lUndo">Take back out</button>` : `<button class="btn primary" id="lAdd">Add ${it.qty}</button><button class="btn" id="lSkip">Skip</button>`}
+        <span class="grow"></span><button class="btn ghost" id="lPrev" ${pos <= 1 ? "disabled" : ""}>← Back</button><button class="btn ghost" id="lNext" ${pos >= nCards ? "disabled" : ""}>Next →</button></div></div>`
+      : `<div class="box"><p style="margin:0">${left ? "" : n ? "Every card on this list has been dealt with. ✓" : "This list is empty."}</p></div>`}
+    ${todo.length > 1 ? `<div class="row wrap"><button class="btn" id="lAll">Add all ${left} remaining to ${esc(binderName(bin))}</button><span class="small muted grow">Uses the printing and finish shown for each.</span></div>` : ""}
+    <h2 class="sec">On this list</h2>
+    <div class="list">${items.map((x, i) => `<button class="item tap ${i === lv.idx ? "picked" : ""}" data-li="${i}" style="text-align:left;width:100%;border-left:0;border-right:0;border-bottom:0;background:none;font:inherit;color:inherit">
+      ${x.card ? `<img loading="lazy" src="${esc(x.card.img)}" alt="">` : `<img alt="">`}<div style="min-width:0"><div class="name">${x.qty}× ${esc(x.card ? x.card.name : x.name)}</div>
+      <div class="meta small">${x.card ? `<span>${esc(x.card.set.toUpperCase())} #${esc(x.card.num)}${x.finish !== "nonfoil" ? " · " + esc(x.finish) : ""}</span><span class="num">${money(priceOf(x.card, x.finish))}</span>` : `<span class="muted">“${esc(x.line)}”</span>`}</div></div>
+      <div class="right">${stLabel(x)}</div></button>`).join("")}</div>
+    <details class="box"><summary class="small">List options</summary><div class="stack" style="gap:8px;margin-top:8px">
+      <div class="row"><input type="text" id="lRen" class="grow" value="${esc(L.name)}" maxlength="60"><button class="btn sm" id="lRenGo">Rename</button></div>
+      <label class="toggle"><input type="checkbox" id="lOrd" ${L.order ? "checked" : ""}> It's an order (coming in the mail)</label>
+      <div class="row wrap"><button class="btn sm" id="lCopy">Copy as text</button><button class="btn sm danger" id="lDel">Delete list</button></div>
+      <span class="small muted">Deleting the list doesn't remove cards you already added.</span></div></details></div>`;
+  const redraw = () => { touchList(L); drawList(v, L); }, next = () => { const i = items.findIndex((x, j) => j > lv.idx && x.st === "todo"); lv.idx = i >= 0 ? i : items.findIndex(x => x.st === "todo"); };
+  $("#lBack").onclick = () => { lv.open = null; renderLists(); };
+  v.querySelectorAll("[data-li]").forEach(b => b.onclick = () => { const x = items[+b.dataset.li]; if (x.st === "missing") { const f = v.querySelector(`[data-fix="${x.id}"]`); if (f) f.focus(); return; } lv.idx = +b.dataset.li; drawList(v, L); v.querySelector(".lstep") && v.querySelector(".lstep").scrollIntoView({ block: "nearest" }); });
+  v.querySelectorAll(".lFix").forEach(inp => inp.onkeydown = async e => { if (e.key !== "Enter") return; e.preventDefault(); const x = items.find(y => y.id === inp.dataset.fix), nm = inp.value.trim(); if (!x || !nm) return;
+    inp.disabled = true; try { setListCard(x, await sf("/cards/named?fuzzy=" + encodeURIComponent(nm), null, { now: true }), false); x.name = nm; lv.idx = items.indexOf(x); redraw(); } catch (er) { inp.disabled = false; toast(er.status === 404 ? `No card found for “${nm}”` : er.message); } });
+  v.querySelectorAll("[data-ldrop]").forEach(b => b.onclick = () => { L.items = L.items.filter(x => x.id !== b.dataset.ldrop); redraw(); });
+  const lb = $("#lBin"); if (lb) lb.onchange = e => { L.binder = e.target.value; touchList(L); };
+  if (c) {
+    $("#lImg").onclick = () => openCard(c, it.finish);
+    const fs = $("#lFin"); if (fs) fs.onclick = e => { const b = e.target.closest("button"); if (b) { it.finish = b.dataset.f; redraw(); } };
+    $("#lPrints").onclick = () => showPrints(c, picked => { it.card = slim(picked); it.guess = false; if (!it.card.finishes.includes(it.finish)) it.finish = it.card.finishes[0] || "nonfoil"; redraw(); }, $("#lPrBox"));
+    $("#lInc").onclick = () => { if (it.st === "added") return; it.qty = Math.min(999, it.qty + 1); redraw(); };
+    $("#lDec").onclick = () => { if (it.st === "added") return; it.qty = Math.max(1, it.qty - 1); redraw(); };
+    const ad = $("#lAdd"); if (ad) ad.onclick = () => { const b = $("#lBin").value; addToColl(it.card, it.finish, it.qty, b, true); it.st = "added"; it.binder = b; it.at = Date.now();
+      toast(`Added ${it.qty} ${it.card.name} to ${binderName(b)}${tagWords(it.card, it.finish) ? " · " + tagWords(it.card, it.finish) : ""}`); next(); redraw(); };
+    const sk = $("#lSkip"); if (sk) sk.onclick = () => { it.st = "skipped"; next(); redraw(); };
+    const un = $("#lUndo"); if (un) un.onclick = () => { addToColl(it.card, it.finish, -it.qty, it.binder || $("#lBin").value, true); it.st = "todo"; delete it.binder; toast("Taken back out"); redraw(); };
+    $("#lPrev").onclick = () => { const vis = items.filter(x => x.st !== "missing"), k = vis.indexOf(it); if (k > 0) { lv.idx = items.indexOf(vis[k - 1]); drawList(v, L); } };
+    $("#lNext").onclick = () => { const vis = items.filter(x => x.st !== "missing"), k = vis.indexOf(it); if (k < vis.length - 1) { lv.idx = items.indexOf(vis[k + 1]); drawList(v, L); } };
+  }
+  const aa = $("#lAll"); if (aa) aa.onclick = () => { const b = $("#lBin").value, list = items.filter(x => x.st === "todo"); let q = 0;
+    for (const x of list) { addToColl(x.card, x.finish, x.qty, b, true); x.st = "added"; x.binder = b; x.at = Date.now(); q += x.qty; }
+    redraw(); toast(`Added ${q} card${q === 1 ? "" : "s"} to ${binderName(b)}`, { label: "Undo", fn: () => { for (const x of list) { addToColl(x.card, x.finish, -x.qty, b, true); x.st = "todo"; delete x.binder; } redraw(); } }); };
+  $("#lRenGo").onclick = () => { const nm = $("#lRen").value.trim(); if (nm) { L.name = nm; redraw(); toast("Renamed"); } };
+  $("#lOrd").onchange = e => { L.order = e.target.checked; redraw(); };
+  $("#lCopy").onclick = async () => { const t = items.map(x => `${x.qty} ${x.card ? x.card.name + ` (${x.card.set.toUpperCase()}) ${x.card.num}` : x.name}${x.finish === "foil" ? " *F*" : ""}`).join("\n");
+    try { await navigator.clipboard.writeText(t); toast(`Copied ${items.length} line${items.length === 1 ? "" : "s"}`); } catch (e) { toast("Couldn't copy here"); } };
+  $("#lDel").onclick = () => { const back = L; delete S.lists[L.id]; save(); lv.open = null; renderLists(); toast(`Deleted “${back.name}”`, { label: "Undo", fn: () => { S.lists[back.id] = back; save(); if (tab === "search" && sv.mode === "lists") renderLists(); } }); };
+}
+const searchModes = () => { const n = onTheWay().reduce((a, l) => a + listLeft(l), 0);
+  return `<span class="seg" id="sMode">${[["search", "Search cards"], ["staples", "Staples"], ["lists", "Lists" + (n ? ` <span class="num small">· ${n} incoming</span>` : "")]].map(([k, l]) => `<button data-m="${k}" aria-pressed="${sv.mode === k || (k === "search" && !["staples", "lists"].includes(sv.mode))}">${l}</button>`).join("")}</span>`; };
 function renderSearch() {
+  if (sv.mode === "lists") {
+    setHead("Lists", "");
+    $("#view").innerHTML = `<div class="stack">${searchModes()}<div id="sres"></div></div>`;
+    $("#sMode").onclick = e => { const b = e.target.closest("button"); if (b) { sv.mode = b.dataset.m; renderSearch(); } };
+    renderLists(); return;
+  }
   if (sv.mode === "staples") {
     setHead("Staples", "");
-    $("#view").innerHTML = `<div class="stack"><span class="seg" id="sMode"><button data-m="search" aria-pressed="false">Search cards</button><button data-m="staples" aria-pressed="true">Staples</button></span><div id="sres"></div></div>`;
+    $("#view").innerHTML = `<div class="stack">${searchModes()}<div id="sres"></div></div>`;
     $("#sMode").onclick = e => { const b = e.target.closest("button"); if (b) { sv.mode = b.dataset.m; renderSearch(); } };
     renderStaples(); return;
   }
   setHead("Search", sv.total ? sv.total.toLocaleString() + " results" : "");
   const f = sv.f, fc = filterCount(f);
   $("#view").innerHTML = `<div class="stack">
-    <span class="seg" id="sMode"><button data-m="search" aria-pressed="true">Search cards</button><button data-m="staples" aria-pressed="false">Staples</button></span>
+    ${searchModes()}
     <form id="sf" class="row"><div class="ac grow"><input type="search" id="sq" placeholder="Start typing a card name" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(sv.keepQ && sv.q === sv.keepQ ? "" : sv.q)}"><ul id="sac" hidden></ul></div><button class="btn primary">Search</button></form>
     <div class="row wrap">
       <button type="button" class="btn sm ${fc ? "on" : ""}" id="fTog" aria-expanded="${sv.open}">Filters${fc ? ` · ${fc}` : ""}</button>

@@ -92,7 +92,7 @@ const settle = () => new Promise(r => setTimeout(r, 400));
   ok(!F.SYNC.err && /Sol/.test(F.cards()) && /Ghalta/.test(F.decks()), `a synced copy with blank sections doesn't crash or wipe this device (${F.SYNC.err || "ok"}; ${F.cards()})`);
   // ---- 7. a device with older sync rules doesn't overwrite what newer rules wrote
   const gist = Object.values(GH.gists)[0], info7 = JSON.parse(gist.files["deckhand-sync.json"].content);
-  gist.files["deckhand-sync.json"] = { content: JSON.stringify(Object.assign(info7, { sv: 3 })) }; gist.etag = '"newer"';     // as a device with newer sync rules leaves it
+  gist.files["deckhand-sync.json"] = { content: JSON.stringify(Object.assign(info7, { sv: 99 })) }; gist.etag = '"newer"';     // as a device with newer sync rules leaves it
   const before7 = JSON.stringify(gist.files);
   D.addToColl(D.slim(bolt), "nonfoil", 5, "main"); D.save(); await settle(); await D.sync();
   ok(JSON.stringify(gist.files) === before7 && /newer version of Deckhand/.test(D.SYNC.err) && D.SYNC.dirty, `an out-of-date device stops and asks to update instead of uploading (${D.SYNC.err})`);
