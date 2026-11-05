@@ -80,16 +80,22 @@ def at_day(points, day):
     return v
 
 
+def window_median(points, start, end):
+    vals = sorted(v for v in (at_day(points, d) for d in range(start, end + 1)) if v is not None)
+    return vals[len(vals) // 2] if len(vals) == end - start + 1 else None
+
+
 def rising(hist, sets, today_day, days=30, per_set=60, overall=250):
-    """Cards whose TCGplayer market price went up most over `days` (normal, or foil for foil-only cards)."""
+    """Cards whose TCGplayer market price went up most over `days` (normal, or foil for foil-only cards). Jumps over 10x are taken as bad data."""
     rows = []
     for sf, v in hist.items():
         for key, foil in (("t", 0), ("tf", 1)):
             pts = v.get(key)
             if not pts or (foil and v.get("t")):
                 continue
-            now, then = at_day(pts, today_day), at_day(pts, today_day - days)
-            if now is None or then is None or now < 50 or then < 25 or now < then * 1.05:
+            # medians of a few days at each end, so one odd sale (common on thin foil markets) doesn't count as a rise
+            now, then = window_median(pts, today_day - 4, today_day), window_median(pts, today_day - days - 3, today_day - days + 3)
+            if now is None or then is None or now < 50 or then < 25 or now < then * 1.05 or now > then * 10:
                 continue
             rows.append([sf, sets.get(sf, ""), now, then, foil])
     rows.sort(key=lambda r: (-(r[2] - r[3]) / r[3], -r[2]))
