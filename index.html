@@ -56,9 +56,10 @@ header.top .hright{display:flex;align-items:center;gap:8px;min-width:0}
 main{padding:14px max(16px,env(safe-area-inset-right,0px)) calc(var(--nav-h) + env(safe-area-inset-bottom,0px) + 24px) max(16px,env(safe-area-inset-left,0px));max-width:900px;margin:0 auto}
 
 nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--surface);border-top:1px solid var(--line);
-  display:grid;grid-template-columns:repeat(5,1fr);padding:0 env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
+  display:grid;grid-template-columns:repeat(6,1fr);padding:0 env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
 nav.tabs button{background:none;border:0;height:var(--nav-h);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
   font:600 11px var(--f-display);letter-spacing:.05em;text-transform:uppercase;color:var(--muted);min-width:0}
+@media (max-width:420px){nav.tabs button{font-size:10px;letter-spacing:.02em}}
 nav.tabs button svg{width:24px;height:24px}
 nav.tabs button[aria-current="page"]{color:var(--accent)}
 
@@ -342,6 +343,7 @@ h2.sec{margin:6px 0 0;font:700 18px var(--f-display)}
   <button data-tab="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></svg>Search</button>
   <button data-tab="decks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="9" height="13" rx="1.5" transform="rotate(-8 7 12)"/><rect x="11" y="5" width="9" height="13" rx="1.5" transform="rotate(8 15 11)"/></svg>Decks</button>
   <button data-tab="trade"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg>Trade</button>
+  <button data-tab="market"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 17l5-5 4 4 8-8"/><path d="M15 8h5v5"/></svg>Market</button>
 </nav>
 
 <div id="sheetRoot"></div>
@@ -378,7 +380,7 @@ const KEY = "deckhand.v1";
 let S = {};
 try { const t = localStorage.getItem(KEY); if (t) S = JSON.parse(t); } catch (e) {}
 function migrate() {
-  S.coll = S.coll || {}; S.decks = S.decks || {}; S.meta = S.meta || {}; if (!S.lists || typeof S.lists !== "object") S.lists = {};
+  S.coll = S.coll || {}; S.decks = S.decks || {}; S.meta = S.meta || {}; if (!S.lists || typeof S.lists !== "object") S.lists = {}; if (!S.spec || typeof S.spec !== "object") S.spec = {};
   if (!S.binders) S.binders = {
     main: { id: "main", name: "Collection" }, trade: { id: "trade", name: "Trade binder" }, wish: { id: "wish", name: "Wishlist", wish: true } };
   S.settings = S.settings || {}; S.alerts = S.alerts || {}; for (const k in S.alerts) if (!S.alerts[k] || typeof S.alerts[k] !== "object") delete S.alerts[k]; else normAlert(S.alerts[k]); S.ph = S.ph || {}; S.hist = S.hist || []; S.trade = S.trade || { give: [], get: [] }; if (!Array.isArray(S.trade.sell)) S.trade.sell = [];
@@ -1041,6 +1043,7 @@ async function refreshPrices(quiet) {
     Object.values(S.decks).forEach(d => Object.values(d.cards).forEach(c => ids.add(c.id)));
     Object.keys(S.alerts).forEach(k => ids.add(k.split("|")[0]));
     S.trade.get.forEach(x => ids.add(x.card.id));
+    Object.values(S.spec || {}).forEach(x => x.card && ids.add(x.card.id));
     if (!ids.size) return;
     const { found } = await cardsByIdentifiers([...ids].map(id => ({ id })), (d, n) => { refreshMsg = `Updating ${d}/${n}…`; updRefreshBtn(); });
     const map = {}; for (const c of found) map[c.id] = slim(c);
@@ -1051,6 +1054,7 @@ async function refreshPrices(quiet) {
     for (const d of Object.values(S.decks)) { if (!Object.keys(d.cards).length) continue; const v = Math.round(deckStats(d).value * 100) / 100, day = today();
       const h = d.vh = Array.isArray(d.vh) ? d.vh : [], last = h[h.length - 1]; if (last && last[0] === day) last[1] = v; else h.push([day, v]); if (h.length > 365) h.splice(0, h.length - 365); }
     for (const x of S.trade.get) if (map[x.card.id]) x.card = map[x.card.id];
+    for (const x of Object.values(S.spec || {})) { const c = map[x.card.id]; if (!c) continue; x.card = c; specRecord(x); }
     refreshMsg = "Filling in missing prices…"; updRefreshBtn();
     await priceFallback();
     const live = new Set();
@@ -1157,6 +1161,7 @@ function render_() {
   else if (tab === "scan") renderScan();
   else if (tab === "search") renderSearch();
   else if (tab === "trade") renderTrade();
+  else if (tab === "market") renderMarket();
   else if (tab === "decks") deckOpen && S.decks[deckOpen] ? renderDeck(S.decks[deckOpen]) : renderDecks();
 }
 
@@ -1754,10 +1759,10 @@ function binderSheet() {
    every 30 s while open, and a few seconds after a change. Changes from two devices are combined card by
    card (counts are added up as changes, not overwritten), so cards added on the tablet and cards removed on
    the phone both survive. Settings such as scan options stay per device. The token stays on this device. */
-const SYNC_KEYS = ["coll", "decks", "binders", "alerts", "ph", "hist", "trade", "marks", "settings", "roles", "lists"];
+const SYNC_KEYS = ["coll", "decks", "binders", "alerts", "ph", "hist", "trade", "marks", "settings", "roles", "lists", "spec"];
 const SYNC_DESC = "Deckhand sync (managed by the Deckhand app)";
 // the version of the sync rules; raised whenever how devices combine their data changes
-var SYNC_V = 3;          // 3: card lists (Search → Lists) sync too
+var SYNC_V = 4;          // 3: card lists (Search → Lists) sync too; 4: the Market watchlist
 var SYNC = { cfg: undefined, busy: false, t: null, etag: null, base: undefined, dirty: true, err: "", at: 0, from: "", files: [], undo: null, poll: null, ask: null };
 // sync is set up: GitHub (a private gist) or Google (a file in the user's Drive)
 const isGoogleSync = (cfg = syncCfg()) => !!(cfg && cfg.kind === "google");
@@ -1970,7 +1975,7 @@ function mergeSync(B, L, R) {
   }
   out.coll = coll;
   const stamp = x => (x && (x.updated || x.at)) || 0;
-  for (const key of ["decks", "binders", "alerts", "marks", "settings", "roles", "lists"]) {
+  for (const key of ["decks", "binders", "alerts", "marks", "settings", "roles", "lists", "spec"]) {
     const b = B[key] || {}, l = L[key] || {}, r = R[key] || {}, o = {};
     for (const k of new Set([...Object.keys(r), ...Object.keys(l), ...Object.keys(b)])) {
       const bs = J_(b[k]), ls = J_(l[k]), rs = J_(r[k]); let v;
@@ -3165,7 +3170,7 @@ function openCard(card, finish, binder, ctx) {
         <div class="row wrap" style="gap:6px"><span class="stepper"><button id="cDeckDec" aria-label="One less">−</button><span class="num">${dc.qty}</span><button id="cDeckInc" aria-label="One more">+</button></span>
           ${s.id !== dc.id ? `<button class="btn sm primary" id="cDeckAddPr">Add ${esc(s.set.toUpperCase())} #${esc(s.num)} to this deck</button>` : ""}<button class="btn sm" id="cDeckPrint">Change printing in this deck</button>${ctx.deck.format !== "commander" ? `<button class="btn sm" id="cDeckSide">${dc.side ? "Move to main deck" : "Move to sideboard"}</button>` : ""}<button class="btn sm danger" id="cDeckDel">Remove from deck</button></div>
         <div id="cDeckPrintBox"></div></div>`; })() : ctx && ctx.deck ? `<div class="box" style="margin-top:10px"><span class="small muted">Removed from ${esc(ctx.deck.name)}.</span> <button class="linkbtn" id="cDeckBack">Put it back</button></div>` : ""}
-      <div class="row wrap" style="margin-top:10px"><button class="btn sm" id="cTrade">Add to trade</button><button class="btn sm" id="cPrints">Other printings</button>
+      <div class="row wrap" style="margin-top:10px"><button class="btn sm" id="cTrade">Add to trade</button><button class="btn sm" id="cWatch">Watch price</button><button class="btn sm" id="cPrints">Other printings</button>
         ${/^https:\/\/scryfall\.com\//.test(s.uri || "") ? `<a class="btn sm ghost" href="${esc(s.uri)}" target="_blank" rel="noopener">Open on Scryfall</a>` : ""}</div>
       <div id="printBox"></div>`;
     const fc = $("#faces"); if (fc) fc.querySelectorAll("img").forEach((im, i) => im.onclick = () => { fc.dataset.solo = fc.dataset.solo === String(i) ? "" : String(i); });
@@ -3218,6 +3223,7 @@ function openCard(card, finish, binder, ctx) {
       const add = side => { const d = S.decks[$("#dSel").value]; addToDeck(d, s, 1, side); toast(`Added to ${d.name}${side ? " sideboard" : ""}`); };
       $("#dMain").onclick = () => add(false); $("#dSide").onclick = () => add(true);
     }
+    $("#cWatch").onclick = () => { sheetOnClose = null; closeSheet(); specForm(s, fin); };
     $("#cTrade").onclick = () => {
       const own = Object.entries(S.coll).find(([, e]) => e.id === s.id && e.finish === fin && !isWish(e.binder));
       if (own) tradeAddGive(own[0]); else tradeAddGet(s, fin);
@@ -5616,6 +5622,148 @@ function compareSheet(aId, bId) {
   if (!BRK.lists && Object.values(S.decks).some(d => d.format === "commander")) later.push(bracketLists().catch(() => {}));
   if (!CMB.data) later.push(comboData().catch(() => {}));
   if (later.length) Promise.all(later).then(() => { if ($("#cmpBody")) draw(); });
+}
+/* ================= MARKET: speculation watchlist =================
+   Cards you're watching, each with a prediction: why, the price you'd buy at and sell at, which way you expect it
+   to go and over how long. The prediction (direction, targets, time frame, starting price and date) is locked once
+   saved: only notes (each dated) and the status (active, completed, abandoned) can change. Results come only from
+   real recorded prices: the daily price history (TCGplayer market, the same source as the starting price) and the
+   prices this device records when they update. Nothing is filled in where no price was recorded. */
+const SPEC_H = [[7, "1 week"], [30, "1 month"], [91, "3 months"], [182, "6 months"], [365, "1 year"]];
+const SPEC_DIR = { up: "Up", down: "Down", flat: "Flat" };
+const SPEC_BAND = 0.05;           // "up" = ended at least 5% higher; "down" = 5% lower; "flat" = within 5%
+const specPrice = x => priceOf(x.card, x.finish);
+function specRecord(x) {        // one recorded price per day, from the price update
+  const p = specPrice(x); if (p == null) return;
+  const a = x.track = Array.isArray(x.track) ? x.track : [], d = today(), last = a[a.length - 1];
+  if (last && last[0] === d) last[1] = p; else a.push([d, p]);
+  if (a.length > 800) a.splice(0, a.length - 800);
+}
+// every real price we have for it after it was added: the device's own records plus the daily history file
+function specSeries(x, H) {
+  const m = new Map(); for (const [d, p] of x.track || []) m.set(d, p);
+  const pts = H && H.row && H.row[x.finish === "nonfoil" ? "t" : "tf"];
+  if (pts) { const from = Math.floor(x.created / 864e5); let cur = null, i = 0;
+    for (let d = from; d <= H.end; d++) { while (i < pts.length && pts[i][0] + PH_EPOCH <= d) { cur = pts[i][1] / 100; i++; } if (cur != null && !m.has(d)) m.set(d, cur); } }
+  return [...m.entries()].filter(([d]) => d >= Math.floor(x.created / 864e5)).sort((a, b) => a[0] - b[0]);
+}
+function specResult(x, H) {
+  const ser = specSeries(x, H), start = x.pred.start, d0 = Math.floor(x.pred.at / 864e5), due = d0 + x.pred.days, now = specPrice(x);
+  const after = ser.filter(([d]) => d > d0), hitEntry = x.pred.entry != null ? (ser.find(([, p]) => p <= x.pred.entry) || null) : null, hitExit = x.pred.exit != null ? (ser.find(([, p]) => p >= x.pred.exit) || null) : null;
+  const hi = ser.length ? Math.max(...ser.map(s => s[1])) : null, lo = ser.length ? Math.min(...ser.map(s => s[1])) : null;
+  const r = { start, now, d0, due, left: due - today(), hitEntry, hitExit, hi, lo, n: ser.length, change: now != null && start ? (now - start) / start : null, verdict: null, end: null };
+  if (today() >= due && start) {
+    const at = ser.filter(([d]) => d <= due).pop(), close = at && due - at[0] <= 3 ? at : ser.find(([d]) => d >= due && d - due <= 3);     // the price on the due day, or within 3 days of it
+    if (close) { r.end = { day: close[0], p: close[1] }; const ch = (close[1] - start) / start; r.endChange = ch;
+      r.verdict = x.pred.dir === "up" ? ch >= SPEC_BAND : x.pred.dir === "down" ? ch <= -SPEC_BAND : Math.abs(ch) < SPEC_BAND; }
+    else r.noData = true;
+  }
+  return r;
+}
+const MKT = { filter: "active", hist: {} };
+function specRecordSummary(list) {
+  const done = list.filter(x => x.status !== "abandoned").map(x => ({ x, r: specResult(x, MKT.hist[x.card.id]) })).filter(o => o.r.verdict != null);
+  return { n: done.length, right: done.filter(o => o.r.verdict).length, exit: done.filter(o => o.x.pred.exit != null && o.r.hitExit).length, withExit: done.filter(o => o.x.pred.exit != null).length };
+}
+function renderMarket() {
+  setHead("Market", "");
+  const all = Object.values(S.spec || {}).sort((a, b) => b.created - a.created), counts = { active: 0, completed: 0, abandoned: 0 };
+  for (const x of all) counts[x.status] = (counts[x.status] || 0) + 1;
+  const list = MKT.filter === "all" ? all : all.filter(x => x.status === MKT.filter), rec = specRecordSummary(all);
+  // load each watched card's daily price history (small files, cached), then redraw once
+  const need = [...new Set(all.map(x => x.card.id))].filter(id => !(id in MKT.hist));
+  if (need.length) Promise.all(need.map(id => priceHistory(id).then(h => { MKT.hist[id] = h; }, () => { MKT.hist[id] = null; }))).then(() => whenNotTyping(() => { if (tab === "market") renderMarket(); }));
+  const row = x => { const r = specResult(x, MKT.hist[x.card.id]), ch = r.change, c = x.card;
+    const verdict = r.verdict != null ? `<span class="chip ${r.verdict ? "ok" : "warn"}">${r.verdict ? "Called it" : "Missed"} · ${r.endChange >= 0 ? "+" : "−"}${Math.abs(r.endChange * 100).toFixed(0)}%</span>`
+      : r.noData ? `<span class="chip">No price recorded at the end</span>` : r.left > 0 ? `<span class="small muted">${r.left} day${r.left === 1 ? "" : "s"} to go</span>` : "";
+    return `<button class="item tap" data-spec="${esc(x.id)}" style="text-align:left;width:100%;border-left:0;border-right:0;border-bottom:0;background:none;font:inherit;color:inherit">
+      <img loading="lazy" src="${esc(c.img)}" alt=""><div style="min-width:0"><div class="name">${esc(c.name)} <span class="chip ${x.pred.dir === "up" ? "ok" : x.pred.dir === "down" ? "warn" : ""}">${x.pred.dir === "up" ? "▲" : x.pred.dir === "down" ? "▼" : "▶"} ${SPEC_DIR[x.pred.dir]}</span></div>
+      <div class="meta small num"><span>${esc(c.set.toUpperCase())}${x.finish !== "nonfoil" ? " · " + esc(x.finish) : ""}</span><span>${money(r.start)} → ${money(r.now)}</span>${ch != null ? `<span class="${ch > 0 ? "up" : ch < 0 ? "down" : ""}">${ch >= 0 ? "+" : "−"}${Math.abs(ch * 100).toFixed(1)}%</span>` : ""}
+        ${x.pred.entry != null ? `<span>Buy ${money(x.pred.entry)}${r.hitEntry ? " ✓" : ""}</span>` : ""}${x.pred.exit != null ? `<span>Sell ${money(x.pred.exit)}${r.hitExit ? " ✓" : ""}</span>` : ""}${verdict}</div></div>
+      <div class="right">${x.status !== "active" ? `<span class="chip">${x.status === "completed" ? "Completed" : "Abandoned"}</span>` : ""}</div></button>`; };
+  $("#view").innerHTML = `<div class="stack">
+    <h2 class="sec" style="margin:0">Watchlist</h2>
+    <div class="box stack" style="gap:6px"><div class="kv"><span class="label">Your calls</span><span class="small num">${counts.active || 0} active</span></div>
+      ${rec.n ? `<span class="num"><b>${rec.right} of ${rec.n}</b> called the direction right${rec.withExit ? ` · sell target reached ${rec.exit} of ${rec.withExit}` : ""}</span>` : `<span class="small muted">Your record shows here once a prediction's time is up. Only real prices count: nothing is estimated.</span>`}
+      <div class="ac"><input type="search" id="mkAdd" placeholder="Watch a card: type its name" autocomplete="off" autocapitalize="off" spellcheck="false"><ul id="mkAc" hidden></ul></div></div>
+    <div class="chips" id="mkF">${[["active", "Active"], ["completed", "Completed"], ["abandoned", "Abandoned"], ["all", "All"]].map(([k, l]) => `<button data-f="${k}" aria-pressed="${MKT.filter === k}">${l}${k !== "all" && counts[k] ? ` <span class="num">${counts[k]}</span>` : ""}</button>`).join("")}</div>
+    ${list.length ? `<div class="list">${list.map(row).join("")}</div>` : `<div class="empty"><h2>${all.length ? "Nothing here" : "No cards watched yet"}</h2><p>${all.length ? "Try another filter." : "Watch a card from its screen (Watch price) or type a name above. Say why, the price you'd buy and sell at, and which way you think it'll go."}</p></div>`}
+    <p class="small muted">Prices: TCGplayer market, the same source as the price history. A call counts as right when the price ended at least 5% higher (Up), 5% lower (Down) or within 5% (Flat) at the end of its time frame.</p></div>`;
+  $("#mkF").onclick = e => { const b = e.target.closest("button"); if (b) { MKT.filter = b.dataset.f; renderMarket(); } };
+  $("#view").querySelectorAll("[data-spec]").forEach(b => b.onclick = () => specSheet(S.spec[b.dataset.spec]));
+  attachAutocomplete($("#mkAdd"), $("#mkAc"), async name => { $("#mkAdd").value = "";
+    try { specForm(slim(await sf("/cards/named?exact=" + encodeURIComponent(name), null, { now: true })), "nonfoil"); } catch (e) { toast(`Couldn't find ${name}: ${e.message}`); } }, { enterPicks: true });
+}
+function specForm(card, fin) {
+  const c = isSlim(card) ? card : slim(card); let finish = c.finishes.includes(fin) ? fin : c.finishes[0] || "nonfoil";
+  openSheet(`<div id="spBody"></div>`, () => render());
+  const draw = () => {
+    const now = priceOf(c, finish);
+    $("#spBody").innerHTML = `<h2>Watch ${esc(c.name)}</h2><div class="small muted">${esc(c.setName || "")} · ${esc(c.set.toUpperCase())} #${esc(c.num)}</div>
+      <div class="stack" style="gap:10px;margin-top:10px">
+        ${c.finishes.length > 1 ? `<span class="seg" id="spFin">${c.finishes.map(f => `<button data-f="${esc(f)}" aria-pressed="${f === finish}">${f === "nonfoil" ? "Normal" : esc(f[0].toUpperCase() + f.slice(1))}</button>`).join("")}</span>` : ""}
+        <div class="kv"><span>Price now (TCGplayer market)</span><b class="num">${money(now)}</b></div>
+        ${now == null ? `<p class="small down" style="margin:0">This printing has no price right now, so there's nothing to measure a prediction from. Try another printing or finish.</p>` : ""}
+        <label class="small stack" style="gap:4px">Why are you watching it?<textarea id="spWhy" rows="2" maxlength="400" placeholder="e.g. reprint pressure is over, new commander makes it a staple"></textarea></label>
+        <div class="row wrap" style="gap:8px"><label class="small row" style="gap:6px">Buy at $<input type="number" id="spIn" min="0" step="0.01" inputmode="decimal" style="width:90px" placeholder="—"></label>
+          <label class="small row" style="gap:6px">Sell at $<input type="number" id="spOut" min="0" step="0.01" inputmode="decimal" style="width:90px" placeholder="—"></label></div>
+        <div class="stack" style="gap:4px"><span class="small">Which way will it go?</span><span class="seg" id="spDir">${Object.entries(SPEC_DIR).map(([k, l]) => `<button data-d="${k}" aria-pressed="false">${k === "up" ? "▲" : k === "down" ? "▼" : "▶"} ${l}</button>`).join("")}</span></div>
+        <div class="stack" style="gap:4px"><span class="small">Over how long?</span><span class="seg" id="spH" style="flex-wrap:wrap">${SPEC_H.map(([d, l]) => `<button data-h="${d}" aria-pressed="false">${l}</button>`).join("")}</span></div>
+        <label class="small stack" style="gap:4px">Notes (optional)<textarea id="spNote" rows="2" maxlength="1000"></textarea></label>
+        <p class="small muted" style="margin:0">Once saved, the prediction (direction, time frame, buy and sell prices, today's price and date) is locked, so it can't be changed later to look right. Notes and the status can still be updated.</p>
+        <button class="btn primary" id="spSave" ${now == null ? "disabled" : ""}>Save prediction</button><div class="small down" id="spErr"></div></div>`;
+    const fs = $("#spFin"); if (fs) fs.onclick = e => { const b = e.target.closest("button"); if (b) { const keep = { why: $("#spWhy").value, i: $("#spIn").value, o: $("#spOut").value, n: $("#spNote").value }; finish = b.dataset.f; draw(); $("#spWhy").value = keep.why; $("#spIn").value = keep.i; $("#spOut").value = keep.o; $("#spNote").value = keep.n; } };
+    const pick = (id, attr) => $(id).onclick = e => { const b = e.target.closest("button"); if (!b) return; $(id).querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); };
+    pick("#spDir"); pick("#spH");
+    $("#spSave").onclick = () => {
+      const dir = ($("#spDir [aria-pressed=true]") || {}).dataset, h = ($("#spH [aria-pressed=true]") || {}).dataset, num = v => { const x = parseFloat(v); return v === "" ? null : isFinite(x) && x >= 0 ? Math.round(x * 100) / 100 : NaN; };
+      const entry = num($("#spIn").value), exit = num($("#spOut").value), why = $("#spWhy").value.trim(), err = $("#spErr");
+      if (!dir || !dir.d) return err.textContent = "Pick which way you think the price will go.";
+      if (!h || !h.h) return err.textContent = "Pick a time frame.";
+      if (Number.isNaN(entry) || Number.isNaN(exit)) return err.textContent = "Prices must be numbers, like 4.50.";
+      if (!why) return err.textContent = "Say why you're watching it: it's what makes the call worth looking back on.";
+      const at = Date.now(), id = uid(), start = priceOf(c, finish);
+      S.spec[id] = { id, card: c, finish, created: at, updated: at, status: "active", reason: why, notes: $("#spNote").value.trim() ? [{ at, text: $("#spNote").value.trim() }] : [],
+        pred: Object.freeze({ dir: dir.d, days: +h.h, entry, exit, start, at }), track: [[today(), start]] };
+      save(); sheetOnClose = null; closeSheet(); MKT.filter = "active"; go("market"); toast(`Watching ${c.name}: ${SPEC_DIR[dir.d].toLowerCase()} over ${SPEC_H.find(x => x[0] === +h.h)[1]}`);
+    };
+  };
+  draw();
+}
+function specSheet(x) {
+  if (!x) return;
+  openSheet(`<div id="spD"></div>`, () => render());
+  const draw = () => {
+    const el = $("#spD"); if (!el) return;
+    const r = specResult(x, MKT.hist[x.card.id]), P = x.pred, c = x.card, dd = d => new Date(d * 864e5 + 12 * 36e5).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    const ser = specSeries(x, MKT.hist[x.card.id]);
+    el.innerHTML = `<div class="row" style="gap:12px;align-items:flex-start"><img src="${esc(c.imgN || c.img)}" alt="" style="width:110px;border-radius:8px;flex:none;background:var(--sunk);aspect-ratio:63/88;object-fit:cover">
+      <div class="stack" style="gap:4px;min-width:0"><h2 style="margin:0">${esc(c.name)}</h2><span class="small muted">${esc(c.set.toUpperCase())} #${esc(c.num)}${x.finish !== "nonfoil" ? " · " + esc(x.finish) : ""}</span>
+        <span class="num">Now <b>${money(r.now)}</b> ${r.change != null ? `<span class="${r.change > 0 ? "up" : r.change < 0 ? "down" : ""}">${r.change >= 0 ? "+" : "−"}${Math.abs(r.change * 100).toFixed(1)}%</span>` : ""}</span>
+        ${r.n > 1 ? `<span class="small muted num">Since added: high ${money(r.hi)} · low ${money(r.lo)}</span>` : ""}</div></div>
+      ${ser.length >= 2 ? `<div style="margin-top:8px">${spark(ser.map(s => s[1]))}</div>` : ""}
+      <div class="box stack" style="gap:4px;margin-top:10px"><div class="kv"><span class="label">Prediction</span><span class="small muted">🔒 Locked ${esc(dd(r.d0))}</span></div>
+        <span><b>${SPEC_DIR[P.dir]}</b> over ${esc(SPEC_H.find(h => h[0] === P.days)[1])} (until ${esc(dd(r.due))}) from <b class="num">${money(P.start)}</b></span>
+        <span class="small num">${P.entry != null ? `Buy at ${money(P.entry)}: ${r.hitEntry ? `reached ${esc(dd(r.hitEntry[0]))} (${money(r.hitEntry[1])})` : "not reached yet"}` : "No buy price set"}</span>
+        <span class="small num">${P.exit != null ? `Sell at ${money(P.exit)}: ${r.hitExit ? `reached ${esc(dd(r.hitExit[0]))} (${money(r.hitExit[1])})` : "not reached yet"}` : "No sell price set"}</span>
+        <span class="small"><b>Why:</b> ${esc(x.reason)}</span></div>
+      <div class="box stack" style="gap:4px;margin-top:10px"><span class="label">Result</span>
+        ${r.verdict != null ? `<span><b class="${r.verdict ? "up" : "down"}">${r.verdict ? "Called it." : "Missed."}</b> On ${esc(dd(r.end.day))} it was ${money(r.end.p)}: ${r.endChange >= 0 ? "+" : "−"}${Math.abs(r.endChange * 100).toFixed(1)}% from the start.</span>`
+          : r.noData ? `<span class="small">The time frame ended ${esc(dd(r.due))}, but no price was recorded within 3 days of it, so there's no honest result.</span>`
+          : `<span class="small">Still within the time frame: ${r.left} day${r.left === 1 ? "" : "s"} left. ${r.n} price${r.n === 1 ? "" : "s"} recorded so far.</span>`}
+        <span class="small muted">Right means at least 5% higher (Up), 5% lower (Down) or within 5% (Flat) at the end. Prices: TCGplayer market, from the daily price history and this device's updates.</span></div>
+      <div class="box stack" style="gap:6px;margin-top:10px"><span class="label">Notes</span>
+        ${(x.notes || []).map(n => `<div class="small"><span class="muted">${esc(new Date(n.at).toLocaleDateString())}:</span> ${esc(n.text)}</div>`).join("") || `<span class="small muted">No notes yet.</span>`}
+        <div class="row"><input type="text" id="spN" class="grow" maxlength="1000" placeholder="Add a note"><button class="btn sm" id="spNGo">Add</button></div></div>
+      <div class="box stack" style="gap:6px;margin-top:10px"><span class="label">Status</span>
+        <span class="seg" id="spSt">${[["active", "Active"], ["completed", "Completed"], ["abandoned", "Abandoned"]].map(([k, l]) => `<button data-s="${k}" aria-pressed="${x.status === k}">${l}</button>`).join("")}</span>
+        <span class="small muted">${x.statusAt ? `Set ${esc(new Date(x.statusAt).toLocaleDateString())}. ` : ""}Abandoned calls don't count toward your record.</span></div>
+      <div class="row" style="margin-top:10px"><button class="btn sm danger" id="spDel">Delete</button><span class="small muted grow">Deleting removes it and its result.</span></div>`;
+    $("#spNGo").onclick = () => { const t = $("#spN").value.trim(); if (!t) return; x.notes = [...(x.notes || []), { at: Date.now(), text: t }]; x.updated = Date.now(); save(); draw(); };
+    $("#spSt").onclick = e => { const b = e.target.closest("button"); if (!b || b.dataset.s === x.status) return; x.status = b.dataset.s; x.statusAt = x.updated = Date.now(); save(); draw(); };
+    $("#spDel").onclick = () => { const back = x; delete S.spec[x.id]; save(); closeSheet(); toast(`Stopped watching ${c.name}`, { label: "Undo", fn: () => { S.spec[back.id] = back; save(); render(); } }); };
+  };
+  draw();
 }
 function deckText(d) {
   const line = c => `${c.qty} ${c.name} (${c.set.toUpperCase()}) ${c.num}`;
