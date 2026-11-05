@@ -473,7 +473,8 @@ function sf(path, body, opts = {}) {
     // timers can fire late on a busy device: also keep the real gap since the last request actually sent
     const slow = SF_SLOW.test(sfPathOf(path));
     // (measured with the steady page timer, which can't stand still or jump back like the clock can)
-    for (let g; (g = Math.max(sfSent + 110, slow ? sfSentSlow + 520 : 0) - performance.now()) > 0;) await sleep(g);
+    // at most a few waits: if that timer ever stood still (some devices pause it), the time has still really passed
+    for (let g, n = 0; n < 3 && (g = Math.max(sfSent + 110, slow ? sfSentSlow + 520 : 0) - performance.now()) > 0; n++) await sleep(Math.min(g, 600));
     sfSent = performance.now(); if (slow) sfSentSlow = sfSent;
     let r;
     try {
