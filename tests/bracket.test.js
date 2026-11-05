@@ -43,7 +43,7 @@ async function run(opts, shot) {
 (async () => {
   for (const [label, opts, shot] of [["desktop", { viewport: { width: 1280, height: 900 } }, null], ["phone", devices["Pixel 7"], "bracket_phone.png"]]) {
     const R = await run(opts, shot);
-    ok(/2 \(Core\) or lower/.test(R.b2) && /two-card combos/.test(R.b2) && R.queries === 3, `${label}: nothing notable → 2 or lower, combos named as not checked (${R.queries} lookups)`);
+    ok(/2 \(Core\) or lower/.test(R.b2) && /two-card combos/i.test(R.b2) && R.queries === 3, `${label}: nothing notable → 2 or lower, combos named as not checked (${R.queries} lookups)`);
     ok(/3 \(Upgraded\)/.test(R.b3) && /Game Changers \(2\): Rhystic Study, Farewell/.test(R.b3) && /Extra turns \(1\): Time Warp/.test(R.b3), `${label}: 2 Game Changers → 3, cards listed (${R.b3.slice(0, 160)})`);
     ok(/4 \(Optimized\) or higher/.test(R.b4) && /5 Game Changers \(bracket 3 allows up to 3\)/.test(R.b4), `${label}: 5 Game Changers → 4`);
     ok(/4 \(Optimized\)/.test(R.mld) && /mass land denial/.test(R.mld), `${label}: mass land denial → 4`);
