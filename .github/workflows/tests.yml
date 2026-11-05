@@ -16,5 +16,6 @@ jobs:
         with:
           node-version: 22
       - run: npm install
+      - run: pip install ijson          # for the price history job's test
       - run: npx playwright install --with-deps chromium
       - run: node run.js
