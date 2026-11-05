@@ -35,9 +35,9 @@ jobs:
           pip install -q ijson
           mkdir -p "$RUNNER_TEMP/mtgjson" && cd "$RUNNER_TEMP/mtgjson"
           if curl -sfo prices.json.xz https://mtgjson.com/api/v5/AllPrices.json.xz && xz -d prices.json.xz \
-            && curl -sfo csv.tar.xz https://mtgjson.com/api/v5/AllPrintingsCSVFiles.tar.xz && tar -xJf csv.tar.xz && find . -name cardIdentifiers.csv -exec cp {} ids.csv \; && test -s ids.csv; then
+            && curl -sfo csv.tar.xz https://mtgjson.com/api/v5/AllPrintingsCSVFiles.tar.xz && tar -xJf csv.tar.xz && find . -name cardIdentifiers.csv -exec cp {} ids.csv \; && find . -name cards.csv -exec cp {} cards.csv \; && test -s ids.csv; then
             cp -r "$RUNNER_TEMP/out/history" history-yesterday 2>/dev/null || true
-            python3 "$GITHUB_WORKSPACE/tools/price-history.py" "$RUNNER_TEMP/out" prices.json ids.csv || { echo "::warning::Price history failed; keeping yesterday's copy"; rm -rf "$RUNNER_TEMP/out/history"; cp -r history-yesterday "$RUNNER_TEMP/out/history" 2>/dev/null || true; }
+            python3 "$GITHUB_WORKSPACE/tools/price-history.py" "$RUNNER_TEMP/out" prices.json ids.csv cards.csv || { echo "::warning::Price history failed; keeping yesterday's copy"; rm -rf "$RUNNER_TEMP/out/history"; cp -r history-yesterday "$RUNNER_TEMP/out/history" 2>/dev/null || true; }
           else
             echo "::warning::MTGJSON download failed; keeping yesterday's price history"
           fi

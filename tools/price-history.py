@@ -13,7 +13,11 @@ Output: out/history/meta.json and out/history/<3 hex>.json, keyed by Scryfall id
   t/tf = TCGplayer market normal/foil, kb/kbf = Card Kingdom buylist normal/foil, m/mf = Mana Pool lowest listing.
   day = days since 2020-01-01 (UTC).
 
-Usage: python3 price-history.py OUT_DIR ALLPRICES_JSON CARD_IDENTIFIERS_CSV
+Also writes the biggest risers over the last 30 days (TCGplayer market), for the Staples "Rising" ranking:
+  out/history/rising/all.json and out/history/rising/<set code>.json: [[id, set, now cents, 30 days ago cents, foil 0/1], ...]
+  Set codes come from MTGJSON's cards.csv (optional 4th argument).
+
+Usage: python3 price-history.py OUT_DIR ALLPRICES_JSON CARD_IDENTIFIERS_CSV [CARDS_CSV]
 """
 import csv, datetime, json, os, sys
 
@@ -67,7 +71,36 @@ def load_old(out):
     return hist
 
 
-def main(out, prices_path, ids_path, today=None):
+def at_day(points, day):
+    v = None
+    for d, c in points:
+        if d > day:
+            break
+        v = c
+    return v
+
+
+def rising(hist, sets, today_day, days=30, per_set=60, overall=250):
+    """Cards whose TCGplayer market price went up most over `days` (normal, or foil for foil-only cards)."""
+    rows = []
+    for sf, v in hist.items():
+        for key, foil in (("t", 0), ("tf", 1)):
+            pts = v.get(key)
+            if not pts or (foil and v.get("t")):
+                continue
+            now, then = at_day(pts, today_day), at_day(pts, today_day - days)
+            if now is None or then is None or now < 50 or then < 25 or now < then * 1.05:
+                continue
+            rows.append([sf, sets.get(sf, ""), now, then, foil])
+    rows.sort(key=lambda r: (-(r[2] - r[3]) / r[3], -r[2]))
+    by_set = {}
+    for r in rows:
+        if r[1] and len(by_set.setdefault(r[1], [])) < per_set:
+            by_set[r[1]].append(r)
+    return rows[:overall], by_set
+
+
+def main(out, prices_path, ids_path, today=None, cards_path=None):
     import ijson
     today_day = (today or (datetime.datetime.utcnow().date() - EPOCH).days)
     uuid2sf = {}
@@ -116,8 +149,10 @@ def main(out, prices_path, ids_path, today=None):
             hist.pop(sf, None)
     d = os.path.join(out, "history")
     os.makedirs(d, exist_ok=True)
+    import shutil
     for f in os.listdir(d):
-        os.remove(os.path.join(d, f))
+        q = os.path.join(d, f)
+        shutil.rmtree(q) if os.path.isdir(q) else os.remove(q)
     shards = {}
     for sf, v in hist.items():
         shards.setdefault(sf[:3], {})[sf] = v
@@ -127,6 +162,24 @@ def main(out, prices_path, ids_path, today=None):
         total += len(s)
         with open(os.path.join(d, k + ".json"), "w") as fh:
             fh.write(s)
+    sets = {}
+    if cards_path and os.path.exists(cards_path):
+        csv.field_size_limit(10 ** 8)
+        with open(cards_path, newline="") as fh:
+            for row in csv.DictReader(fh):
+                sf = uuid2sf.get(row.get("uuid"))
+                if sf and row.get("setCode"):
+                    sets[sf] = row["setCode"].lower()
+    top, by_set = rising(hist, sets, today_day)
+    rd = os.path.join(d, "rising")
+    os.makedirs(rd, exist_ok=True)
+    with open(os.path.join(rd, "all.json"), "w") as fh:
+        json.dump(top, fh, separators=(",", ":"))
+    for code, rows in by_set.items():
+        if code.replace("_", "").isalnum():
+            with open(os.path.join(rd, code + ".json"), "w") as fh:
+                json.dump(rows, fh, separators=(",", ":"))
+    print(f"rising: {len(top)} overall, {len(by_set)} sets")
     first = min((p[0][0] for v in hist.values() for p in v.values()), default=today_day)
     with open(os.path.join(d, "meta.json"), "w") as fh:
         json.dump({"as_of": (EPOCH + datetime.timedelta(days=today_day)).isoformat(), "cards": len(hist), "from": (EPOCH + datetime.timedelta(days=first)).isoformat(),
@@ -136,4 +189,4 @@ def main(out, prices_path, ids_path, today=None):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2], sys.argv[3])
+    main(sys.argv[1], sys.argv[2], sys.argv[3], cards_path=sys.argv[4] if len(sys.argv) > 4 else None)
