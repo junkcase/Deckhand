@@ -135,6 +135,7 @@ button.chip.deck{cursor:pointer}
 .price{font-weight:600}
 .item .scanned{color:var(--accent);white-space:nowrap}
 .group-h{padding:8px 10px;background:var(--sunk);font:600 12px var(--f-display);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);display:flex;justify-content:space-between}
+#gf table.odds{font-size:12.5px} #gf table.odds td:first-child,#gf table.odds th:first-child{white-space:nowrap;text-align:left;padding-right:8px} #gf .summary{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
 button.group-h{width:100%;border:0;border-top:1px solid var(--line);cursor:pointer;align-items:center;text-align:left;min-height:40px}
 button.group-h:hover{color:var(--ink)}
 button.group-h .chev{display:inline-block;width:1em;transition:transform .15s} button.group-h[aria-expanded="false"] .chev{transform:rotate(-90deg)}
@@ -5310,8 +5311,9 @@ function renderDeck_(d) {
     ${st.mainN ? `<div class="box"><div class="row" style="justify-content:space-between"><span class="label">Mana curve (spells)</span>
         <span>${"WUBRG".split("").filter(c => st.colors[c]).map(c => `<i class="pip p${c}">${c}</i><span class="small num" style="margin-right:6px">${st.colors[c]}</span>`).join("")}</span></div>
       <div class="curve">${st.curve.map(v => `<div class="bar" style="height:${v / max * 100}%"><span class="num">${v || ""}</span></div>`).join("")}</div>
-      <div class="curve-x"><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7+</span></div></div>
-      ${playtestHTML(d)}` : ""}
+      <div class="curve-x"><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7+</span></div>
+      ${curveVerdict(d, st)}</div>
+      ${playtestHTML(d)}${goldfishHTML(d)}` : ""}
     ${Object.keys(d.cards).length > 1 ? `<div class="row" style="justify-content:flex-end;gap:12px;margin-bottom:-4px"><button class="linkbtn small" id="dFoldAll">Collapse all</button><button class="linkbtn small" id="dOpenAll">Expand all</button></div>` : ""}
     <div class="list" id="dl">${cmdCards.length ? foldHead("Commander", "Commander", cmdCards.length) + (folded.has("Commander") ? "" : cmdCards.map(row).join("")) : ""}
       ${group(mainRest, "") || (cmdCards.length ? "" : `<div class="empty" style="border:0"><p>No cards yet. Type above, or use Deck options → Paste a deck list.</p></div>`)}${group(st.side, "Side")}</div></div></div>`;
@@ -5357,7 +5359,7 @@ function renderDeck_(d) {
   if (dt === "suggest") drawSuggest(d); else if (dt === "balance") drawBalance(d); else if (dt === "upgrade") drawUpgrade(d); else if (dt === "combos") drawCombos(d);
   const pk = $("#dPick"), pk2 = $("#dPick2"); if (pk) drawCmdrPicker(d, pk, false); else if (pk2) drawCmdrPicker(d, pk2, true);
   if (cmd && d.cmdr.length && (!themeSug[d.id] || themeSug[d.id].cmd !== deckCommanderName(d))) loadThemeSuggestions(d); else drawThemeSug(d);
-  wirePlaytest(d);
+  wirePlaytest(d); wireGoldfish(d);
   const setFold = keys => { S.meta.deckFold = Object.assign({}, S.meta.deckFold, { [d.id]: [...keys] }); if (!keys.size) delete S.meta.deckFold[d.id]; save(); renderDeck(d); };
   const fa = $("#dFoldAll"); if (fa) fa.onclick = () => setFold(new Set([...$("#dl").querySelectorAll("[data-fold]")].map(b => b.dataset.fold)));
   const oa = $("#dOpenAll"); if (oa) oa.onclick = () => setFold(new Set());
@@ -5435,6 +5437,109 @@ function wirePlaytest(d) {
     redraw();
   };
   const od = $("#ptOdds"); if (od) od.ontoggle = () => { if (!!S.meta.ptOddsOpen !== od.open) { S.meta.ptOddsOpen = od.open; save(); } };
+}
+/* ---------- Goldfish: play the deck out against no opponent, thousands of times ----------
+   Each game: shuffle, draw 7, mulligan hands with fewer than 2 or more than 5 lands (London mulligan, at most twice;
+   Commander's first one free), then each turn draw, play a land if you have one, and spend your mana: mana makers
+   (cards with the Ramp role) first, then the commander, then the biggest spells that fit. Mana makers give one
+   more mana from the next turn. Colours and lands that enter tapped aren't modelled; the results say so. */
+function rng(seed) { let a = seed >>> 0 || 1; return () => { a ^= a << 13; a >>>= 0; a ^= a >>> 17; a ^= a << 5; a >>>= 0; return a / 4294967296; }; }
+function goldfishGame(d, lib0, R, opts) {
+  const lib = lib0.slice(), shuf = () => { for (let i = lib.length - 1; i > 0; i--) { const j = Math.floor(R() * (i + 1)); [lib[i], lib[j]] = [lib[j], lib[i]]; } };
+  const land = c => isLandCard(c), ramp = c => !land(c) && rolesOf(c).includes("Ramp"), cmdr = opts.cmdr, log = opts.log ? [] : null;
+  let handC, mull = 0;
+  for (;;) {
+    lib.push(...(handC || [])); shuf(); handC = lib.splice(-7);
+    const L = handC.filter(land).length; if ((L >= 2 && L <= 5) || mull >= 2) break; mull++;
+  }
+  let bottom = Math.max(0, mull - (d.format === "commander" && mull > 0 ? 1 : 0));
+  while (bottom-- > 0) {                       // put back what the hand has too much of: extra lands, else the most expensive spell
+    const L = handC.filter(land).length, pick = L > 3 ? handC.findIndex(land) : handC.reduce((bi, c, i) => !land(c) && (bi < 0 || (c.cmc || 0) > (handC[bi].cmc || 0)) ? i : bi, -1);
+    lib.unshift(...handC.splice(pick < 0 ? 0 : pick, 1));
+  }
+  const opening = handC.slice(), seen = new Set(handC.map(c => c.name)), keyBy = {}, out = { mull, lands: [], mana: [], spent: [], missed: [], cmdrTurn: null, keyTurn: null, opening };
+  if (opts.keys && opts.keys.some(k => opening.some(c => c.name === k))) out.keyTurn = 0;          // in the opening hand
+  let lands = 0, rocks = 0, rocksNext = 0, cmdrDone = !cmdr;
+  for (let t = 1; t <= opts.turns; t++) {
+    rocks += rocksNext; rocksNext = 0;
+    if (t > 1 || opts.onDraw) { const c = lib.pop(); if (c) { handC.push(c); seen.add(c.name); } }
+    const li = handC.findIndex(land); let played = null; if (li >= 0) { played = handC.splice(li, 1)[0]; lands++; }
+    let mana = lands + rocks; const total = mana, cast = [];
+    const castIt = i => { const c = handC.splice(i, 1)[0]; mana -= c.cmc || 0; cast.push(c.name); if (ramp(c)) rocksNext++; };
+    for (let i; (i = handC.findIndex(c => ramp(c) && (c.cmc || 0) <= mana)) >= 0;) castIt(i);
+    if (!cmdrDone && (cmdr.cmc || 0) <= mana) { mana -= cmdr.cmc || 0; cmdrDone = true; out.cmdrTurn = t; cast.push(cmdr.name + " (commander)"); }
+    for (;;) { let bi = -1; handC.forEach((c, i) => { if (!land(c) && (c.cmc || 0) <= mana && (bi < 0 || (c.cmc || 0) > (handC[bi].cmc || 0))) bi = i; }); if (bi < 0) break; castIt(bi); }
+    out.lands.push(lands); out.mana.push(total); out.spent.push(total - mana); out.missed.push(!played);
+    if (opts.keys && out.keyTurn == null && opts.keys.some(k => seen.has(k))) out.keyTurn = t;
+    if (log) log.push({ t, drew: t > 1 || opts.onDraw, land: played && played.name, mana: total, cast, hand: handC.length });
+  }
+  out.log = log; return out;
+}
+function goldfish(d, opts = {}) {
+  const games = opts.games || 2000, turns = 8, lib = deckLibrary(d), R = rng(opts.seed || Date.now());
+  const cmdr = d.format === "commander" ? d.cmdr.map(k => d.cards[k]).filter(Boolean)[0] || null : null, keys = (opts.keys || []).filter(Boolean);
+  if (lib.length < 8) return null;
+  const A = { games, turns, onDraw: !!opts.onDraw, keep7: 0, mull: 0, onCurve: Array(turns).fill(0), missed: Array(turns).fill(0), mana: Array(turns).fill(0), spent: Array(turns).fill(0),
+    reach4: [], reach6: [], cmdrTurns: [], cmdrCmc: cmdr ? cmdr.cmc || 0 : null, cmdrOnTime: 0, flood: 0, screw: 0, open: { ramp: 0, draw: 0, removal: 0, lands: Array(8).fill(0) }, key: keys.length ? Array(turns + 1).fill(0) : null, keys };
+  for (let g = 0; g < games; g++) {
+    const r = goldfishGame(d, lib, R, { onDraw: A.onDraw, turns, cmdr, keys: keys.length ? keys : null });
+    if (!r.mull) A.keep7++; A.mull += r.mull;
+    let r4 = null, r6 = null, missEarly = false;
+    for (let t = 0; t < turns; t++) { if (r.mana[t] >= t + 1) A.onCurve[t]++; if (r.missed[t]) { A.missed[t]++; if (t < 4) missEarly = true; } A.mana[t] += r.mana[t]; A.spent[t] += r.spent[t];
+      if (r4 == null && r.mana[t] >= 4) r4 = t + 1; if (r6 == null && r.mana[t] >= 6) r6 = t + 1; }
+    A.reach4.push(r4 || turns + 1); A.reach6.push(r6 || turns + 1);
+    if (cmdr) { A.cmdrTurns.push(r.cmdrTurn || turns + 1); if (r.cmdrTurn && r.cmdrTurn <= Math.max(1, A.cmdrCmc)) A.cmdrOnTime++; }
+    if (missEarly) A.screw++; if (r.lands[4] >= 5 && r.spent[4] < 3) A.flood++;
+    const o = r.opening; A.open.lands[Math.min(7, o.filter(isLandCard).length)]++;
+    if (o.some(c => !isLandCard(c) && rolesOf(c).includes("Ramp"))) A.open.ramp++; if (o.some(c => rolesOf(c).includes("Card draw"))) A.open.draw++; if (o.some(c => rolesOf(c).includes("Removal"))) A.open.removal++;
+    if (A.key) for (let t = r.keyTurn == null ? turns + 1 : r.keyTurn; t <= turns; t++) A.key[t]++;
+  }
+  const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+  A.avg4 = avg(A.reach4); A.avg6 = avg(A.reach6); A.avgCmdr = cmdr ? avg(A.cmdrTurns) : null; A.cmdrName = cmdr ? cmdr.name : null;
+  return A;
+}
+const gfState = {};
+// a plain-words read of the curve, against common deck-building guidance for the format
+function curveVerdict(d, st) {
+  const spells = Object.values(d.cards).filter(c => !c.side && !isLandCard(c)), n = spells.reduce((a, c) => a + c.qty, 0); if (n < 8) return "";
+  const avg = spells.reduce((a, c) => a + (c.cmc || 0) * c.qty, 0) / n, big = spells.filter(c => (c.cmc || 0) >= 6).reduce((a, c) => a + c.qty, 0), cheap = spells.filter(c => (c.cmc || 0) <= 2).reduce((a, c) => a + c.qty, 0);
+  const cmd = d.format === "commander", lo = cmd ? 2.8 : 2.0, hi = cmd ? 3.6 : 3.0, bigHi = cmd ? 8 : 3, fmt = FORMATS[d.format] || "this format";
+  const msg = avg > hi || big > bigHi ? `<b>Top-heavy.</b> ${big} spell${big === 1 ? "" : "s"} cost 6 or more${avg > hi ? ` and the average is ${avg.toFixed(2)}` : ""}; ${fmt} decks usually average about ${lo}–${hi}${cmd ? " with up to 8 cards at 6+" : ""}. Swapping a few big spells for cheaper ones, or adding ramp, gets you going sooner.`
+    : avg < lo ? `<b>Low curve</b> (average ${avg.toFixed(2)}). Fast starts, but the hand can run out: card draw keeps it going. ${fmt} decks usually average about ${lo}–${hi}.`
+    : `<b>In the usual range.</b> Average ${avg.toFixed(2)}, with ${cheap} cheap spells (2 or less) and ${big} at 6+. ${fmt} decks usually average about ${lo}–${hi}.`;
+  return `<p class="small" style="margin:8px 0 0">${msg} <span class="muted">(A guide, not a rule.)</span></p>`;
+}
+function goldfishHTML(d) {
+  const st = gfState[d.id] = gfState[d.id] || { keys: [], res: null, log: null };
+  if (deckLibrary(d).length < 8) return "";
+  const names = [...new Set(deckLibrary(d).filter(c => !isLandCard(c)).map(c => c.name))].sort(), A = st.res, P = n => pctS(n / A.games), T = x => x > A.turns ? `after turn ${A.turns}` : "turn " + x.toFixed(1);
+  return `<div class="box stack" style="gap:8px" id="gf"><div class="row wrap"><span class="label grow">Goldfish: ${(2000).toLocaleString()} test games</span>
+      <button class="btn sm primary" id="gfRun">${A ? "Run again" : "Run"}</button></div>
+    <span class="small muted">Plays the deck against no opponent, ${(A ? A.onDraw : hand.onDraw) ? "on the draw" : "on the play"}${A ? "" : " (switch above)"}: mulligans hands with under 2 or over 5 lands, plays a land a turn, casts mana makers, ${d.format === "commander" ? "your commander, " : ""}then the biggest spells it can afford. Doesn't model colours or lands that enter tapped, so real games run a little slower.</span>
+    <div class="row wrap" style="gap:6px"><span class="small">Key cards to look for (up to 3):</span>${[0, 1, 2].map(i => `<select data-gk="${i}" aria-label="Key card ${i + 1}" style="max-width:200px"><option value="">—</option>${names.map(n => `<option ${st.keys[i] === n ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>`).join("")}</div>
+    ${A ? `<div class="summary"><div><span class="label">Keep 7</span><b class="num">${P(A.keep7)}</b><span class="small muted">${(A.mull / A.games).toFixed(2)} mulligans a game</span></div>
+        <div><span class="label">4 mana by</span><b class="num">${T(A.avg4)}</b><span class="small muted">average</span></div>
+        <div><span class="label">6 mana by</span><b class="num">${T(A.avg6)}</b><span class="small muted">average</span></div>
+        ${A.cmdrName ? `<div><span class="label">Commander out</span><b class="num">${T(A.avgCmdr)}</b><span class="small muted">on curve (turn ${Math.max(1, A.cmdrCmc)}) ${P(A.cmdrOnTime)}</span></div>` : ""}</div>
+      <div style="overflow-x:auto"><table class="odds"><tr><th>Turn</th>${A.onCurve.map((_, t) => `<th>${t + 1}</th>`).join("")}</tr>
+        <tr><td>Mana on curve</td>${A.onCurve.map(n => `<td class="${n / A.games < 0.7 ? "down" : ""}">${P(n)}</td>`).join("")}</tr>
+        <tr><td>Average mana</td>${A.mana.map(n => `<td>${(n / A.games).toFixed(1)}</td>`).join("")}</tr>
+        <tr><td>Mana used</td>${A.mana.map((n, t) => `<td>${n ? pctS(A.spent[t] / n) : "—"}</td>`).join("")}</tr>
+        <tr><td>Missed land drop</td>${A.missed.map(n => `<td>${P(n)}</td>`).join("")}</tr>
+        ${A.key ? `<tr><td>Seen ${A.keys.length > 1 ? "a key card" : esc(A.keys[0])}</td>${A.key.slice(1).map(n => `<td>${P(n)}</td>`).join("")}</tr>` : ""}</table></div>
+      <div class="small">Opening hand (after mulligans): ramp in ${P(A.open.ramp)} · card draw in ${P(A.open.draw)} · removal in ${P(A.open.removal)}${A.key ? ` · a key card in ${P(A.key[0])}` : ""}.
+        Missed a land drop in the first 4 turns: ${P(A.screw)}. Flooded (5+ lands but under 3 mana used on turn 5): ${P(A.flood)}.</div>
+      <div class="small muted">Lands in the opening hand: ${A.open.lands.map((n, i) => n ? `${i}${i === 7 ? "" : ""}: ${P(n)}` : "").filter(Boolean).join(" · ")}</div>
+      <details id="gfLog"><summary class="small">Watch one game</summary>${st.log ? `<ol class="small" style="margin:6px 0 0;padding-left:20px">${st.log.map(x => `<li>Turn ${x.t}: ${x.land ? "played " + esc(x.land) : "<b>no land</b>"} · ${x.mana} mana${x.cast.length ? " · cast " + x.cast.map(esc).join(", ") : ""}</li>`).join("")}</ol>` : ""}<button class="btn sm" id="gfOne" style="margin-top:6px">${st.log ? "Another game" : "Play one"}</button></details>` : ""}
+  </div>`;
+}
+function wireGoldfish(d) {
+  const el = $("#gf"); if (!el) return; const st = gfState[d.id];
+  const redraw = () => { const open = $("#gfLog") && $("#gfLog").open; el.outerHTML = goldfishHTML(d); wireGoldfish(d); if (open && $("#gfLog")) $("#gfLog").open = true; };
+  el.querySelectorAll("[data-gk]").forEach(s => s.onchange = () => { st.keys[+s.dataset.gk] = s.value; if (st.res) { st.res = goldfish(d, { onDraw: hand.onDraw, keys: st.keys }); } redraw(); });
+  $("#gfRun").onclick = () => { const b = $("#gfRun"); b.disabled = true; b.textContent = "Playing…"; setTimeout(() => { st.res = goldfish(d, { onDraw: hand.onDraw, keys: st.keys }); st.log = null; redraw(); }, 30); };
+  const one = $("#gfOne"); if (one) one.onclick = () => { const cmdr = d.format === "commander" ? d.cmdr.map(k => d.cards[k]).filter(Boolean)[0] || null : null;
+    st.log = goldfishGame(d, deckLibrary(d), rng(Date.now()), { onDraw: hand.onDraw, turns: 6, cmdr, log: true }).log; redraw(); };
 }
 function deckText(d) {
   const line = c => `${c.qty} ${c.name} (${c.set.toUpperCase()}) ${c.num}`;
