@@ -135,6 +135,7 @@ button.chip.deck{cursor:pointer}
 .price{font-weight:600}
 .item .scanned{color:var(--accent);white-space:nowrap}
 .group-h{padding:8px 10px;background:var(--sunk);font:600 12px var(--f-display);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);display:flex;justify-content:space-between}
+.phmv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.phmv>div{display:flex;flex-direction:column;background:var(--sunk);border-radius:8px;padding:6px 8px}
 #gf table.odds{font-size:12.5px} #gf table.odds td:first-child,#gf table.odds th:first-child{white-space:nowrap;text-align:left;padding-right:8px} #gf .summary{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
 button.group-h{width:100%;border:0;border-top:1px solid var(--line);cursor:pointer;align-items:center;text-align:left;min-height:40px}
 button.group-h:hover{color:var(--ink)}
@@ -1525,7 +1526,7 @@ function movers(binder, days) {
 const RAR = [["mythic", "Mythic"], ["rare", "Rare"], ["uncommon", "Uncommon"], ["common", "Common"], ["special", "Special"]];
 const rarGroup = r => r === "mythic" || r === "rare" || r === "uncommon" || r === "common" ? r : "special";       // special, bonus → Special
 function moversHTML() {
-  const per = S.meta.moversPeriod === 7 ? 7 : 1, ALL = movers(cv.binder, per), wish = cv.binder !== "all" && isWish(cv.binder);
+  const per = [7, 30].includes(S.meta.moversPeriod) ? S.meta.moversPeriod : 1, ALL = movers(cv.binder, per), wish = cv.binder !== "all" && isWish(cv.binder);
   if (!Object.keys(S.ph).length) return "";
   // per-rarity totals (cards that moved), and the lists filtered to the chosen rarity
   const byR = {}; for (const r of ALL.rows) { const g = rarGroup(r.e.rarity); (byR[g] = byR[g] || { tot: 0, n: 0 }); byR[g].tot += r.tot; byR[g].n++; }
@@ -1539,12 +1540,12 @@ function moversHTML() {
   const since = new Date(M.base * 864e5).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });     // day numbers are UTC days
   const stale = S.meta.pricedAt && Math.floor(S.meta.pricedAt / 864e5) < today();
   return `<div class="box stack" style="gap:6px" id="movers"><div class="row"><span class="label grow">${wish ? "Price moves on cards you want" : "Movers"}</span>
-      <span class="seg" id="mvPer"><button data-p="1" aria-pressed="${per === 1}">Today</button><button data-p="7" aria-pressed="${per === 7}">This week</button></span></div>
+      <span class="seg" id="mvPer"><button data-p="1" aria-pressed="${per === 1}">Today</button><button data-p="7" aria-pressed="${per === 7}">This week</button><button data-p="30" aria-pressed="${per === 30}">30 days</button></span></div>
     ${M.n ? `<div class="small">${wish ? "Cost to buy" : "Value"} ${M.tot >= 0 ? "up" : "down"} <b class="num ${M.tot > 0 ? (wish ? "down" : "up") : M.tot < 0 ? (wish ? "up" : "down") : ""}">${signed(M.tot)}</b> since ${esc(since)} <span class="muted">(${M.n.toLocaleString()} card${M.n === 1 ? "" : "s"} with prices from then${stale ? "; prices last updated " + esc(new Date(S.meta.pricedAt).toLocaleDateString()) : ""})</span></div>
       ${rarRow}${up.length ? `<div class="mvhead small muted">Up${rf ? " · " + RAR.find(x => x[0] === rf)[1] : ""}</div>${up.map(line).join("")}` : ""}${dn.length ? `<div class="mvhead small muted">Down${rf ? " · " + RAR.find(x => x[0] === rf)[1] : ""}</div>${dn.map(line).join("")}` : ""}
       ${!up.length && !dn.length ? `<p class="small muted" style="margin:0">No price changes since ${esc(since)}${rf ? " among " + RAR.find(x => x[0] === rf)[1].toLowerCase() + "s" : ""}.</p>` : ""}
       ${M.rows.filter(r => r.d > 0).length > 5 || M.rows.filter(r => r.d < 0).length > 5 ? `<button class="linkbtn small" id="mvMore">${more ? "Show fewer" : "Show more"}</button>` : ""}`
-    : `<p class="small muted" style="margin:0">${per === 7 ? "Weekly" : "Daily"} movers start once Deckhand has prices from ${per === 7 ? "a week" : "a day"} ago${isFinite(M.earliest) ? ` (it has them since ${esc(new Date(M.earliest * 864e5).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" }))})` : ""}. Prices update by themselves once a day when you open the app.</p>`}</div>`;
+    : `<p class="small muted" style="margin:0">${per === 30 ? "30-day" : per === 7 ? "Weekly" : "Daily"} movers start once Deckhand has prices from ${per === 30 ? "30 days" : per === 7 ? "a week" : "a day"} ago${isFinite(M.earliest) ? ` (it has them since ${esc(new Date(M.earliest * 864e5).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" }))})` : ""}. Prices update by themselves once a day when you open the app.</p>`}</div>`;
 }
 function drawCollList() {
   const q = cv.q.trim().toLowerCase(), pred = collPred(cv.f || (cv.f = collDefaultF()));
@@ -2656,7 +2657,8 @@ const STAPLE_ROLES = [
 const STAPLE_COLORS = [["all", "All"], ["w", "W"], ["u", "U"], ["b", "B"], ["r", "R"], ["g", "G"], ["c", "Colorless"], ["m", "Multicolor"]];
 const stp = Object.assign({ fmt: "commander", color: "all", role: "all", rarity: [], show: "all", n: 30, set: "", rank: "edhrec" }, S.meta.staples || {});
 // how the list is ranked: Commander play (EDHREC), price, or the biggest 30-day price rises (from the daily price history)
-const STAPLE_RANKS = [["edhrec", "Most played"], ["value", "Most valuable"], ["rising", "Rising"]];
+const STAPLE_RANKS = [["edhrec", "Most played"], ["value", "Most valuable"], ["rising", "Rising"], ["falling", "Falling"]];
+const isMove = r => r === "rising" || r === "falling";
 // set types worth picking from (no tokens, promos, art cards, digital-only sets)
 const STAPLE_SET_SKIP = new Set(["token", "memorabilia", "minigame", "alchemy", "treasure_chest", "vanguard", "promo"]);
 const stCache = {};
@@ -2671,7 +2673,7 @@ function stapleQuery() {
   return p.join(" ");
 }
 // the cache key for what's on screen: Rising is one list per set, filtered here; the others are a Scryfall search
-const stapleKey = () => stp.rank === "rising" ? "rising:" + (stp.set || "all") : stp.rank + ":" + stapleQuery();
+const stapleKey = () => isMove(stp.rank) ? stp.rank + ":" + (stp.set || "all") : stp.rank + ":" + stapleQuery();
 function stapleFilter(c) {      // Rising only: format, colour and rarity, checked on the card itself
   if (!c.leg || !(c.leg[stp.fmt] === "l" || c.leg[stp.fmt] === "r")) return false;
   const cols = (stp.fmt === "commander" ? c.ci : c.colors) || [];
@@ -2681,8 +2683,8 @@ function stapleFilter(c) {      // Rising only: format, colour and rarity, check
   if (stp.rarity.length && !stp.rarity.includes(c.rarity)) return false;
   return !c.basic;
 }
-async function risingCards(set) {
-  const r = await fetch(PH.base + (set ? "rising/" + set : "rising") + ".json", { cache: "no-cache" });
+async function risingCards(set, falling) {
+  const dir = falling ? "falling" : "rising", r = await fetch(PH.base + (set ? dir + "/" + set : dir) + ".json", { cache: "no-cache" });
   if (r.status === 404) return [];
   if (!r.ok) throw new Error("Couldn't load rising prices (" + r.status + ")");
   const rows = (await r.json()).filter(x => Array.isArray(x) && /^[0-9a-f-]{36}$/i.test(x[0])).slice(0, 250), byId = {};
@@ -2706,7 +2708,7 @@ function setMark(card, status) {
 }
 async function renderStaples() {
   const v = $("#sres"); if (!v) return;
-  const cmd = stp.fmt === "commander", q = stapleQuery(), key = stapleKey(), rise = stp.rank === "rising";
+  const cmd = stp.fmt === "commander", q = stapleQuery(), key = stapleKey(), rise = isMove(stp.rank), fall = stp.rank === "falling";
   if (!SETS) loadSets().then(() => { const el = $("#stSet"); if (el) el.innerHTML = stapleSetOptions(); }).catch(() => {});
   const setName = stp.set ? ((SETS && SETS[stp.set] && SETS[stp.set].name) || stp.set.toUpperCase()) : "";
   const chips = (list, cur, attr) => list.map(([k, label]) => `<button data-${attr}="${k}" aria-pressed="${cur === k}">${k.length === 1 && k !== "m" && k !== "c" && attr === "col" ? `<i class="pip p${k.toUpperCase()}">${label}</i>` : esc(label)}</button>`).join("");
@@ -2715,11 +2717,11 @@ async function renderStaples() {
       <select id="stSet" class="grow" aria-label="Set" style="min-width:0;max-width:100%">${stapleSetOptions()}</select></div>
     <span class="seg" id="stRank">${STAPLE_RANKS.map(([k, l]) => `<button data-rank="${k}" aria-pressed="${stp.rank === k}">${l}</button>`).join("")}</span>
     <span class="small muted">${stp.rank === "value" ? `Highest TCGplayer price first${setName ? ` in ${esc(setName)}` : ""}, cards legal in ${FORMATS[stp.fmt]}.`
-      : rise ? `Biggest TCGplayer price rises over the last 30 days${setName ? ` in ${esc(setName)}` : ""} (cards $0.50 and up), cards legal in ${FORMATS[stp.fmt]}. Updated once a day.`
+      : rise ? `Biggest TCGplayer price ${fall ? "drops" : "rises"} over the last 30 days${setName ? ` in ${esc(setName)}` : ""} (cards that were or are $0.50 and up; one-day spikes ignored), cards legal in ${FORMATS[stp.fmt]}. Updated once a day.`
       : (cmd ? `Most-played Commander cards${setName ? ` from ${esc(setName)}` : ""} (EDHREC rank).` : `Cards legal in ${FORMATS[stp.fmt]}${setName ? ` from ${esc(setName)}` : ""}, ranked by Commander play (EDHREC). There's no free ${FORMATS[stp.fmt]} play data, so use this as a starting point.`)
         + (setName ? " New sets take a few weeks to settle; Most valuable is the better guide right after release." : "")}</span>
     <div class="chips" id="stCol">${chips(STAPLE_COLORS, stp.color, "col")}</div>
-    ${rise ? `<span class="small muted">Deck types don't apply to Rising.</span>` : `<div class="chips scrollx" id="stRole">${chips(STAPLE_ROLES.map(r => [r[0], r[1]]), stp.role, "role")}</div>`}
+    ${rise ? `<span class="small muted">Deck types don't apply to ${fall ? "Falling" : "Rising"}.</span>` : `<div class="chips scrollx" id="stRole">${chips(STAPLE_ROLES.map(r => [r[0], r[1]]), stp.role, "role")}</div>`}
     <div class="chips" id="stRar">${[["common", "Common"], ["uncommon", "Uncommon"], ["rare", "Rare"], ["mythic", "Mythic"]].map(([k, l]) => `<button data-rar="${k}" aria-pressed="${stp.rarity.includes(k)}">${l}</button>`).join("")}
       <span class="small muted" style="align-self:center">Rarity</span></div>
     <div class="chips" id="stShow">${[["all", "All"], ["missing", "Don't have"], ["have", "Have"], ["want", "Want"], ["need", "Need"]].map(([k, l]) => `<button data-show="${k}" aria-pressed="${stp.show === k}">${l}</button>`).join("")}</div>
@@ -2738,7 +2740,7 @@ async function renderStaples() {
       let hit = null; try { hit = idb.ok ? await idbGet(ik) : null; } catch (e) {}
       if (hit && Date.now() - hit.at < (rise ? 6 * 36e5 : 864e5)) stCache[key] = hit.data;
       else {
-        if (rise) stCache[key] = await risingCards(stp.set);
+        if (rise) stCache[key] = await risingCards(stp.set, fall);
         else { const r = await sf(`/cards/search?q=${encodeURIComponent(q)}&order=${stp.rank === "value" ? "usd&dir=desc" : "edhrec"}&unique=cards`); stCache[key] = (r.data || []).slice(0, 150).map(slim); }
         if (idb.ok) idbSet(ik, { at: Date.now(), data: stCache[key] }).catch(() => {});
       }
@@ -2748,7 +2750,7 @@ async function renderStaples() {
 }
 function drawStaples() {
   const el = $("#stList"), got = stCache[stapleKey()]; if (!el || !got) return;
-  const all = stp.rank === "rising" ? got.filter(stapleFilter) : got;
+  const all = isMove(stp.rank) ? got.filter(stapleFilter) : got;
   const uses = deckUse();
   const rows = all.map((c, i) => ({ c, rank: i + 1, own: ownedByName(c.name), m: markOf(c.name) })).filter(x => {
     if (stp.show === "missing") return !x.own && !(x.m && x.m.s === "have");
@@ -2765,9 +2767,9 @@ function drawStaples() {
     ${shown.length ? `<div class="list">${shown.map(({ c, rank, own, m }) => `<div class="item">
       <img loading="lazy" src="${esc(c.img)}" alt="">
       <button class="tap" data-open="${esc(c.id)}"><div class="name"><span class="muted num">${rank}.</span> ${esc(c.name)}</div>
-        <div class="meta"><span>${pips(c.mana)}</span><span>${setIcon(c.set, c.rarity)}</span><span class="num">${money(c.rise ? c.rise.now : priceOf(c))}${c.rise && c.rise.foil ? " foil" : ""}</span>${c.rise ? `<span class="up num">+${money(c.rise.now - c.rise.then)} (+${Math.round((c.rise.now / c.rise.then - 1) * 100)}%) in 30 days</span>` : ""}${own ? `<span class="chip ok">Have ${own}</span>` : ""}${deckChips(uses[c.name], 1)}</div></button>
+        <div class="meta"><span>${pips(c.mana)}</span><span>${setIcon(c.set, c.rarity)}</span><span class="num">${money(c.rise ? c.rise.now : priceOf(c))}${c.rise && c.rise.foil ? " foil" : ""}</span>${c.rise ? `<span class="${c.rise.now >= c.rise.then ? "up" : "down"} num">${signed(c.rise.now - c.rise.then)} (${c.rise.now >= c.rise.then ? "+" : "−"}${Math.abs(Math.round((c.rise.now / c.rise.then - 1) * 100))}%) in 30 days</span>` : ""}${own ? `<span class="chip ok">Have ${own}</span>` : ""}${deckChips(uses[c.name], 1)}</div></button>
       <div class="right"><span class="marks">${["have", "want", "need"].map(k => `<button data-mk="${k}" data-id="${esc(c.id)}" aria-pressed="${m && m.s === k}" class="${k}">${k[0].toUpperCase() + k.slice(1)}</button>`).join("")}</span></div></div>`).join("")}</div>`
-      : `<p class="muted">${stp.rank === "rising" && !all.length ? (got.length ? "Nothing rising matches these filters." : "No price rises to show yet for this set.") : "Nothing here yet."}${stp.show === "want" || stp.show === "need" ? " Mark cards with Want or Need to list them." : ""}</p>`}
+      : `<p class="muted">${isMove(stp.rank) && !all.length ? (got.length ? `Nothing ${stp.rank} matches these filters.` : `No price ${stp.rank === "falling" ? "drops" : "rises"} to show yet for this set.`) : "Nothing here yet."}${stp.show === "want" || stp.show === "need" ? " Mark cards with Want or Need to list them." : ""}</p>`}
     ${stp.show === "all" && all.length > stp.n ? `<button class="btn" id="stMore">Show 30 more</button>` : ""}`;
   const byId = id => all.find(c => c.id === id);
   el.querySelectorAll("[data-mk]").forEach(b => b.onclick = () => { setMark(byId(b.dataset.id), b.dataset.mk); drawStaples(); });
@@ -5623,6 +5625,23 @@ function phLines(row, fin, from, to) {
   return out;
 }
 const phAt = (seg, day) => { let v = null; for (const [d, p] of seg) { if (d > day) break; v = p; } return v; };
+// day, week and month moves of the TCGplayer market price, from the stored history (nothing filled in where it doesn't reach)
+function phMoves(H, fin) {
+  const pts = (H && H.row && H.row[fin === "nonfoil" ? "t" : "tf"]) || []; if (!pts.length) return null;
+  const at = day => { let v = null; for (const [d, c] of pts) { if (d + PH_EPOCH > day) break; v = c / 100; } return v; }, end = H.end, now = at(end);
+  if (now == null) return null;
+  // the price before the current one, and the day it changed
+  let prev = null; for (let i = pts.length - 1; i > 0; i--) if (pts[i][0] + PH_EPOCH <= end && pts[i - 1][1] !== pts[i][1] && pts[i][1] / 100 === now) { prev = { p: pts[i - 1][1] / 100, day: pts[i][0] + PH_EPOCH }; break; }
+  return { now, prev, end, first: pts[0][0] + PH_EPOCH, ch: [[1, "1 day"], [7, "7 days"], [30, "30 days"]].map(([n, l]) => { const then = end - n >= pts[0][0] + PH_EPOCH ? at(end - n) : null; return { l, then, d: then != null ? now - then : null, pct: then ? (now - then) / then : null }; }) };
+}
+function phMovesHTML(H, fin) {
+  const M = phMoves(H, fin); if (!M) return "";
+  const cell = x => x.d == null ? `<span class="muted" title="The price history doesn't go back that far yet">—</span>` : `<span class="${x.d > 0 ? "up" : x.d < 0 ? "down" : ""}">${signed(x.d)}${x.pct != null ? ` (${x.d >= 0 ? "+" : "−"}${Math.abs(x.pct * 100).toFixed(1)}%)` : ""}</span>`;
+  return `<div class="stack" id="phMv" style="gap:4px"><div class="kv small num"><span>TCGplayer market${fin !== "nonfoil" ? " (foil)" : ""} <b>${money(M.now)}</b></span>
+      <span class="muted">${M.prev ? `was ${money(M.prev.p)} until ${dayStr(M.prev.day)}` : `unchanged since ${dayStr(M.first)}`}</span></div>
+    <div class="phmv small num">${M.ch.map(x => `<div><span class="muted">${x.l}</span>${cell(x)}</div>`).join("")}</div>
+    <span class="small muted">Source: TCGplayer market price, through MTGJSON's daily price files. Last updated ${dayStr(M.end)}.</span></div>`;
+}
 function phChartHTML(H, fin, range, off) {
   if (!H || !H.row) return null;
   const n = (PH_RANGES.find(r => r[0] === range) || PH_RANGES[2])[1], to = H.end, from = to - n + 1;
@@ -5634,8 +5653,8 @@ function phChartHTML(H, fin, range, off) {
   const main = shown[0] && all[shown[0]], first = main ? main[0][1] : null, last = main ? main.at(-1)[1] : null, mv = main ? main.map(p => p[1]) : [];
   const firstDay = Math.min(...keys.map(k => all[k][0][0])), started = (H.row.t || H.row.tf || H.row.m || H.row.kb || [[0]])[0][0] + PH_EPOCH;
   const pct = first ? (last - first) / first * 100 : 0, label = Object.fromEntries(PH_SERIES);
-  return `<div class="kv"><span class="label">Price history${fin !== "nonfoil" ? " (foil)" : ""}</span><span class="seg" id="phR">${PH_RANGES.map(([r]) => `<button data-r="${r}" aria-pressed="${r === range}">${r}</button>`).join("")}</span></div>
-    ${main ? `<div class="kv small num"><span>${esc(label[shown[0]])} <b>${money(last)}</b> <span class="${last >= first ? "up" : "down"}">${signed(last - first)} (${pct >= 0 ? "+" : "−"}${Math.abs(pct).toFixed(1)}%)</span></span><span class="muted" style="white-space:nowrap">High ${money(Math.max(...mv))} · Low ${money(Math.min(...mv))}</span></div>` : ""}
+  return `${phMovesHTML(H, fin)}<div class="kv"><span class="label">Price history${fin !== "nonfoil" ? " (foil)" : ""}</span><span class="seg" id="phR">${PH_RANGES.map(([r]) => `<button data-r="${r}" aria-pressed="${r === range}">${r}</button>`).join("")}</span></div>
+    ${main ? `<div class="kv small num" id="phRange"><span>${esc(label[shown[0]])} over ${esc(range)}: <span class="${last >= first ? "up" : "down"}">${signed(last - first)} (${pct >= 0 ? "+" : "−"}${Math.abs(pct).toFixed(1)}%)</span> <span class="muted">now ${money(last)}</span></span><span class="muted" style="white-space:nowrap">High ${money(Math.max(...mv))} · Low ${money(Math.min(...mv))}</span></div>` : ""}
     <div class="phc" id="phC"><svg viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="none" role="img" aria-label="Price chart, ${esc(range)}">
       <line class="gd" x1="0" x2="${W}" y1="${Y(hi).toFixed(1)}" y2="${Y(hi).toFixed(1)}"/><line class="gd" x1="0" x2="${W}" y1="${Y(lo).toFixed(1)}" y2="${Y(lo).toFixed(1)}"/>
       ${shown.slice().reverse().map(k => `<path class="ln s-${k}" data-k="${k}" d="${path(all[k])}"/>`).join("")}<line class="cur" id="phCur" x1="0" x2="0" y1="0" y2="${Hh}" style="display:none"/></svg>

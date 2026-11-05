@@ -26,6 +26,10 @@ const P = (id, name, usd) => ({ id, oracle_id: "o" + id, name, set: "cmm", set_n
   ok(/Sol Ring CMM \$1\.50 ?\+\$0\.50 \+50%/.test(m) && !/Brand New Card/.test(m) && /Value down −\$1\.00/.test(m), "This week: Sol Ring +$0.50, value down $1.00 overall; a card with only 2 days of prices is left out");
   ok(/since/.test(m) && /\(2 cards with prices from then/.test(m), "says how many cards it could compare");
   ok(S.meta.moversPeriod === 7, "remembers Today / This week");
+  $("#mvPer [data-p=\"30\"]").click(); await new Promise(r => setTimeout(r, 30)); m = txt();
+  ok(S.meta.moversPeriod === 30 && /30-day movers start once Deckhand has prices from 30 days ago \(it has them since/.test(m), "30 days: says it needs 30 days of recorded prices, and since when it has them (nothing made up)");
+  S.ph[T.pkey("sol", "nonfoil")].unshift([t - 40, 0.75]); T.renderColl(); m = txt();
+  ok(/Sol Ring CMM \$1\.50 ?\+\$0\.75 \+100%/.test(m) && !/Lightning Bolt/.test(m), "30 days: once a card has 30 days of prices it's compared (Sol Ring $0.75 → $1.50); others aren't");
   // per binder
   T.cv.binder = "trade"; S.meta.moversPeriod = 1; T.renderColl(); m = txt();
   ok(/Counterspell/.test(m) && !/Sol Ring/.test(m), "Trade binder: only its own cards");

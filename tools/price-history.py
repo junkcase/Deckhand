@@ -13,7 +13,7 @@ Output: out/history/meta.json and out/history/<3 hex>.json, keyed by Scryfall id
   t/tf = TCGplayer market normal/foil, kb/kbf = Card Kingdom buylist normal/foil, m/mf = Mana Pool lowest listing.
   day = days since 2020-01-01 (UTC).
 
-Also writes the biggest risers over the last 30 days (TCGplayer market), for the Staples "Rising" ranking:
+Also writes the biggest risers (and fallers: falling.json, falling/<set>.json) over the last 30 days (TCGplayer market), for the Staples "Rising" ranking:
   out/history/rising.json (every set) and out/history/rising/<set code>.json: [[id, set, now cents, 30 days ago cents, foil 0/1], ...]
   Set codes come from MTGJSON's cards.csv (optional 4th argument).
 
@@ -65,7 +65,7 @@ def load_old(out):
     d = os.path.join(out, "history")
     if os.path.isdir(d):
         for f in os.listdir(d):
-            if f.endswith(".json") and f not in ("meta.json", "rising.json"):
+            if f.endswith(".json") and f not in ("meta.json", "rising.json", "falling.json"):
                 with open(os.path.join(d, f)) as fh:
                     hist.update(json.load(fh))
     return hist
@@ -85,8 +85,10 @@ def window_median(points, start, end):
     return vals[len(vals) // 2] if len(vals) == end - start + 1 else None
 
 
-def rising(hist, sets, today_day, days=30, per_set=60, overall=250):
-    """Cards whose TCGplayer market price went up most over `days` (normal, or foil for foil-only cards). Jumps over 10x are taken as bad data."""
+def rising(hist, sets, today_day, days=30, per_set=60, overall=250, falling=False):
+    """Cards whose TCGplayer market price went up (or, falling=True, down) most over `days` (normal, or foil for foil-only
+    cards). Changes of more than 10x either way are taken as bad data. Cheap cards are left out: now and then at least 50c
+    for the price that's higher, 25c for the lower one."""
     rows = []
     for sf, v in hist.items():
         for key, foil in (("t", 0), ("tf", 1)):
@@ -95,10 +97,13 @@ def rising(hist, sets, today_day, days=30, per_set=60, overall=250):
                 continue
             # medians of a few days at each end, so one odd sale (common on thin foil markets) doesn't count as a rise
             now, then = window_median(pts, today_day - 4, today_day), window_median(pts, today_day - days - 3, today_day - days + 3)
-            if now is None or then is None or now < 50 or then < 25 or now < then * 1.05 or now > then * 10:
+            if now is None or then is None:
+                continue
+            hi, lo = (then, now) if falling else (now, then)
+            if hi < 50 or lo < 25 or hi < lo * 1.05 or hi > lo * 10:
                 continue
             rows.append([sf, sets.get(sf, ""), now, then, foil])
-    rows.sort(key=lambda r: (-(r[2] - r[3]) / r[3], -r[2]))
+    rows.sort(key=lambda r: ((r[2] - r[3]) / r[3], -r[3]) if falling else (-(r[2] - r[3]) / r[3], -r[2]))
     by_set = {}
     for r in rows:
         if r[1] and len(by_set.setdefault(r[1], [])) < per_set:
@@ -130,7 +135,7 @@ def main(out, prices_path, ids_path, today=None, cards_path=None):
     mp_dir = os.path.join(out, "manapool")
     if os.path.isdir(mp_dir):
         for f in os.listdir(mp_dir):
-            if f.endswith(".json") and f not in ("meta.json", "rising.json"):
+            if f.endswith(".json") and f not in ("meta.json", "rising.json", "falling.json"):
                 with open(os.path.join(mp_dir, f)) as fh:
                     for sf, row in json.load(fh).items():
                         if row[0]: fresh.setdefault(sf, {}).setdefault("m", {})[today_day] = row[0]
@@ -176,16 +181,17 @@ def main(out, prices_path, ids_path, today=None, cards_path=None):
                 sf = uuid2sf.get(row.get("uuid"))
                 if sf and row.get("setCode"):
                     sets[sf] = row["setCode"].lower()
-    top, by_set = rising(hist, sets, today_day)
-    rd = os.path.join(d, "rising")
-    os.makedirs(rd, exist_ok=True)
-    with open(os.path.join(d, "rising.json"), "w") as fh:      # not in rising/, where it would clash with a set coded "all" (Alliances)
-        json.dump(top, fh, separators=(",", ":"))
-    for code, rows in by_set.items():
-        if code.replace("_", "").isalnum():
-            with open(os.path.join(rd, code + ".json"), "w") as fh:
-                json.dump(rows, fh, separators=(",", ":"))
-    print(f"rising: {len(top)} overall, {len(by_set)} sets")
+    for name, down in (("rising", False), ("falling", True)):
+        top, by_set = rising(hist, sets, today_day, falling=down)
+        rd = os.path.join(d, name)
+        os.makedirs(rd, exist_ok=True)
+        with open(os.path.join(d, name + ".json"), "w") as fh:      # not in rising/, where it would clash with a set coded "all" (Alliances)
+            json.dump(top, fh, separators=(",", ":"))
+        for code, rows in by_set.items():
+            if code.replace("_", "").isalnum():
+                with open(os.path.join(rd, code + ".json"), "w") as fh:
+                    json.dump(rows, fh, separators=(",", ":"))
+        print(f"{name}: {len(top)} overall, {len(by_set)} sets")
     first = min((p[0][0] for v in hist.values() for p in v.values()), default=today_day)
     with open(os.path.join(d, "meta.json"), "w") as fh:
         json.dump({"as_of": (EPOCH + datetime.timedelta(days=today_day)).isoformat(), "cards": len(hist), "from": (EPOCH + datetime.timedelta(days=first)).isoformat(),

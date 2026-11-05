@@ -9,12 +9,13 @@ const CARDS = [C(1, "Green Thing", "dsk", 3), C(2, "Blue Thing", "dsk", 12, { co
 const SETS = [{ code: "dsk", name: "Duskmourn", released_at: "2024-09-27", card_count: 286, printed_size: 276, set_type: "expansion", icon_svg_uri: "" },
   { code: "tdsk", name: "Duskmourn Tokens", released_at: "2024-09-27", card_count: 20, set_type: "token", icon_svg_uri: "" },
   { code: "m21", name: "Core Set 2021", released_at: "2020-07-03", card_count: 397, printed_size: 274, set_type: "core", icon_svg_uri: "" }];
+const FALLING = { "": [[id(1), "dsk", 300, 900, 0], [id(3), "m21", 50, 100, 0]], "dsk": [[id(1), "dsk", 300, 900, 0]] };
 const RISING = { "": [[id(3), "m21", 300, 100, 0], [id(2), "dsk", 1500, 1200, 0], [id(4), "dsk", 4000, 2000, 0]], "all": [[id(1), "all", 900, 100, 0]], "dsk": [[id(2), "dsk", 1500, 1200, 0], [id(4), "dsk", 4000, 2000, 0]] };
 async function run(opts, shot) {
   const srv = spawn("python3", ["-m", "http.server", "8797", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
   const b = await chromium.launch(), ctx = await b.newContext(opts), p = await ctx.newPage(), errs = [], searches = [], posts = [];
   p.on("pageerror", e => errs.push(e.message)); p.on("console", m => { if (m.type() === "error" && !/Failed to load resource|fetching the script/.test(m.text())) errs.push(m.text()); });
-  await p.route("https://raw.githubusercontent.com/junkcase/Deckhand/data/**", r => { const k = r.request().url().split("/data/history/")[1] || "", m = k.match(/^rising(?:\/(\w+))?\.json$/), d = m && RISING[m[1] || ""];
+  await p.route("https://raw.githubusercontent.com/junkcase/Deckhand/data/**", r => { const k = r.request().url().split("/data/history/")[1] || "", m = k.match(/^(rising|falling)(?:\/(\w+))?\.json$/), d = m && (m[1] === "falling" ? FALLING : RISING)[m[2] || ""];
     r.fulfill({ status: d ? 200 : 404, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: d ? JSON.stringify(d) : "404" }); });
   await p.route("https://cards.scryfall.io/**", r => r.fulfill({ status: 200, contentType: "image/png", body: PNG }));
   await p.route("https://api.scryfall.com/**", r => { const u = decodeURIComponent(r.request().url()), J = (j, st = 200) => r.fulfill({ status: st, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(j) });
@@ -38,6 +39,9 @@ R.played = await names(); R.q1 = searches.at(-1); R.note = await p.$eval("#sres 
   await p.click('#stCol [data-col="g"]'); await p.waitForTimeout(200); R.risingGreen = await p.$eval("#stList", e => e.textContent.trim());
   await p.click('#stCol [data-col="all"]'); await p.selectOption("#stSet", ""); await p.waitForTimeout(600); R.risingAll = await names();
   R.saved = await p.evaluate(() => [S.meta.staples.set, S.meta.staples.rank]);
+  await p.click('#stRank [data-rank="falling"]'); await p.waitForTimeout(600); R.falling = await names();
+  R.fallMeta = await p.$eval("#stList .item .meta", e => e.textContent.replace(/\s+/g, " ").trim()); R.fallNote = await p.$eval("#sres .small.muted", e => e.textContent);
+  await p.click('#stRank [data-rank="rising"]'); await p.waitForTimeout(300);
   // Set completion → Best cards in this set
   await p.evaluate(() => { stp.rank = "edhrec"; stp.role = "ramp"; const c = { id: "x1", oid: "o", name: "Green Thing", set: "dsk", setName: "Duskmourn", num: "1", rarity: "rare", type: "Creature", cmc: 2, colors: ["G"], ci: ["G"], img: "", prices: { usd: "3" }, finishes: ["nonfoil"] };
     addToColl(c, "nonfoil", 1, defaultBinder()); go("coll"); }); await p.waitForTimeout(300);
@@ -50,7 +54,8 @@ R.played = await names(); R.q1 = searches.at(-1); R.note = await p.$eval("#sres 
   for (const [label, opts, shot] of [["desktop", { viewport: { width: 1280, height: 900 } }, null], ["phone", devices["Pixel 7"], "staples_phone.png"]]) {
     const R = await run(opts, shot);
     ok(R.setOpts[0] === "Any set" && R.setOpts.some(t => /^Duskmourn \(DSK\) · 2024$/.test(t)) && !R.setOpts.some(t => /Tokens/.test(t)), `[${label}] set picker: Any set, real sets, no token sets ${JSON.stringify(R.setOpts)}`);
-    ok(R.rank.join("|") === "Most played*|Most valuable|Rising", `[${label}] Rank by: Most played (default), Most valuable, Rising`);
+    ok(R.rank.join("|") === "Most played*|Most valuable|Rising|Falling", `[${label}] Rank by: Most played (default), Most valuable, Rising, Falling`);
+    ok(R.falling.join() === "Green Thing,Old Thing" && /−\$6\.00 \(−67%\) in 30 days/.test(R.fallMeta) && /drops/.test(R.fallNote), `[${label}] Falling: the biggest 30-day drops (${R.fallMeta})`);
     ok(/e:dsk/.test(R.q1) && /order=edhrec/.test(R.q1) && R.played.join() === "Green Thing,Blue Thing", `[${label}] picking a set searches just that set (${R.q1})`);
     ok(/from Duskmourn/.test(R.note), `[${label}] says which set (${R.note})`);
     ok(/order=usd&dir=desc/.test(R.q2) && R.value.join() === "Blue Thing,Green Thing", `[${label}] Most valuable sorts by price, high first`);

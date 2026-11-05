@@ -20,8 +20,8 @@ async function run(opts, shot) {
   const mk = (id, name) => ({ id, oid: "o" + id, name, set: "2xm", setName: "Double Masters", num: "270", rarity: "mythic", type: "Artifact", mana: "{0}", cmc: 0, colors: [], ci: [], img: "", prices: { usd: "150", usd_foil: "310" }, finishes: ["nonfoil", "foil"], leg: {}, layout: "normal" });
   await p.evaluate(c => { window.__c = c; openCard(c, "nonfoil"); }, mk("a1b-crypt", "Mana Crypt")); await p.waitForTimeout(600);
   const R = {};
-  const look = () => p.evaluate(() => { const bx = document.querySelector("#phBox"); return bx && { shown: bx.style.display !== "none", head: bx.querySelector(".kv.small") ? bx.querySelector(".kv.small").textContent.replace(/\s+/g, " ").trim() : "",
-    lines: [...bx.querySelectorAll("path.ln")].map(x => x.dataset.k).sort().join(","), range: (bx.querySelector("#phR [aria-pressed=true]") || {}).textContent, axis: bx.querySelectorAll(".kv.small")[1] ? bx.querySelectorAll(".kv.small")[1].textContent.replace(/\s+/g, " ").trim() : "",
+  const look = () => p.evaluate(() => { const bx = document.querySelector("#phBox"); return bx && { shown: bx.style.display !== "none", head: bx.querySelector("#phRange") ? bx.querySelector("#phRange").textContent.replace(/\s+/g, " ").trim() : "", mv: bx.querySelector("#phMv") ? bx.querySelector("#phMv").textContent.replace(/\s+/g, " ").trim() : "",
+    lines: [...bx.querySelectorAll("path.ln")].map(x => x.dataset.k).sort().join(","), range: (bx.querySelector("#phR [aria-pressed=true]") || {}).textContent, axis: bx.querySelector(".phc + .kv") ? bx.querySelector(".phc + .kv").textContent.replace(/\s+/g, " ").trim() : "",
     keys: [...bx.querySelectorAll("#phK button")].map(x => x.textContent.trim() + (x.getAttribute("aria-pressed") === "false" ? " (off)" : "")), local: !!document.querySelector(".spark") }; });
   R.first = await look();
   await p.click('#phR [data-r="1Y"]'); await p.waitForTimeout(150); R.year = await look();
@@ -46,7 +46,9 @@ async function run(opts, shot) {
   for (const [label, opts, shot] of [["desktop", { viewport: { width: 1280, height: 900 } }, null], ["phone", devices["Pixel 7"], "pricechart_phone.png"]]) {
     const R = await run(opts, shot);
     ok(R.first.shown && R.first.range === "3M" && R.first.lines === "kb,m,t", `[${label}] chart shows on the card, 3 months, three stores ${JSON.stringify(R.first)}`);
-    ok(/TCGplayer market \$150\.00 \+\$50\.00 \(\+50\.0%\)/.test(R.first.head) && /High \$150\.00 · Low \$100\.00/.test(R.first.head), `[${label}] now, change over 3 months (price on the first day carried in), high and low (${R.first.head})`);
+    ok(/TCGplayer market over 3M: \+\$50\.00 \(\+50\.0%\) now \$150\.00/.test(R.first.head) && /High \$150\.00 · Low \$100\.00/.test(R.first.head), `[${label}] now, change over 3 months (price on the first day carried in), high and low (${R.first.head})`);
+    ok(/TCGplayer market \$150\.00 was \$120\.00 until Oct 15/.test(R.first.mv) && /1 day ?\$0\.00 \(\+0\.0%\)/.test(R.first.mv) && /7 days ?\$0\.00/.test(R.first.mv) && /30 days ?\+\$30\.00 \(\+25\.0%\)/.test(R.first.mv) && /Source: TCGplayer market price, through MTGJSON/.test(R.first.mv) && /Last updated Nov 4/.test(R.first.mv), `[${label}] current, previous recorded price, 1/7/30-day changes, source and last update (${R.first.mv})`);
+    ok(/\$310\.00 was \$300\.00 until Nov 4/.test(R.foil.mv) && /1 day ?\+\$10\.00 \(\+3\.3%\)/.test(R.foil.mv) && /30 days ?\+\$10\.00 \(\+3\.3%\)/.test(R.foil.mv), `[${label}] the same for foil (${R.foil.mv})`);
     ok(/\+\$50\.00 \(\+50\.0%\)/.test(R.year.head) && R.year.axis.startsWith("Nov 5"), `[${label}] 1Y reaches back a year (${R.year.axis})`);
     ok(/\+\$30\.00 \(\+25\.0%\)/.test(R.month.head) && /Low \$120\.00/.test(R.month.head), `[${label}] 1M: change over the month (${R.month.head})`);
     ok(/ \$0\.00 \(\+0\.0%\)/.test(R.week.head) && R.week.lines === "kb,m,t", `[${label}] 1W: flat for the week (${R.week.head})`);
