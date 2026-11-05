@@ -2409,6 +2409,21 @@ const CSV_FIELDS = [
   ["paid", "Purchase price", /^(purchase price|price paid|paid|cost|buy price|acquired price|purchase price usd)$/]
 ];
 function pickCSV(target) { pickFile("", f => csvImport(f, target)); }
+// a text list turned into the same rows a CSV gives: sections ("Commander", "Sideboard", "SB:") become the board column
+function textListRows(lines) {
+  const rows = [["Quantity", "Name", "Set code", "Collector number", "Foil", "Board"]]; let board = "main";
+  // MTGO / older exports: no headings, the sideboard is the group after the one blank line
+  while (lines.length && !lines[lines.length - 1]) lines.pop(); while (lines.length && !lines[0]) lines.shift();
+  const blank = lines.indexOf(""), groups = lines.join("\n").split(/\n\s*\n/);
+  const sideFrom = !lines.some(l => LIST_HEAD.test(l)) && groups.length === 2 ? lines.findIndex((l, i) => i > blank && l) : -1;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i]; if (!l) continue; if (i === sideFrom) board = "sideboard";
+    const h = l.match(LIST_HEAD); if (h) { const w = h[1].toLowerCase(); board = /^command/.test(w) ? "commander" : /^(side|sb)/.test(w) ? "sideboard" : /maybe|consider/.test(w) ? "maybeboard" : /token/.test(w) ? "tokens" : "main"; continue; }
+    const sb = /^SB:\s*/i.test(l), it = parseListText(l)[0]; if (!it) continue;
+    rows.push([String(it.qty), it.name, it.set || "", it.num || "", it.finish === "nonfoil" ? "" : it.finish, sb ? "sideboard" : board]);
+  }
+  return rows;
+}
 function csvRowInfo(r, m) {
   const g = k => m[k] >= 0 ? (r[m[k]] || "").trim() : "";
   const fv = g("foil").toLowerCase();
@@ -2424,7 +2439,10 @@ async function csvImport(file, target) {
   const first = text.replace(/^﻿/, "").split(/\r?\n/)[0] || "";
   const cnt = ch => first.split(ch).length - 1;
   const delim = [",", ";", "\t"].sort((a, b) => cnt(b) - cnt(a))[0];
-  let rows = parseCSV(text, delim);
+  // a plain text list (.txt from Moxfield, Archidekt, MTGO, Arena, or a list typed by hand): one card per line
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const plain = /\.(txt|dec|text|list)$/i.test(file.name) || (lines.length && lines.slice(0, 5).every(l => /^(SB:\s*)?\d+\s*x?\s+\S/i.test(l) || LIST_HEAD.test(l) || /^\/\//.test(l)));
+  let rows = plain ? textListRows(text.replace(/^\uFEFF/, "").split(/\r?\n/).map(l => l.trim())) : parseCSV(text, delim), fromText = plain;
   // skip a leading "sep=," line (Excel) or title rows above the real header
   if (rows.length && /^sep=/i.test(rows[0][0])) rows = rows.slice(1);
   if (rows.length < 2 || rows[0].length < 1) { toast("That file doesn't look like a CSV with card rows."); return; }
@@ -2439,7 +2457,7 @@ async function csvImport(file, target) {
   }
   const fmt = H.includes("binder name") && H.some(h => /scryfall/.test(h)) ? "ManaBox" : H.includes("tradelist count") ? "Deckbox"
     : H.includes("count") && H.includes("edition") && H.includes("purchase price") ? "Moxfield" : H.includes("product id") || H.includes("tcgplayer id") ? "TCGplayer"
-    : H.includes("folder name") ? "Dragon Shield" : "CSV";
+    : H.includes("folder name") ? "Dragon Shield" : fromText ? "text" : "CSV";
   const data = rows.slice(1);
   const isDeck = target.kind === "deck";
   const decks = Object.values(S.decks);
@@ -2452,7 +2470,7 @@ async function csvImport(file, target) {
     const colSel = k => `<select data-col="${k}"><option value="-1">Not in file</option>${head.map((h, i) => `<option value="${i}" ${m[k] === i ? "selected" : ""}>${esc(h || "Column " + (i + 1))}</option>`).join("")}</select>`;
     const fields = CSV_FIELDS.filter(([k]) => isDeck ? k !== "binder" : k !== "board");
     $("#impBody").innerHTML = `<h2>${isDeck ? "Import a deck" : "Import cards"}</h2>
-      <p class="small muted" style="margin:4px 0 12px">${esc(file.name)} · ${data.length.toLocaleString()} rows · ${fmt === "CSV" ? "columns detected automatically" : "looks like a " + fmt + " export"}</p>
+      <p class="small muted" style="margin:4px 0 12px">${esc(file.name)} · ${data.length.toLocaleString()} ${fmt === "text" ? "cards listed · a text list, one card per line" : "rows · " + (fmt === "CSV" ? "columns detected automatically" : "looks like a " + fmt + " export")}</p>
       <div class="stack">
         <div class="box"><div class="kv"><span class="label">Preview</span><span class="small muted num">${total.toLocaleString()} cards in ${usable.length.toLocaleString()} rows</span></div>
           <div style="overflow-x:auto"><table class="ptable"><thead><tr><th>Qty</th><th>Card</th><th>Set</th><th>#</th><th>Finish</th>${isDeck ? "<th>Board</th>" : m.binder >= 0 ? "<th>Binder</th>" : ""}</tr></thead>
@@ -5131,7 +5149,7 @@ function renderDecks() {
   $("#view").innerHTML = `<div class="stack">
     <form id="nd" class="stack" style="gap:8px"><input type="text" id="ndName" placeholder="New deck name, e.g. Atraxa Superfriends" maxlength="60">
       <div class="row"><select id="ndFmt" class="grow" aria-label="Format">${Object.entries(FORMATS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select><button class="btn primary">Create deck</button></div></form>
-    <div class="row wrap"><button class="btn sm" id="ndImp">Import a deck from CSV</button>${(S.meta.deckTrash || []).filter(x => !S.decks[x.deck.id] && Date.now() - x.at < 30 * 864e5).length ? `<button class="btn sm" id="ndTrash">Recently deleted</button>` : ""}${syncOn() ? `<button class="btn sm ghost" id="ndOld">Missing a deck?</button>` : ""}</div>
+    <div class="row wrap"><button class="btn sm" id="ndImp">Import a deck file (CSV or text)</button>${(S.meta.deckTrash || []).filter(x => !S.decks[x.deck.id] && Date.now() - x.at < 30 * 864e5).length ? `<button class="btn sm" id="ndTrash">Recently deleted</button>` : ""}${syncOn() ? `<button class="btn sm ghost" id="ndOld">Missing a deck?</button>` : ""}</div>
     ${decks.length ? decks.map(d => { const st = deckStats(d), ck = checkDeck(d); return `<button class="deck-card" data-d="${esc(d.id)}"><div style="min-width:0"><h3>${esc(d.name)}</h3>
       <div class="small muted num">${FORMATS[d.format] || "Casual"} · ${st.mainN}${st.target ? "/" + st.target : ""} cards · ${money(st.value)}${st.missing ? ` · <span class="down">${st.missing} not owned</span>` : ""}</div>
       ${(d.themes || []).length ? `<div class="small" style="margin-top:2px">${d.themes.map(esc).join(" · ")}</div>` : ""}
@@ -5521,7 +5539,7 @@ function deckMenu(d) {
       <div class="box"><span class="label">Paste a deck list</span>
         <textarea id="pl" placeholder="Commander&#10;1 Atraxa, Praetors' Voice&#10;&#10;Deck&#10;4 Lightning Bolt&#10;2 Counterspell (MH2) 267&#10;1x Sol Ring&#10;&#10;Sideboard&#10;2 Pyroblast"></textarea>
         <button class="btn primary" id="plGo">Add these cards</button><div class="status small" id="plMsg"></div>
-        <button class="btn" id="dCsv">Or import a CSV file into this deck</button></div>
+        <button class="btn" id="dCsv">Or import a file into this deck (CSV or .txt)</button></div>
       <div class="box"><span class="label">Export</span><textarea id="ex" readonly>${esc(deckText(d))}</textarea><button class="btn" id="cp">Copy list</button></div>
       <div class="box"><span class="label">Missing cards</span><div class="row wrap"><button class="btn" id="miss">Buy what's missing</button></div><span class="small muted">Cost, cheapest printings, a TCGplayer list, or put them on your wishlist.</span></div>
       <div class="box"><button class="btn danger" id="del">Delete deck</button>

@@ -79,4 +79,28 @@ My Wants,list,Lightning Bolt,M10,Magic 2010,146,normal,common,4,2,,0.5
   const dc = Object.values(d.cards);
   ok(dc.find(c => c.name === "Lightning Bolt" && c.qty === 4) && dc.find(c => c.name === "Counterspell" && c.side), "main + sideboard placed; bad set retried by name");
   ok(!dc.find(c => c.name === "Sol Ring") && /Skipped 1/.test(r.result) && /newest printing/.test(r.result), "maybeboard skipped, guess noted: " + r.result.slice(0, 160));
+  // text files (.txt): Arena / Moxfield style with sections, and MTGO style (sideboard after a blank line)
+  r = await run(`Commander
+1 Atraxa, Praetors' Voice
+
+Deck
+4 Lightning Bolt (2X2) 117
+2x Counterspell
+1 Sol Ring *F*
+
+Sideboard
+3 Island
+`, "atraxa.txt", { kind: "deck", id: "__new" });
+  const dk = Object.values(r.S.decks)[0], cs_ = k => Object.values(dk ? dk.cards : {}).filter(c => k(c)).map(c => `${c.qty}${c.name.split(/[ ,]/)[0]}${c.set ? "/" + c.set : ""}`).sort().join(" ");
+  ok(/a text list, one card per line/.test(r.preview), "a .txt deck file is read as a list: " + r.preview.slice(0, 110));
+  ok(dk && dk.name === "atraxa" && cs_(c => !c.side) === "1Atraxa/c16 1Sol/cmm 2Counterspell/mh2 4Lightning/2x2" && cs_(c => c.side) === "3Island/fdn", "new deck named after the file; main, sideboard and the exact printing kept: " + (dk ? cs_(() => true) : "no deck"));
+  ok(dk && dk.cmdr.length === 1 && dk.format === "commander", "the Commander section becomes the commander");
+  r = await run(`4 Lightning Bolt
+2 Counterspell
+
+3 Island`, "mtgo-deck.txt", { kind: "deck", id: "__new" });
+  const dk2 = Object.values(r.S.decks)[0];
+  ok(dk2 && Object.values(dk2.cards).filter(c => c.side).map(c => c.name).join() === "Island" && Object.values(dk2.cards).filter(c => !c.side).length === 2, "MTGO style: the group after the blank line is the sideboard");
+  r = await run(`4 Lightning Bolt\n1 Sol Ring`, "deck.csv", { kind: "deck", id: "__new" });
+  ok(/a text list/.test(r.preview) && Object.values(Object.values(r.S.decks)[0].cards).length === 2, "a list saved with the wrong extension is still recognised from its lines");
 })();
