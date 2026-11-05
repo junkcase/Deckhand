@@ -47,13 +47,12 @@ jobs:
         run: |
           pip install -q ijson
           UA="Deckhand/1.0 (github.com/junkcase/Deckhand)"
-          curl -sf -H "User-Agent: $UA" -H "Accept: application/json" -o "$RUNNER_TEMP/bulk.json" https://api.scryfall.com/bulk-data || true
-          python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(json.dumps([b for b in d['data'] if b.get('type') == 'default_cards'][0])[:900])" "$RUNNER_TEMP/bulk.json" || head -c 900 "$RUNNER_TEMP/bulk.json"
-          URL=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print([b['download_uri'] for b in d['data'] if b.get('type') == 'default_cards'][0])" "$RUNNER_TEMP/bulk.json" || true); echo "card file: ${URL:0:120}"; [ "${URL:0:8}" = "https://" ] \
-            && curl -sf --compressed -H "User-Agent: $UA" -o "$RUNNER_TEMP/cards.json" "$URL" \
-            && python3 tools/opportunities.py "$RUNNER_TEMP/out" "$RUNNER_TEMP/cards.json" \
+          URL=$(curl -sf -H "User-Agent: $UA" -H "Accept: application/json" https://api.scryfall.com/bulk-data | python3 -c "import json,sys; b=[x for x in json.load(sys.stdin)['data'] if x['type'] == 'default_cards'][0]; print(b.get('jsonl_download_uri') or b.get('download_uri'))" || true)
+          echo "card file: $URL"; [ "${URL:0:8}" = "https://" ] \
+            && curl -sf -H "User-Agent: $UA" -o "$RUNNER_TEMP/cards.jsonl$([[ $URL == *.gz ]] && echo .gz)" "$URL" \
+            && python3 tools/opportunities.py "$RUNNER_TEMP/out" "$(ls "$RUNNER_TEMP"/cards.jsonl* | head -1)" \
             || echo "::warning::Opportunities not updated today; keeping yesterday's copy"
-          rm -f "$RUNNER_TEMP/cards.json"
+          rm -f "$RUNNER_TEMP"/cards.jsonl*
       - name: Combos (Commander Spellbook)
         run: |
           pip install -q ijson

@@ -5,7 +5,7 @@ factors in plain words. Nothing here predicts prices, and nothing is called "und
 
 Inputs (all from the same run): out/history (price history: t/tf TCGplayer market, kb/kbf Card Kingdom buylist,
 m/mf Mana Pool lowest; days since 2020-01-01), out/manapool and out/cardkingdom (today's store prices), Scryfall's
-default-cards file (printings, set, EDHREC rank, Reserved List). Out: out/opps/all.json, out/opps/ranks.json (EDHREC
+default-cards file, one card per line (printings, set, EDHREC rank, Reserved List). Out: out/opps/all.json, out/opps/ranks.json (EDHREC
 rank recorded daily, so a real "rising demand" signal can exist once there's a month of it).
 
 Usage: python3 opportunities.py OUT_DIR SCRYFALL_DEFAULT_CARDS_JSON [TODAY_DAY]
@@ -59,22 +59,35 @@ def meta_date(path):
 
 def scryfall_cards(path):
     """id -> printing facts; oracle -> printings summary. Streams the ~500 MB file."""
-    import ijson
+    import gzip
     cards, oracle = {}, {}
-    with open(path, "rb") as fh:
-        for c in ijson.items(fh, "item", use_float=True):
-            if c.get("digital") or "paper" not in (c.get("games") or []) or c.get("layout") in ("art_series", "token", "double_faced_token", "emblem"):
-                continue
-            o = c.get("oracle_id") or (c.get("card_faces") or [{}])[0].get("oracle_id")
-            if not o:
-                continue
-            cards[c["id"]] = {"name": c["name"], "set": c["set"], "setName": c["set_name"], "num": c["collector_number"], "rarity": c.get("rarity"),
-                              "o": o, "er": c.get("edhrec_rank"), "basic": "Basic Land" in (c.get("type_line") or "")}
-            s = oracle.setdefault(o, {"sets": {}, "reserved": False, "er": None})
-            s["reserved"] = s["reserved"] or bool(c.get("reserved"))
-            if c.get("edhrec_rank"):
-                s["er"] = c["edhrec_rank"]
-            s["sets"].setdefault(c["set"], (c.get("released_at") or "", c.get("set_type") or "", c["set_name"]))
+
+    def items():          # Scryfall's file is one card per line (.jsonl, often gzipped); an older single JSON list also works
+        opener = gzip.open if path.endswith(".gz") else open
+        with opener(path, "rb") as fh:
+            first = fh.read(1).lstrip()
+        with opener(path, "rb") as fh:
+            if first == b"[":
+                import ijson
+                yield from ijson.items(fh, "item", use_float=True)
+            else:
+                for line in fh:
+                    line = line.strip().rstrip(b",")
+                    if line and line not in (b"[", b"]"):
+                        yield json.loads(line)
+    for c in items():
+        if c.get("digital") or "paper" not in (c.get("games") or []) or c.get("layout") in ("art_series", "token", "double_faced_token", "emblem"):
+            continue
+        o = c.get("oracle_id") or (c.get("card_faces") or [{}])[0].get("oracle_id")
+        if not o:
+            continue
+        cards[c["id"]] = {"name": c["name"], "set": c["set"], "setName": c["set_name"], "num": c["collector_number"], "rarity": c.get("rarity"),
+                          "o": o, "er": c.get("edhrec_rank"), "basic": "Basic Land" in (c.get("type_line") or "")}
+        s = oracle.setdefault(o, {"sets": {}, "reserved": False, "er": None})
+        s["reserved"] = s["reserved"] or bool(c.get("reserved"))
+        if c.get("edhrec_rank"):
+            s["er"] = c["edhrec_rank"]
+        s["sets"].setdefault(c["set"], (c.get("released_at") or "", c.get("set_type") or "", c["set_name"]))
     return cards, oracle
 
 
@@ -101,7 +114,7 @@ def reprint_risks(o, today):
 
 
 def main(out, scry, today=None):
-    today = today or (datetime.datetime.utcnow().date() - EPOCH).days
+    today = today or (datetime.datetime.now(datetime.timezone.utc).date() - EPOCH).days
     hist = load_shards(os.path.join(out, "history"))
     mp, ck = load_shards(os.path.join(out, "manapool")), load_shards(os.path.join(out, "cardkingdom"))
     cards, oracle = scryfall_cards(scry)
