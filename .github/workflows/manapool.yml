@@ -47,7 +47,8 @@ jobs:
         run: |
           pip install -q ijson
           UA="Deckhand/1.0 (github.com/junkcase/Deckhand)"
-          URL=$(curl -sf -H "User-Agent: $UA" -H "Accept: application/json" https://api.scryfall.com/bulk-data | python3 -c "import json,sys; print([b['download_uri'] for b in json.load(sys.stdin)['data'] if b['type'] == 'default_cards'][0])") \
+          curl -sf -H "User-Agent: $UA" -H "Accept: application/json" -o "$RUNNER_TEMP/bulk.json" https://api.scryfall.com/bulk-data || true
+          URL=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print([b.get('download_uri') or b.get('uri') for b in d['data'] if b.get('type') == 'default_cards'][0])" "$RUNNER_TEMP/bulk.json" || head -c 600 "$RUNNER_TEMP/bulk.json") \
             && curl -sf --compressed -H "User-Agent: $UA" -o "$RUNNER_TEMP/cards.json" "$URL" \
             && python3 tools/opportunities.py "$RUNNER_TEMP/out" "$RUNNER_TEMP/cards.json" \
             || echo "::warning::Opportunities not updated today; keeping yesterday's copy"
