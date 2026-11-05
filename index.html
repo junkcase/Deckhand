@@ -2554,7 +2554,9 @@ const SORTS = { newest: ["released", "desc", "Newest printing first"], oldest: [
 const TYPE_OPTS = ["Creature", "Instant", "Sorcery", "Artifact", "Enchantment", "Planeswalker", "Land", "Battle", "Legendary"];
 const RARITIES = [["common", "Common"], ["uncommon", "Uncommon"], ["rare", "Rare"], ["mythic", "Mythic"]];
 const defaultF = () => ({ colors: [], cmode: "incl", type: "", rarity: [], format: "", mvMin: "", mvMax: "", priceMax: "", set: "" });
-const sv = { q: "", prints: false, sort: "newest", open: false, f: defaultF(), results: [], next: null, total: 0, busy: false, err: "", ran: "" };
+const sv = { q: "", prints: false, sort: "newest", open: false, f: defaultF(), results: [], next: null, total: 0, busy: false, err: "", ran: "", keepQ: "", refocus: false };
+// after a name is picked the box empties, ready for the next card; the search it ran is kept for sorting and filters
+const searchQ = () => { const i = $("#sq"), v = i ? i.value.trim() : ""; return v || sv.keepQ; };
 function applySearchPrefs() { const sp = S.meta.search; if (sp) { sv.prints = !!sp.prints; sv.sort = SORTS[sp.sort] ? sp.sort : "newest"; sv.f = Object.assign(defaultF(), sp.f || {}); } }
 applySearchPrefs();
 function saveSearchPrefs() { S.meta.search = { prints: sv.prints, sort: sv.sort, f: sv.f }; save(); }
@@ -2738,7 +2740,7 @@ function renderSearch() {
   const f = sv.f, fc = filterCount(f);
   $("#view").innerHTML = `<div class="stack">
     <span class="seg" id="sMode"><button data-m="search" aria-pressed="true">Search cards</button><button data-m="staples" aria-pressed="false">Staples</button></span>
-    <form id="sf" class="row"><div class="ac grow"><input type="search" id="sq" placeholder="Start typing a card name" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(sv.q)}"><ul id="sac" hidden></ul></div><button class="btn primary">Search</button></form>
+    <form id="sf" class="row"><div class="ac grow"><input type="search" id="sq" placeholder="Start typing a card name" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(sv.keepQ && sv.q === sv.keepQ ? "" : sv.q)}"><ul id="sac" hidden></ul></div><button class="btn primary">Search</button></form>
     <div class="row wrap">
       <button type="button" class="btn sm ${fc ? "on" : ""}" id="fTog" aria-expanded="${sv.open}">Filters${fc ? ` · ${fc}` : ""}</button>
       <select id="sSort" aria-label="Sort results" class="grow">${Object.entries(SORTS).map(([k, v]) => `<option value="${k}" ${sv.sort === k ? "selected" : ""}>${v[2]}</option>`).join("")}</select>
@@ -2769,23 +2771,27 @@ function renderSearch() {
     <div id="sres"></div></div>`;
   const inp = $("#sq");
   $("#sMode").onclick = e => { const b = e.target.closest("button"); if (b && b.dataset.m !== "search") { sv.mode = b.dataset.m; renderSearch(); } };
-  const rerun = debounce(() => { if (inp.value.trim() || filterQuery(sv.f)) runSearch(inp.value); }, 500);
+  const rerun = debounce(() => { if (searchQ() || filterQuery(sv.f)) runSearch(searchQ()); }, 500);
+  inp.addEventListener("input", () => { if (inp.value.trim()) sv.keepQ = ""; });
   const changed = () => { saveSearchPrefs(); const n = filterCount(sv.f), b = $("#fTog"); b.textContent = "Filters" + (n ? ` · ${n}` : ""); b.classList.toggle("on", !!n); rerun(); };
   $("#sf").onsubmit = e => { e.preventDefault(); $("#sac").hidden = true; runSearch(inp.value); };
   $("#fTog").onclick = () => { sv.open = !sv.open; $("#fp").hidden = !sv.open; $("#fTog").setAttribute("aria-expanded", sv.open); };
-  $("#sSort").onchange = e => { sv.sort = e.target.value; saveSearchPrefs(); if (sv.ran) runSearch(inp.value); };
-  $("#sp").onchange = e => { sv.prints = e.target.checked; saveSearchPrefs(); if (sv.ran) runSearch(inp.value); };
+  $("#sSort").onchange = e => { sv.sort = e.target.value; saveSearchPrefs(); if (sv.ran) runSearch(searchQ()); };
+  $("#sp").onchange = e => { sv.prints = e.target.checked; saveSearchPrefs(); if (sv.ran) runSearch(searchQ()); };
   $("#fCol").onclick = e => { const b = e.target.closest("button"); if (!b) return; const c = b.dataset.c, i = f.colors.indexOf(c); i < 0 ? f.colors.push(c) : f.colors.splice(i, 1); b.setAttribute("aria-pressed", i < 0); changed(); };
   $("#fRar").onclick = e => { const b = e.target.closest("button"); if (!b) return; const r = b.dataset.r, i = f.rarity.indexOf(r); i < 0 ? f.rarity.push(r) : f.rarity.splice(i, 1); b.setAttribute("aria-pressed", i < 0); changed(); };
   $("#fCm").onchange = e => { f.cmode = e.target.value; if (f.colors.length) changed(); else saveSearchPrefs(); };
   $("#fType").onchange = e => { f.type = e.target.value; changed(); };
   $("#fFmt").onchange = e => { f.format = e.target.value; changed(); };
   [["#fMin", "mvMin"], ["#fMax", "mvMax"], ["#fPrice", "priceMax"], ["#fSet", "set"]].forEach(([id, k]) => $(id).oninput = e => { f[k] = e.target.value; changed(); });
-  $("#fClear").onclick = () => { sv.f = defaultF(); saveSearchPrefs(); const keep = sv.open; renderSearch(); sv.open = keep; if (inp.value.trim() || sv.ran) runSearch($("#sq").value); };
-  $("#fApply").onclick = () => { sv.open = false; $("#fp").hidden = true; $("#fTog").setAttribute("aria-expanded", "false"); runSearch(inp.value); };
+  $("#fClear").onclick = () => { sv.f = defaultF(); saveSearchPrefs(); const keep = sv.open; renderSearch(); sv.open = keep; if (searchQ() || sv.ran) runSearch(searchQ()); };
+  $("#fApply").onclick = () => { sv.open = false; $("#fp").hidden = true; $("#fTog").setAttribute("aria-expanded", "false"); runSearch(searchQ()); };
   const sx = $("#sx"); if (sx) sx.onclick = e => { const b = e.target.closest("button"); if (b) { inp.value = b.dataset.q; runSearch(b.dataset.q); } };
-  attachAutocomplete(inp, $("#sac"), name => { inp.value = `!"${name}"`; sv.prints = true; $("#sp").checked = true; saveSearchPrefs(); runSearch(inp.value); }, { enterPicks: false });
+  attachAutocomplete(inp, $("#sac"), name => { sv.keepQ = `!"${name}"`; sv.prints = true; $("#sp").checked = true; saveSearchPrefs(); runSearch(sv.keepQ);
+    inp.value = ""; inp.focus();        // ready for the next name
+  }, { enterPicks: false });
   drawResults();
+  if (sv.refocus && !$("#sheetRoot").children.length) { sv.refocus = false; inp.focus(); }      // back from a card: type the next one straight away
 }
 async function runSearch(q) {
   q = (q || "").trim();
@@ -2808,12 +2814,13 @@ function drawResults() {
   if (sv.busy && !sv.results.length) { el.innerHTML = `<p class="muted">Searching…</p>`; return; }
   if (sv.err) { el.innerHTML = `<p class="muted">${esc(sv.err)}</p>`; return; }
   if (!sv.results.length) { el.innerHTML = `<p class="small muted">Start typing and pick a name to see every printing, newest first. Or open Filters to browse by color, type, rarity, format, mana value, price or set. Scryfall syntax like <b>t:dragon o:flying</b> works too.</p>`; return; }
-  el.innerHTML = `<div class="grid">${sv.results.map((c, i) => `<div class="tile"><button data-i="${i}" aria-label="${esc(c.name)}, ${esc(c.set_name)}">
+  const picked = sv.keepQ && sv.q === sv.keepQ ? sv.keepQ.replace(/^!"|"$/g, "") : "";
+  el.innerHTML = `${picked ? `<p class="small muted" style="margin:0 0 6px">Printings of <b>${esc(picked)}</b></p>` : ""}<div class="grid">${sv.results.map((c, i) => `<div class="tile"><button data-i="${i}" aria-label="${esc(c.name)}, ${esc(c.set_name)}">
       ${imgOf(c) ? `<img loading="lazy" src="${esc(imgOf(c, "normal"))}" alt="">` : `<span class="fallback">${esc(c.name)}</span>`}
       ${priceOf(c) != null ? `<span class="pr num">${money(priceOf(c))}</span>` : ""}${(t => t ? `<span class="tg tg-${t.k}" title="${esc(t.tip)}">${esc(t.label)}</span>` : "")(cardTags(c)[0])}</button>
       <span class="cap num">${esc(c.set.toUpperCase())} · ${esc((c.released_at || "").slice(0, 4))}</span></div>`).join("")}</div>
     ${sv.next ? `<p><button class="btn" id="smore" ${sv.busy ? "disabled" : ""}>${sv.busy ? "Loading…" : "Load more"}</button></p>` : ""}`;
-  el.querySelector(".grid").onclick = e => { const b = e.target.closest("button"); if (b) openCard(sv.results[+b.dataset.i]); };
+  el.querySelector(".grid").onclick = e => { const b = e.target.closest("button"); if (b) { if (sv.keepQ && sv.q === sv.keepQ) sv.refocus = true; openCard(sv.results[+b.dataset.i]); } };
   const m = $("#smore"); if (m) m.onclick = async () => {
     sv.busy = true; drawResults();
     try { const r = await sf(sv.next); sv.results.push(...(r.data || [])); sv.next = r.has_more ? r.next_page : null; } catch (e) { toast(e.message); }
@@ -4917,9 +4924,10 @@ function ownedPrinting(name) {
   const best = Object.values(by).sort((a, b) => b.n - a.n || (b.e.added || 0) - (a.e.added || 0))[0];
   return best ? best.e : null;
 }
+let deckRefocus = false;
 function openAfterAdd(d, card) {
   if (S.settings && S.settings.openAfterAdd === false) return;
-  const key = card.id + "|0"; if (d.cards[key]) openCard(d.cards[key], null, null, { deck: d, key });
+  const key = card.id + "|0"; if (d.cards[key]) { openCard(d.cards[key], null, null, { deck: d, key }); deckRefocus = true; }      // back to the Add box when it closes
 }
 function parseAddLine(t) {
   let s_ = t.trim(), qty = 1, set = null, num = null;
@@ -5027,23 +5035,24 @@ function renderDeck(d) {
     try {
       const c = P.num ? await sf(`/cards/${encodeURIComponent(P.set)}/${encodeURIComponent(P.num)}`, null, { now: true }) : await sf(`/cards/named?exact=${encodeURIComponent(P.name)}&set=${encodeURIComponent(P.set)}`, null, { now: true });
       if (P.name && P.num && !nameEq(c, P.name)) { toast(`${P.set.toUpperCase()} #${P.num} is ${c.name}, not ${P.name}. Check the number.`); return; }
-      $("#dAdd").value = ""; addToDeck(d, c, P.qty, false); renderDeck(d);
+      $("#dAdd").value = ""; deckRefocus = true; addToDeck(d, c, P.qty, false); renderDeck(d);
       toast(`Added ${P.qty > 1 ? P.qty + "× " : ""}${c.name} (${c.set.toUpperCase()} #${c.collector_number})`); openAfterAdd(d, c);
     } catch (er) { toast(er.status === 404 ? `No card found for ${P.set.toUpperCase()}${P.num ? " #" + P.num : ""}${P.name && !P.num ? " named " + P.name : ""}` : `Couldn't add it: ${er.message}`); }
   });
   const addedMsg = (name, qty, c) => { const al = allocFor(name, d.id); toast(`Added ${qty > 1 ? qty + "× " : ""}${name} (${(c.set || "").toUpperCase()} #${c.num || c.collector_number || ""}) · ${al.own ? `you own ${al.own}${al.other ? `, ${al.other} in other decks` : ""}` : "not in your collection"}`); };
   attachAutocomplete($("#dAdd"), $("#dAc"), async name => {
-    const qty = parseAddLine($("#dAdd").value).qty; $("#dAdd").value = "";
+    const qty = parseAddLine($("#dAdd").value).qty; $("#dAdd").value = ""; deckRefocus = true;
     const mine = ownedPrinting(name);
     if (mine) { addToDeck(d, mine, qty, false); renderDeck(d); openAfterAdd(d, mine); addedMsg(name, qty, mine); return; }       // a printing you own, no lookup needed
     try { const c_ = await sf("/cards/named?exact=" + encodeURIComponent(name), null, { now: true }); addToDeck(d, c_, qty, false); renderDeck(d); openAfterAdd(d, c_); addedMsg(name, qty, slim(c_)); } catch (e) { toast(`Couldn't add “${name}”: ${e.message}`); }
   }, { qty: true, onPrints: name => {
-    const qty = parseAddLine($("#dAdd").value).qty; $("#dAdd").value = "";
+    const qty = parseAddLine($("#dAdd").value).qty; $("#dAdd").value = ""; deckRefocus = true;
     const mine = ownedPrinting(name);
     openSheet(`<h2>${esc(name)}</h2><p class="small muted" style="margin:4px 0 0">Tap a printing to add ${qty > 1 ? qty + " of it" : "it"} to “${esc(d.name)}”.${mine ? " Printings you own are marked." : ""}</p><div id="addPrBox"></div>`, () => render());
     showPrints({ name, id: mine ? mine.id : "" }, picked => { addToDeck(d, picked, qty, false); closeSheet(); renderDeck(d); addedMsg(name, qty, slim(picked)); }, $("#addPrBox"));
   } });
   $("#dTabs").onclick = e => { const b = e.target.closest("button"); if (!b) return; deckTab[d.id] = b.dataset.t; renderDeck(d); };
+  if (deckRefocus && !$("#sheetRoot").children.length) { deckRefocus = false; $("#dAdd").focus(); }      // card added: the box is empty and ready for the next one
   const dt = deckTab[d.id] || "cards";
   if (dt === "suggest") drawSuggest(d); else if (dt === "balance") drawBalance(d); else if (dt === "upgrade") drawUpgrade(d);
   const pk = $("#dPick"), pk2 = $("#dPick2"); if (pk) drawCmdrPicker(d, pk, false); else if (pk2) drawCmdrPicker(d, pk2, true);
