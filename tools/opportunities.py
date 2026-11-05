@@ -82,7 +82,7 @@ def scryfall_cards(path):
         if not o:
             continue
         cards[c["id"]] = {"name": c["name"], "set": c["set"], "setName": c["set_name"], "num": c["collector_number"], "rarity": c.get("rarity"),
-                          "o": o, "er": c.get("edhrec_rank"), "basic": "Basic Land" in (c.get("type_line") or "")}
+                          "o": o, "er": c.get("edhrec_rank"), "stype": c.get("set_type"), "basic": "Basic Land" in (c.get("type_line") or "")}
         s = oracle.setdefault(o, {"sets": {}, "reserved": False, "er": None})
         s["reserved"] = s["reserved"] or bool(c.get("reserved"))
         if c.get("edhrec_rank"):
@@ -155,13 +155,14 @@ def main(out, scry, today=None):
         # 1. big movers: a sustained rise (medians at both ends, so one odd sale doesn't count)
         if mnow and m7 and m30 and mnow >= 100 and ch7 is not None and ch30 is not None and ch30 >= 20 and mnow <= m30 * 10:
             ev = [f"TCGplayer market {money(m30)} a month ago → {money(mnow)} now ({ch30:+.0f}%), {ch7:+.0f}% in the last week."]
-            r = list(risks) + thin + (["Most of the rise came in the last week: recent jumps often settle back."] if ch7 >= 0.6 * ch30 else [])
+            r = list(risks) + thin + (["Most of the rise came in the last week: recent jumps often settle back."] if ch7 >= 0.6 * ch30 else []) \
+                + (["The price more than tripled in a month: moves this size on cheaper cards often come from a few sales or a buyout."] if mnow >= m30 * 3 else [])
             S["movers"].append(dict(row, ev=ev, risk=r, score=ch30))
         # 2. store price gaps, same day
-        if now and now >= 100 and krow and krow[0] and krow[0] >= now * 1.05 and krow[0] <= now * 3:
+        if now and now >= 100 and krow and krow[0] and krow[0] >= now * 1.05 and krow[0] <= now * 1.5 and c["stype"] != "memorabilia":      # a buylist far above market is almost always a mismatched printing
             S["gaps"].append(dict(row, ev=[f"Card Kingdom is paying {money(krow[0])} cash on its buylist; TCGplayer market is {money(now)} ({pct(krow[0], now):+.0f}%)." + (f" They want {krow[2]}." if krow[2] else "")],
                                   risk=risks + ["Buylist prices and wanted quantities change daily; check before selling.", "TCGplayer market is the price of recent sales, not a guaranteed buy price."], score=pct(krow[0], now)))
-        if now and now >= 200 and mrow and mrow[0] and mrow[0] <= now * 0.7 and mrow[0] >= now * 0.25:
+        if now and now >= 200 and mrow and mrow[0] and mrow[0] <= now * 0.7 and mrow[0] >= now * 0.25 and c["stype"] != "memorabilia":
             S["gaps"].append(dict(row, ev=[f"Mana Pool's lowest listing is {money(mrow[0])}, {abs(pct(mrow[0], now)):.0f}% below TCGplayer market {money(now)}."],
                                   risk=risks + ["The lowest listing may be a single copy, a worse condition or a different language.", "TCGplayer market is the price of recent sales, not a guaranteed sell price."], score=-pct(mrow[0], now)))
         # 3. played a lot for its price (the cheapest priced printing of each card)
@@ -172,11 +173,11 @@ def main(out, scry, today=None):
                                       risk=risks + ["Play demand doesn't mean the price will rise: popular cards are often reprinted to keep them cheap."], score=-o["er"])
         # 4. at a 90-day low after a higher price (the history must cover most of the 90 days)
         if t and now and now >= 200 and t[0][0] <= today - 75:
-            span = [at_day(t, d) for d in range(today - 90, today + 1)]
-            span = [v for v in span if v is not None]
-            hi = max(span)
-            if now <= min(span) and now <= hi * 0.75:
-                hid = max(d for d in range(today - 90, today + 1) if at_day(t, d) == hi)
+            span = [v for v in (at_day(t, d) for d in range(today - 90, today + 1)) if v is not None]
+            meds = [(med(t, d - 2, d + 2), d) for d in range(today - 88, today - 2)]
+            meds = [m for m in meds if m[0] is not None]
+            hi, hid = max(meds) if meds else (None, None)
+            if hi and now <= min(span) and now <= hi * 0.75 and hi <= now * 4:
                 S["lows"].append(dict(row, ev=[f"At its lowest TCGplayer price in 90 days: {money(now)}, down from {money(hi)} on {(EPOCH + datetime.timedelta(days=hid)).isoformat()}."],
                                       risk=risks + thin + ["A falling price can keep falling: a low isn't a floor."], score=pct(hi, now)))
         # 5. rising demand: EDHREC rank improving over 30+ days of records
