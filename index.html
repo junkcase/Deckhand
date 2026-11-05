@@ -2753,10 +2753,12 @@ function parseListText(text) {
     let finish = "nonfoil";
     if (/\*F\*|\(foil\)|\s-\s*foil\b|\bfoil$/i.test(l)) { finish = "foil"; l = l.replace(/\s*(\*F\*|\(foil\)|-\s*foil\b|\bfoil$)/ig, " ").trim(); }
     if (/\*E\*|\(etched\)/i.test(l)) { finish = "etched"; l = l.replace(/\s*(\*E\*|\(etched\))/ig, " ").trim(); }
-    l = l.replace(/^SB:\s*/i, "").replace(/\s+\$\s?\d[\d,]*(\.\d{1,2})?\s*$/, "").replace(/\s+\d+\.\d{2}\s*$/, "").trim();      // a price at the end
+    l = l.replace(/^SB:\s*/i, "");
+    let price = null; const pm = l.match(/\s+\$\s?(\d[\d,]*(?:\.\d{1,2})?)\s*$/) || l.match(/\s+(\d+\.\d{2})\s*$/);      // a price at the end
+    if (pm) { price = parseFloat(pm[1].replace(/,/g, "")); l = l.slice(0, pm.index).trim(); }
     const P = parseAddLine(l.replace(/^(\d+)x\s+/i, "$1 ")); if (!P.name && !P.set) continue;
     const name = P.name.replace(/\s+/g, " ").trim();
-    out.push({ id: uid(), line: raw.trim(), qty: P.qty, name, set: P.set, num: P.num, finish, card: null, st: "todo" });
+    out.push(Object.assign({ id: uid(), line: raw.trim(), qty: P.qty, name, set: P.set, num: P.num, finish, card: null, st: "todo" }, price != null && isFinite(price) ? { price, qty0: P.qty } : {}));
   }
   return out;
 }
@@ -2779,6 +2781,9 @@ function setListCard(it, c, guessed) {
   if (!it.card.finishes.includes(it.finish)) it.finish = it.card.finishes[0] || "nonfoil";
   if (it.st === "missing") it.st = "todo";
 }
+// what one copy cost, from the price on the list line: only when the list says its prices are what was paid
+const listPaid = (L, it) => { if (!L.paid || it.price == null) return null; const each = L.perLine ? it.price / (it.qty0 || it.qty || 1) : it.price; return Math.round(each * 100) / 100; };
+const listSpent = L => (L.items || []).reduce((a, it) => { const p = listPaid(L, it); return a + (p != null ? p * it.qty : 0); }, 0);
 const listLeft = l => (l.items || []).filter(it => it.st === "todo").reduce((a, it) => a + it.qty, 0);
 const listDone = l => (l.items || []).filter(it => it.st === "added").reduce((a, it) => a + it.qty, 0);
 // lists with cards still to add: "Incoming", not in the collection yet
@@ -2805,12 +2810,15 @@ function drawListIndex(v) {
       <input type="text" id="lsName" maxlength="60" placeholder="Name, e.g. Mana Pool order Nov 5">
       <textarea id="lsText" rows="7" placeholder="One card per line, e.g.&#10;4 Lightning Bolt&#10;1 Sol Ring (CMM) 410&#10;4x Kira Nerys, Firebrand $0.76&#10;Counterspell"></textarea>
       <label class="toggle"><input type="checkbox" id="lsOrder"> It's an order (marked “Order”, so you know it's coming in the mail)</label>
+      <label class="toggle"><input type="checkbox" id="lsPaid"> The prices on the list are what I paid: save them as “Paid each”</label>
       <div class="row"><button class="btn primary" id="lsGo">Look up the cards</button><span class="small muted grow" id="lsMsg">${esc(lv.msg)}</span></div>
       <span class="small muted">Works with lists copied or exported from Mana Pool, TCGplayer, Moxfield, Archidekt and MTG Arena. Section headings and prices are ignored. The cards wait under Incoming and only go into your collection when you add them.</span></div>
     ${way.length ? `<h2 class="sec">Incoming</h2><p class="small muted" style="margin:-4px 0 4px">Not in your collection yet. Open a list to check each card and add it.</p><div class="stack" style="gap:0">${way.map(row).join("")}</div>` : ""}
     ${rest.length ? `<h2 class="sec">Finished</h2><div class="stack" style="gap:0">${rest.map(row).join("")}</div>` : ""}</div>`;
   lv.msg = "";
   v.querySelectorAll("[data-list]").forEach(b => b.onclick = () => { lv.open = b.dataset.list; lv.idx = -1; renderLists(); window.scrollTo(0, 0); });
+  let paidTouched = false; $("#lsPaid").onchange = () => { paidTouched = true; };
+  $("#lsOrder").onchange = e => { if (!paidTouched) $("#lsPaid").checked = e.target.checked; };       // an order's prices are what you paid
   $("#lsGo").onclick = async () => {
     const items = parseListText($("#lsText").value), msg = $("#lsMsg");
     if (!items.length) { msg.textContent = "Paste one card per line, like “4 Lightning Bolt”."; return; }
@@ -2819,7 +2827,7 @@ function drawListIndex(v) {
     const btn = $("#lsGo"); btn.disabled = true; msg.textContent = `Looking up ${items.length} card${items.length === 1 ? "" : "s"}…`;
     try { await lookupList(items, (d, n) => { if (msg.isConnected) msg.textContent = `Looking up ${d} of ${n}…`; }); }
     catch (e) { btn.disabled = false; msg.textContent = "Lookup failed: " + String(e.message).replace(/\.$/, "") + ". Nothing was saved; try again."; return; }
-    S.lists[id] = { id, name, order, created: now, updated: now, items };
+    S.lists[id] = { id, name, order, paid: $("#lsPaid").checked && items.some(it => it.price != null), created: now, updated: now, items };
     save(); lv.open = id; lv.idx = -1; if (tab === "search" && sv.mode === "lists") renderLists();
   };
 }
@@ -2832,7 +2840,7 @@ function drawList(v, L) {
   const stLabel = x => x.st === "added" ? `<span class="chip ok">Added ${x.qty}</span>` : x.st === "skipped" ? `<span class="chip">Skipped</span>` : x.st === "missing" ? `<span class="chip warn">Not found</span>` : `<span class="chip">To do</span>`;
   v.innerHTML = `<div class="stack">
     <div class="row wrap"><button class="btn sm ghost" id="lBack">← All lists</button><span class="grow"></span>${left ? `<span class="chip acc">Incoming${L.order ? " · order" : ""}</span>` : `<span class="chip ok">All done</span>`}</div>
-    <div class="row wrap" style="align-items:baseline"><h2 class="grow" style="margin:0">${esc(L.name)}</h2><span class="num small muted">${done} of ${n} added${left ? ` · ${left} to go` : ""}</span></div>
+    <div class="row wrap" style="align-items:baseline"><h2 class="grow" style="margin:0">${esc(L.name)}</h2><span class="num small muted">${done} of ${n} added${left ? ` · ${left} to go` : ""}${L.paid ? ` · ${L.order ? "order" : "list"} total ${money(listSpent(L))}` : ""}</span></div>
     <div class="meter"><div style="width:${n ? (done / n * 100).toFixed(1) : 0}%"></div></div>
     ${left ? `<span class="small muted">The ${left} card${left === 1 ? "" : "s"} still to go ${left === 1 ? "isn't" : "aren't"} in your collection until you add ${left === 1 ? "it" : "them"}.</span>` : ""}
     ${missing.length ? `<div class="box stack" style="gap:6px"><span class="small"><b>${missing.length} line${missing.length === 1 ? "" : "s"} not found.</b> Type the right name and press Enter:</span>
@@ -2844,7 +2852,8 @@ function drawList(v, L) {
           <div class="name" style="font-weight:700;font-size:18px">${esc(c.name)}</div>
           <div class="small muted">${setIcon(c.set, c.rarity)} ${esc(c.setName || "")} · ${esc(c.set.toUpperCase())} #${esc(c.num)}</div>
           ${it.guess ? `<span class="small gold">Closest match to “${esc(it.name)}”: check it's right.</span>` : ""}
-          <div class="row wrap" style="gap:6px"><span class="num">${money(priceOf(c, it.finish))}</span>${tagChips(c, it.finish)}</div>
+          <div class="row wrap" style="gap:6px"><span class="num" title="TCGplayer market price">${money(priceOf(c, it.finish))}</span>${tagChips(c, it.finish)}</div>
+          ${L.paid && it.st !== "added" ? `<label class="small row" style="gap:6px">Paid each $<input type="number" id="lPaid" min="0" step="0.01" inputmode="decimal" style="width:90px" value="${listPaid(L, it) != null ? listPaid(L, it).toFixed(2) : ""}" placeholder="—"></label>` : L.paid && listPaid(L, it) != null ? `<span class="small">Paid ${money(listPaid(L, it))} each</span>` : ""}
           ${c.finishes.length > 1 ? `<span class="seg" id="lFin">${c.finishes.map(f => `<button data-f="${esc(f)}" aria-pressed="${f === it.finish}">${f === "nonfoil" ? "Normal" : esc(f[0].toUpperCase() + f.slice(1))}</button>`).join("")}</span>` : ""}
           <button class="btn sm" id="lPrints" style="align-self:flex-start">Other printings</button>
           <span class="small muted">From your list: “${esc(it.line)}”</span></div></div>
@@ -2863,6 +2872,8 @@ function drawList(v, L) {
     <details class="box"><summary class="small">List options</summary><div class="stack" style="gap:8px;margin-top:8px">
       <div class="row"><input type="text" id="lRen" class="grow" value="${esc(L.name)}" maxlength="60"><button class="btn sm" id="lRenGo">Rename</button></div>
       <label class="toggle"><input type="checkbox" id="lOrd" ${L.order ? "checked" : ""}> It's an order (coming in the mail)</label>
+      ${items.some(x => x.price != null) ? `<label class="toggle"><input type="checkbox" id="lPd" ${L.paid ? "checked" : ""}> The list's prices are what I paid (saved as “Paid each” when added)</label>
+        <label class="small row" style="gap:6px">The price on each line is <select id="lPer"><option value="each" ${L.perLine ? "" : "selected"}>for one card</option><option value="line" ${L.perLine ? "selected" : ""}>for the whole line (all copies)</option></select></label>` : ""}
       <div class="row wrap"><button class="btn sm" id="lCopy">Copy as text</button><button class="btn sm danger" id="lDel">Delete list</button></div>
       <span class="small muted">Deleting the list doesn't remove cards you already added.</span></div></details></div>`;
   const redraw = () => { touchList(L); drawList(v, L); }, next = () => { const i = items.findIndex((x, j) => j > lv.idx && x.st === "todo"); lv.idx = i >= 0 ? i : items.findIndex(x => x.st === "todo"); };
@@ -2878,7 +2889,9 @@ function drawList(v, L) {
     $("#lPrints").onclick = () => showPrints(c, picked => { it.card = slim(picked); it.guess = false; if (!it.card.finishes.includes(it.finish)) it.finish = it.card.finishes[0] || "nonfoil"; redraw(); }, $("#lPrBox"));
     $("#lInc").onclick = () => { if (it.st === "added") return; it.qty = Math.min(999, it.qty + 1); redraw(); };
     $("#lDec").onclick = () => { if (it.st === "added") return; it.qty = Math.max(1, it.qty - 1); redraw(); };
-    const ad = $("#lAdd"); if (ad) ad.onclick = () => { const b = $("#lBin").value; addToColl(it.card, it.finish, it.qty, b, true); it.st = "added"; it.binder = b; it.at = Date.now();
+    const pd = $("#lPaid"); if (pd) pd.onchange = () => { const x = parseFloat(pd.value); if (pd.value === "") { delete it.price; } else if (isFinite(x) && x >= 0) { it.price = L.perLine ? x * (it.qty0 || it.qty) : x; } touchList(L); };
+    const paidX = x => { const pp = listPaid(L, x); return pp != null ? { paid: pp } : {}; };
+    const ad = $("#lAdd"); if (ad) ad.onclick = () => { const b = $("#lBin").value; addToColl(it.card, it.finish, it.qty, b, true, paidX(it)); it.st = "added"; it.binder = b; it.at = Date.now();
       toast(`Added ${it.qty} ${it.card.name} to ${binderName(b)}${tagWords(it.card, it.finish) ? " · " + tagWords(it.card, it.finish) : ""}`); next(); redraw(); };
     const sk = $("#lSkip"); if (sk) sk.onclick = () => { it.st = "skipped"; next(); redraw(); };
     const un = $("#lUndo"); if (un) un.onclick = () => { addToColl(it.card, it.finish, -it.qty, it.binder || $("#lBin").value, true); it.st = "todo"; delete it.binder; toast("Taken back out"); redraw(); };
@@ -2886,10 +2899,12 @@ function drawList(v, L) {
     $("#lNext").onclick = () => { const vis = items.filter(x => x.st !== "missing"), k = vis.indexOf(it); if (k < vis.length - 1) { lv.idx = items.indexOf(vis[k + 1]); drawList(v, L); } };
   }
   const aa = $("#lAll"); if (aa) aa.onclick = () => { const b = $("#lBin").value, list = items.filter(x => x.st === "todo"); let q = 0;
-    for (const x of list) { addToColl(x.card, x.finish, x.qty, b, true); x.st = "added"; x.binder = b; x.at = Date.now(); q += x.qty; }
+    for (const x of list) { const pp = listPaid(L, x); addToColl(x.card, x.finish, x.qty, b, true, pp != null ? { paid: pp } : {}); x.st = "added"; x.binder = b; x.at = Date.now(); q += x.qty; }
     redraw(); toast(`Added ${q} card${q === 1 ? "" : "s"} to ${binderName(b)}`, { label: "Undo", fn: () => { for (const x of list) { addToColl(x.card, x.finish, -x.qty, b, true); x.st = "todo"; delete x.binder; } redraw(); } }); };
   $("#lRenGo").onclick = () => { const nm = $("#lRen").value.trim(); if (nm) { L.name = nm; redraw(); toast("Renamed"); } };
   $("#lOrd").onchange = e => { L.order = e.target.checked; redraw(); };
+  const lpd = $("#lPd"); if (lpd) lpd.onchange = e => { L.paid = e.target.checked; redraw(); };
+  const lpe = $("#lPer"); if (lpe) lpe.onchange = e => { L.perLine = e.target.value === "line"; redraw(); };
   $("#lCopy").onclick = async () => { const t = items.map(x => `${x.qty} ${x.card ? x.card.name + ` (${x.card.set.toUpperCase()}) ${x.card.num}` : x.name}${x.finish === "foil" ? " *F*" : ""}`).join("\n");
     try { await navigator.clipboard.writeText(t); toast(`Copied ${items.length} line${items.length === 1 ? "" : "s"}`); } catch (e) { toast("Couldn't copy here"); } };
   $("#lDel").onclick = () => { const back = L; delete S.lists[L.id]; save(); lv.open = null; renderLists(); toast(`Deleted “${back.name}”`, { label: "Undo", fn: () => { S.lists[back.id] = back; save(); if (tab === "search" && sv.mode === "lists") renderLists(); } }); };

@@ -40,20 +40,24 @@ async function run(opts, shot) {
   R.parsed = await p.evaluate(t => parseListText(t).map(x => `${x.qty}|${x.name}|${x.set || ""}|${x.num || ""}|${x.finish}`), PASTE);
   await p.evaluate(() => { sv.mode = "lists"; go("search"); }); await p.waitForTimeout(300);
   R.seg = await p.$$eval("#sMode button", a => a.map(x => x.textContent.trim()));
-  await p.fill("#lsName", "Mana Pool order"); await p.fill("#lsText", PASTE); await p.check("#lsOrder"); await p.click("#lsGo");
+  await p.fill("#lsName", "Mana Pool order"); await p.fill("#lsText", PASTE); await p.check("#lsOrder"); R.paidAuto = await p.$eval("#lsPaid", e => e.checked); await p.click("#lsGo");
   await p.waitForSelector(".lstep", { timeout: 20000 }).catch(async () => { console.log("DBG", await p.$eval("#sres", e => e.textContent.replace(/\s+/g, " ").slice(0, 600)), JSON.stringify(errs)); }); await p.waitForTimeout(200);
   const view = () => p.evaluate(() => ({ head: document.querySelector("#sres h2").textContent, chip: (document.querySelector("#sres .row .chip") || {}).textContent, note: [...document.querySelectorAll("#sres > .stack > .small.muted")].map(x => x.textContent).join(" "),
     step: (document.querySelector(".lstep .label") || {}).textContent, name: (document.querySelector(".lstep .name") || {}).textContent, missing: [...document.querySelectorAll(".lFix")].map(x => x.value), guess: (document.querySelector(".lstep .gold") || {}).textContent || "" }));
   R.v1 = await view();
   R.coll0 = await p.evaluate(() => Object.keys(S.coll).length);
+  R.paidBox = await p.$eval("#lPaid", e => e.value);
   await p.click("#lInc"); await p.click("#lAdd"); await p.waitForTimeout(150);           // 5 Kira
   R.v2 = await view(); R.toast = await p.$eval("#toastRoot", e => e.textContent);
   await p.click("#lSkip"); await p.waitForTimeout(100);                                    // skip Koth
   await p.click("#lPrev"); await p.waitForTimeout(100); R.prev = await view();
   await p.click("#lNext"); await p.waitForTimeout(100);
+  await p.fill("#lPaid", "0.30"); await p.dispatchEvent("#lPaid", "change");             // fix the price paid for Pia
   await p.selectOption("#lBin", "bulk"); await p.click('#lFin [data-f="foil"]'); await p.waitForTimeout(100); await p.click("#lAdd"); await p.waitForTimeout(100);   // 9 foil Pia → Bulk box
   if (shot) { await p.$eval(".lstep", e => e.scrollIntoView()); await p.screenshot({ path: __dirname + "/" + shot }); }
   R.after3 = await p.evaluate(() => Object.values(S.coll).map(e => `${e.name}×${e.qty}/${e.finish}/${e.binder}`).sort());
+  R.paid = await p.evaluate(() => Object.values(S.coll).map(e => `${e.name.split(",")[0]}:${e.paid}`).sort());
+  R.head = await p.$eval("#sres .row .num.small", e => e.textContent);
   // the Collection tab reminds you about incoming cards
   await p.evaluate(() => go("coll")); await p.waitForTimeout(200);
   R.banner = await p.$eval("#inNote", e => e.textContent.replace(/\s+/g, " ").trim()).catch(() => "");
@@ -65,6 +69,8 @@ async function run(opts, shot) {
   await p.click("#lAll"); await p.waitForTimeout(150); R.allColl = await p.evaluate(() => Object.values(S.coll).reduce((a, e) => a + e.qty, 0)); R.allView = await view();
   await p.click("#toastAct"); await p.waitForTimeout(150); R.undo = await p.evaluate(() => [Object.values(S.coll).reduce((a, e) => a + e.qty, 0), listLeft(Object.values(S.lists)[0])]);
   await p.click("#lAll"); await p.waitForTimeout(150);
+  R.paidAll = await p.evaluate(() => Object.values(S.coll).map(e => `${e.name.split(/[ ,]/)[0]}:${e.paid}`).sort());
+  R.perLine = await p.evaluate(() => { const L = Object.values(S.lists)[0], it = L.items.find(x => x.name.startsWith("U.S.S.")); L.perLine = true; const a = listPaid(L, it); L.perLine = false; return a; });
   await p.evaluate(() => go("coll")); await p.waitForTimeout(200); R.bannerGone = !(await p.$("#inNote"));
   await p.evaluate(() => { sv.mode = "lists"; lv.open = null; go("search"); }); await p.waitForTimeout(200);
   R.index = await p.$$eval("#sres h2.sec", a => a.map(x => x.textContent));
@@ -91,6 +97,10 @@ async function run(opts, shot) {
     ok(R.allView.chip === "All done" && R.allColl === 5 + 9 + 5 + 8 + 2 + 1 + 1 + 1, `[${label}] Add all adds the rest (skipped Koth stays out) — ${R.allColl} cards`);
     ok(R.undo[0] === 14 && R.undo[1] === R.left0, `[${label}] Add all can be undone ${JSON.stringify(R.undo)}`);
     ok(R.bannerGone && JSON.stringify(R.index) === '["Finished"]', `[${label}] when everything's added the reminder goes and the list moves to Finished ${JSON.stringify(R.index)}`);
+    ok(R.paidAuto && R.paidBox === "0.76", `[${label}] an order's prices are used as price paid (ticked for orders; Kira shows $0.76 each)`);
+    ok(JSON.stringify(R.paid) === JSON.stringify(["Kira Nerys:0.76", "Pia:0.3"]) && /order total \$/.test(R.head), `[${label}] added cards get "Paid each" from the list, or what you typed ${JSON.stringify(R.paid)} (${R.head})`);
+    ok(R.paidAll.includes("Sol:undefined") && R.paidAll.includes("U.S.S.:2.16") && R.paidAll.includes("Voracious:0.24"), `[${label}] Add all uses them too; lines without a price stay blank ${JSON.stringify(R.paidAll)}`);
+    ok(R.perLine === 1.08, `[${label}] a "whole line" price is split across the copies ($2.16 for 2 → $1.08 each)`);
     ok(R.synced, `[${label}] lists sync between devices: lists made on two devices are both kept (new sync version, so older devices update first)`);
     ok(!R.overflow, `[${label}] no sideways scrolling`);
     ok(!R.errs.length, `[${label}] no console errors ${JSON.stringify(R.errs)}`);
