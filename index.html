@@ -83,6 +83,8 @@ select{width:auto;max-width:100%}
 .chip.warn{border-color:var(--danger);color:var(--danger)}
 .chip.ok{border-color:var(--ok);color:var(--ok)}
 .chip.acc{border-color:var(--accent);color:var(--accent)}
+.chip.tg-staple{border-color:var(--accent);color:var(--accent);font-weight:600} .chip.tg-sleeve{border-color:var(--gold);color:var(--gold);font-weight:600} .chip.tg-bulk{color:var(--muted);border-style:dashed}
+.grid .tg{position:absolute;left:4px;top:4px;background:rgba(10,15,20,.78);color:#fff;font:600 10px var(--f-display);padding:1px 5px;border-radius:4px;letter-spacing:.02em}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
 .chips button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 12px;font-size:14px}
 .chips button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
@@ -543,7 +545,7 @@ function slim(c) {
     cmc: c.cmc || 0, mana: c.mana_cost != null ? c.mana_cost : f.map(x => x.mana_cost).filter(Boolean).join(" // "),
     colors: c.colors || (f[0] && f[0].colors) || [], ci: c.color_identity || [], img: imgOf(c, "small"), imgN: imgOf(c, "normal"),
     imgB: (f[1] && f[1].image_uris && f[1].image_uris.normal) || "", layout: c.layout || "", roles: cardRoles(text, type),
-    prices: c.prices || {}, finishes: c.finishes || ["nonfoil"], uri: c.scryfall_uri || "", lang: c.lang || "en",
+    prices: c.prices || {}, finishes: c.finishes || ["nonfoil"], uri: c.scryfall_uri || "", lang: c.lang || "en", er: c.edhrec_rank || undefined,
     leg: c.legalities ? leg : undefined, cap, basic: /\bBasic\b/.test(front),
     canCmdr: (/Legendary/.test(front) && /Creature/.test(front)) || /can be your commander/i.test(text),
     text: (/Legendary/.test(front) ? text.slice(0, 600) : undefined),
@@ -551,6 +553,21 @@ function slim(c) {
   };
 }
 const isSlim = c => c && c.img !== undefined && c.oid !== undefined;
+/* Quick labels while scanning or adding: Staple (among the ~1,000 most-played Commander cards, EDHREC rank via Scryfall),
+   Bulk (commons/uncommons under $0.25; rares/mythics under $1 are "Bulk rare"), Worth sleeving ($5 and up). */
+const TAGS = { stapleTop: 100, staple: 1000, bulk: 0.25, bulkRare: 1, sleeve: 5 };
+function cardTags(c, finish = "nonfoil") {
+  if (!c) return [];
+  const out = [], er = c.er != null ? c.er : c.edhrec_rank, p = priceOf(c, finish), hi = c.rarity === "rare" || c.rarity === "mythic";
+  if (er && er <= TAGS.stapleTop) out.push({ k: "staple", label: "Top staple", tip: `#${er} most-played in Commander (EDHREC)` });
+  else if (er && er <= TAGS.staple) out.push({ k: "staple", label: "Staple", tip: `#${er} most-played in Commander (EDHREC)` });
+  if (p != null && p >= TAGS.sleeve) out.push({ k: "sleeve", label: "Worth sleeving", tip: `${money(p)}: $5 or more` });
+  else if (p != null && p < (hi ? TAGS.bulkRare : TAGS.bulk)) out.push({ k: "bulk", label: hi ? "Bulk rare" : "Bulk", tip: `${money(p)}: under ${money(hi ? TAGS.bulkRare : TAGS.bulk)}` });
+  return out;
+}
+const hasTag = (c, finish, k) => cardTags(c, finish).some(t => t.k === k);
+const tagChips = (c, finish) => cardTags(c, finish).map(t => `<span class="chip tg-${t.k}" title="${esc(t.tip)}">${esc(t.label)}</span>`).join("");
+const tagWords = (c, finish) => cardTags(c, finish).map(t => t.label).join(", ");
 const PKEY = { nonfoil: "usd", foil: "usd_foil", etched: "usd_etched" };
 function priceOf(card, finish = "nonfoil") {
   const p = card.prices || {};
@@ -1118,7 +1135,8 @@ function render() {
 const cv = { q: "", sort: "value", binder: "all", select: false, sel: new Set(), f: null, fOpen: false };
 /* Collection filters: the Search tab's filter settings (colors and how to match them, type, rarity, format, mana value,
    price, set) plus things only your own cards have. Search sends them to Scryfall; here they're checked on this device. */
-const collDefaultF = () => Object.assign(defaultF(), { sub: "", num: "", priceMin: "", fin: [], lang: "", ownMin: "", ownMax: "", availMin: "", asg: "", deck: "" });
+const collDefaultF = () => Object.assign(defaultF(), { sub: "", num: "", priceMin: "", fin: [], lang: "", ownMin: "", ownMax: "", availMin: "", asg: "", deck: "", tag: "" });
+const TAG_L = { staple: "Staples", sleeve: "Worth sleeving ($5+)", bulk: "Bulk" };
 const FIN_L = { nonfoil: "Normal", foil: "Foil", etched: "Etched" };
 const CMODE_L = { incl: "Colors including", exact: "Colors exactly", most: "Colors at most", id: "Color identity within" };
 const fnum = v => v !== "" && v != null && isFinite(parseFloat(v)) ? parseFloat(v) : null;
@@ -1151,6 +1169,7 @@ function collPred(f) {
   const a0 = fnum(f.availMin); if (a0 != null) T.push(e => Math.max(0, (X.owned.get(e.name) || 0) - usedOf(e.name)) >= a0);
   if (f.asg) T.push(e => (usedOf(e.name) > 0) === (f.asg === "in"));
   if (f.deck) T.push(e => { const m = X.decks.get(e.name); return !!m && m.has(f.deck); });
+  if (f.tag) T.push(e => hasTag(e, e.finish, f.tag));
   return T.length ? e => { for (const t of T) if (!t(e)) return false; return true; } : null;
 }
 // the active filters as removable chips: [key, label]
@@ -1172,6 +1191,7 @@ function collFilterChips(f, sets) {
   if (f.availMin !== "") out.push(["avail", `${f.availMin}+ not in decks`]);
   if (f.asg) out.push(["asg", f.asg === "in" ? "In a deck" : "Not in any deck"]);
   if (f.deck) out.push(["deck", "In " + ((S.decks[f.deck] || {}).name || "deck")]);
+  if (f.tag) out.push(["tag", TAG_L[f.tag] || f.tag]);
   return out;
 }
 function clearCollFilter(k) {
@@ -1197,6 +1217,7 @@ function collFilterPanel(f, sets) {
       <label class="small">Set<select data-k="set"><option value="">Any set</option>${setList.map(x => opt(x.code, `${x.name} (${x.code.toUpperCase()})`, f.set)).join("")}</select></label>
       <label class="small">Collector number<input type="text" data-k="num" placeholder="e.g. 123 or 1-50" value="${esc(f.num)}" autocomplete="off"></label>
       <label class="small">Legal in<select data-k="format"><option value="">Any format</option>${Object.entries(FORMATS).filter(([k]) => k !== "casual").map(([k, v]) => opt(k, v, f.format)).join("")}</select></label>
+      <label class="small">Staple or bulk<select data-k="tag"><option value="">Any card</option>${Object.entries(TAG_L).map(([k, v]) => opt(k, v, f.tag || "")).join("")}</select></label>
       <label class="small">Language<select data-k="lang"><option value="">Any language</option>${langs.map(l => opt(l, l.toUpperCase(), f.lang)).join("")}</select></label>
       <label class="small">Mana value from<input type="number" data-k="mvMin" inputmode="numeric" min="0" placeholder="0" value="${esc(f.mvMin)}"></label>
       <label class="small">to<input type="number" data-k="mvMax" inputmode="numeric" min="0" placeholder="16" value="${esc(f.mvMax)}"></label>
@@ -2789,7 +2810,7 @@ function drawResults() {
   if (!sv.results.length) { el.innerHTML = `<p class="small muted">Start typing and pick a name to see every printing, newest first. Or open Filters to browse by color, type, rarity, format, mana value, price or set. Scryfall syntax like <b>t:dragon o:flying</b> works too.</p>`; return; }
   el.innerHTML = `<div class="grid">${sv.results.map((c, i) => `<div class="tile"><button data-i="${i}" aria-label="${esc(c.name)}, ${esc(c.set_name)}">
       ${imgOf(c) ? `<img loading="lazy" src="${esc(imgOf(c, "normal"))}" alt="">` : `<span class="fallback">${esc(c.name)}</span>`}
-      ${priceOf(c) != null ? `<span class="pr num">${money(priceOf(c))}</span>` : ""}</button>
+      ${priceOf(c) != null ? `<span class="pr num">${money(priceOf(c))}</span>` : ""}${(t => t ? `<span class="tg tg-${t.k}" title="${esc(t.tip)}">${esc(t.label)}</span>` : "")(cardTags(c)[0])}</button>
       <span class="cap num">${esc(c.set.toUpperCase())} · ${esc((c.released_at || "").slice(0, 4))}</span></div>`).join("")}</div>
     ${sv.next ? `<p><button class="btn" id="smore" ${sv.busy ? "disabled" : ""}>${sv.busy ? "Loading…" : "Load more"}</button></p>` : ""}`;
   el.querySelector(".grid").onclick = e => { const b = e.target.closest("button"); if (b) openCard(sv.results[+b.dataset.i]); };
@@ -2848,6 +2869,7 @@ function openCard(card, finish, binder, ctx) {
         : `<img class="big" id="bigImg" src="${esc(s.imgN || s.img)}" alt="${esc(s.name)}">`}
       <div class="row" style="justify-content:space-between;align-items:flex-start;margin-top:12px"><h2>${esc(s.name)}</h2><span>${pips(s.mana)}</span></div>
       <div class="muted small">${setIcon(s.set, s.rarity, true)} ${esc(s.setName)} · ${esc(s.set.toUpperCase())} #${esc(s.num)} · ${esc(s.rarity)}</div>
+      ${tagChips(full || s, fin) ? `<div class="chips" id="cTags" style="margin-top:6px">${tagChips(full || s, fin)}</div>` : ""}
       <div class="oracle" style="margin-top:10px">${esc(text)}</div>
       ${legal ? `<div class="chips" style="margin-top:8px">${legal}</div>` : ""}
       <div class="prices" style="margin-top:10px">
@@ -2931,7 +2953,7 @@ function openCard(card, finish, binder, ctx) {
         s = slim(picked); full = picked; fin = s.finishes.includes(fin) ? fin : s.finishes[0] || "nonfoil";      // show the printing just picked: picture, set, prices
         toast(`Changed ${c} to ${picked.set.toUpperCase()} #${picked.collector_number}`); draw(); }, $("#ePrintBox"));
     }
-    const bump = n => { addToColl(s, fin, n, bsel); draw(); toast(`${n > 0 ? "Added" : "Removed"} ${Math.abs(n)} ${s.name} ${n > 0 ? "to" : "from"} ${S.binders[bsel].name}`); };
+    const bump = n => { addToColl(s, fin, n, bsel); draw(); toast(`${n > 0 ? "Added" : "Removed"} ${Math.abs(n)} ${s.name} ${n > 0 ? "to" : "from"} ${S.binders[bsel].name}${n > 0 && tagWords(full || s, fin) ? " · " + tagWords(full || s, fin) : ""}`); };
     $("#cPlus").onclick = () => bump(addQty); $("#cMinus").onclick = () => bump(-1);
     $("#qInc").onclick = () => { addQty = Math.min(99, addQty + 1); draw(); }; $("#qDec").onclick = () => { addQty = Math.max(1, addQty - 1); draw(); };
     $("#cPickPr").onclick = () => showPrints(s, picked => { s = slim(picked); full = picked; fin = s.finishes.includes(fin) ? fin : s.finishes[0]; draw(); }, $("#cPickBox"));
@@ -3151,7 +3173,7 @@ function drawSession() {
   const row = it => {
     const c = it.card, pic = c ? `<img src="${esc(c.img)}" alt="">` : /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(it.thumb || "") ? `<img src="${esc(it.thumb)}" alt="Picture of the scanned card">` : `<img alt="">`;
     const fin = c && c.finishes.length > 1 && it.state === "review" ? `<button class="chip ${it.finish !== "nonfoil" ? "foil" : ""}" data-fin="${esc(it.id)}">${it.finish === "nonfoil" ? "normal" : it.finish} ▾</button>` : it.finish !== "nonfoil" ? `<span class="chip foil">${esc(it.finish)}</span>` : "";
-    const meta = c ? `<div class="meta"><span>${setIcon(c.set, c.rarity)} ${esc(c.set.toUpperCase())} #${esc(c.num)}</span>${fin}<span class="num">${money(priceOf(c, it.finish))}</span><span class="num">${esc(clock(it.at))}</span></div>` : "";
+    const meta = c ? `<div class="meta"><span>${setIcon(c.set, c.rarity)} ${esc(c.set.toUpperCase())} #${esc(c.num)}</span>${fin}<span class="num">${money(priceOf(c, it.finish))}</span>${tagChips(c, it.finish)}<span class="num">${esc(clock(it.at))}</span></div>` : "";
     if (it.state === "review") return `<div class="item">${pic}<button class="tap" data-pr="${esc(it.id)}"><div class="name">${esc(c.name)}</div>${meta}<div class="small ${it.exact ? "up" : it.conf === "medium" ? "gold" : "muted"}">${it.exact ? "Exact printing" : it.conf === "medium" ? "Likely match: please check" : "Name read clearly · tap to check the printing"}</div></button>
       <div class="right"><span class="stepper"><button data-dec="${esc(it.id)}" aria-label="One fewer">−</button><span class="num">${it.qty}</span><button data-inc="${esc(it.id)}" aria-label="One more">+</button></span>
       <span class="row" style="gap:4px"><button class="btn sm primary" data-add="${esc(it.id)}">Add</button><button class="btn sm ghost" data-skip="${esc(it.id)}">Skip</button></span></div></div>`;
@@ -3200,13 +3222,14 @@ function scanRuleMatch(r, card, finish) {
   if (r.rar && (RAR_RANK[card.rarity] || 0) < RAR_RANK[r.rar]) return false;
   if (r.min != null) { const p = priceOf(card, finish); if (p == null || p < r.min) return false; }
   if (r.foil && finish === "nonfoil") return false;
+  if (r.tag && !hasTag(card, finish, r.tag)) return false;
   return true;
 }
 function scanBinderFor(card, finish) {
   if (S.settings.scanRulesOn !== false) for (const r of scanRules()) if (scanRuleMatch(r, card, finish)) return { binder: r.binder, rule: r.id };
   return { binder: defaultBinder(), rule: null };
 }
-const scanRuleText = r => [r.rar ? { mythic: "Mythics", rare: "Rares and mythics", uncommon: "Uncommon or better", common: "Any rarity" }[r.rar] : "Any card", r.min != null ? `${money(r.min)} or more` : "", r.foil ? "foil" : ""].filter(Boolean).join(", ") + " → " + binderName(r.binder);
+const scanRuleText = r => [r.tag ? { staple: "Staples", bulk: "Bulk" }[r.tag] : "", r.rar ? { mythic: "Mythics", rare: "Rares and mythics", uncommon: "Uncommon or better", common: "Any rarity" }[r.rar] : r.tag ? "" : "Any card", r.min != null ? `${money(r.min)} or more` : "", r.foil ? "foil" : ""].filter(Boolean).join(", ") + " → " + binderName(r.binder);
 function addItem(it, qty) {
   if (!it || !it.card) return;
   const d = scanDeck(); it.deck = d ? d.id : null; it.binder = null; it.rule = null;
@@ -3228,12 +3251,12 @@ function scanRulesHTML() {
     <div class="stack" style="gap:6px;margin-top:8px">
       ${rules.length ? `<label class="toggle small"><input type="checkbox" id="srOn" ${on ? "checked" : ""}> Use these rules (checked top to bottom; the first match decides, anything else goes to the binder above)</label>
         ${rules.map((r, i) => `<div class="kv"><span class="grow small">${i + 1}. ${esc(scanRuleText(r))}</span>${i ? `<button class="btn sm ghost" data-srup="${esc(r.id)}" aria-label="Move up">↑</button>` : ""}<button class="btn sm ghost" data-srdel="${esc(r.id)}" aria-label="Delete rule">✕</button></div>`).join("")}` : ""}
-      <div class="row wrap" style="gap:6px"><select id="srRar" aria-label="Rarity"><option value="">Any rarity</option><option value="uncommon">Uncommon or better</option><option value="rare">Rare or mythic</option><option value="mythic">Mythic</option></select>
+      <div class="row wrap" style="gap:6px"><select id="srTag" aria-label="Staple or bulk"><option value="">Any card</option><option value="staple">Staples</option><option value="bulk">Bulk</option></select><select id="srRar" aria-label="Rarity"><option value="">Any rarity</option><option value="uncommon">Uncommon or better</option><option value="rare">Rare or mythic</option><option value="mythic">Mythic</option></select>
         <input type="number" id="srMin" inputmode="decimal" min="0" step="0.01" placeholder="Min $" style="width:90px" aria-label="Minimum price">
         <label class="toggle small"><input type="checkbox" id="srFoil"> Foil only</label>
         <span class="small">→</span><select id="srBin" aria-label="Send to binder">${bins.map(b => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join("")}</select>
         <button class="btn sm" id="srAdd">Add rule</button></div>
-      <span class="small muted">Prices are TCGplayer market prices for the finish you scanned. Rules apply when cards are added, in Review or Bulk.</span></div></details>`;
+      <span class="small muted">Prices are TCGplayer market prices for the finish you scanned. Staples: the ~1,000 most-played Commander cards. Bulk: commons and uncommons under $0.25, rares and mythics under $1. Rules apply when cards are added, in Review or Bulk.</span></div></details>`;
 }
 function wireScanRules() {
   const box = $("#scRulesBox"); if (!box) return;
@@ -3241,9 +3264,9 @@ function wireScanRules() {
   $("#scRules").ontoggle = e => { if (S.meta.scanRulesOpen !== e.target.open) { S.meta.scanRulesOpen = e.target.open; save(); } };
   const on = $("#srOn"); if (on) on.onchange = e => { S.settings.scanRulesOn = e.target.checked; save(); redraw(); };
   $("#srAdd").onclick = () => {
-    const rar = $("#srRar").value, min = parseFloat($("#srMin").value), foil = $("#srFoil").checked, binder = $("#srBin").value;
-    if (!rar && !(min > 0) && !foil) return toast("Pick a rarity, a minimum price or foil, so the rule doesn't catch everything");
-    S.settings.scanRules = [...((S.settings.scanRules) || []), { id: uid(), rar: rar || null, min: min > 0 ? Math.round(min * 100) / 100 : null, foil, binder }];
+    const tag = $("#srTag").value, rar = $("#srRar").value, min = parseFloat($("#srMin").value), foil = $("#srFoil").checked, binder = $("#srBin").value;
+    if (!tag && !rar && !(min > 0) && !foil) return toast("Pick staples or bulk, a rarity, a minimum price or foil, so the rule doesn't catch everything");
+    S.settings.scanRules = [...((S.settings.scanRules) || []), Object.assign({ id: uid(), rar: rar || null, min: min > 0 ? Math.round(min * 100) / 100 : null, foil, binder }, tag ? { tag } : {})];
     S.meta.scanRulesOpen = true; save(); redraw();
   };
   box.querySelectorAll("[data-srdel]").forEach(b => b.onclick = () => { S.settings.scanRules = S.settings.scanRules.filter(r => r.id !== b.dataset.srdel); save(); redraw(); });
