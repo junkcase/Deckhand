@@ -14,7 +14,7 @@ Output: out/history/meta.json and out/history/<3 hex>.json, keyed by Scryfall id
   day = days since 2020-01-01 (UTC).
 
 Also writes the biggest risers over the last 30 days (TCGplayer market), for the Staples "Rising" ranking:
-  out/history/rising/all.json and out/history/rising/<set code>.json: [[id, set, now cents, 30 days ago cents, foil 0/1], ...]
+  out/history/rising.json (every set) and out/history/rising/<set code>.json: [[id, set, now cents, 30 days ago cents, foil 0/1], ...]
   Set codes come from MTGJSON's cards.csv (optional 4th argument).
 
 Usage: python3 price-history.py OUT_DIR ALLPRICES_JSON CARD_IDENTIFIERS_CSV [CARDS_CSV]
@@ -65,7 +65,7 @@ def load_old(out):
     d = os.path.join(out, "history")
     if os.path.isdir(d):
         for f in os.listdir(d):
-            if f.endswith(".json") and f != "meta.json":
+            if f.endswith(".json") and f not in ("meta.json", "rising.json"):
                 with open(os.path.join(d, f)) as fh:
                     hist.update(json.load(fh))
     return hist
@@ -124,7 +124,7 @@ def main(out, prices_path, ids_path, today=None, cards_path=None):
     mp_dir = os.path.join(out, "manapool")
     if os.path.isdir(mp_dir):
         for f in os.listdir(mp_dir):
-            if f.endswith(".json") and f != "meta.json":
+            if f.endswith(".json") and f not in ("meta.json", "rising.json"):
                 with open(os.path.join(mp_dir, f)) as fh:
                     for sf, row in json.load(fh).items():
                         if row[0]: fresh.setdefault(sf, {}).setdefault("m", {})[today_day] = row[0]
@@ -173,7 +173,7 @@ def main(out, prices_path, ids_path, today=None, cards_path=None):
     top, by_set = rising(hist, sets, today_day)
     rd = os.path.join(d, "rising")
     os.makedirs(rd, exist_ok=True)
-    with open(os.path.join(rd, "all.json"), "w") as fh:
+    with open(os.path.join(d, "rising.json"), "w") as fh:      # not in rising/, where it would clash with a set coded "all" (Alliances)
         json.dump(top, fh, separators=(",", ":"))
     for code, rows in by_set.items():
         if code.replace("_", "").isalnum():

@@ -2594,7 +2594,7 @@ function stapleFilter(c) {      // Rising only: format, colour and rarity, check
   return !c.basic;
 }
 async function risingCards(set) {
-  const r = await fetch(PH.base + "rising/" + (set || "all") + ".json", { cache: "no-cache" });
+  const r = await fetch(PH.base + (set ? "rising/" + set : "rising") + ".json", { cache: "no-cache" });
   if (r.status === 404) return [];
   if (!r.ok) throw new Error("Couldn't load rising prices (" + r.status + ")");
   const rows = (await r.json()).filter(x => Array.isArray(x) && /^[0-9a-f-]{36}$/i.test(x[0])).slice(0, 250), byId = {};

@@ -9,12 +9,12 @@ const CARDS = [C(1, "Green Thing", "dsk", 3), C(2, "Blue Thing", "dsk", 12, { co
 const SETS = [{ code: "dsk", name: "Duskmourn", released_at: "2024-09-27", card_count: 286, printed_size: 276, set_type: "expansion", icon_svg_uri: "" },
   { code: "tdsk", name: "Duskmourn Tokens", released_at: "2024-09-27", card_count: 20, set_type: "token", icon_svg_uri: "" },
   { code: "m21", name: "Core Set 2021", released_at: "2020-07-03", card_count: 397, printed_size: 274, set_type: "core", icon_svg_uri: "" }];
-const RISING = { "all": [[id(3), "m21", 300, 100, 0], [id(2), "dsk", 1500, 1200, 0], [id(4), "dsk", 4000, 2000, 0]], "dsk": [[id(2), "dsk", 1500, 1200, 0], [id(4), "dsk", 4000, 2000, 0]] };
+const RISING = { "": [[id(3), "m21", 300, 100, 0], [id(2), "dsk", 1500, 1200, 0], [id(4), "dsk", 4000, 2000, 0]], "all": [[id(1), "all", 900, 100, 0]], "dsk": [[id(2), "dsk", 1500, 1200, 0], [id(4), "dsk", 4000, 2000, 0]] };
 async function run(opts, shot) {
   const srv = spawn("python3", ["-m", "http.server", "8797", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
   const b = await chromium.launch(), ctx = await b.newContext(opts), p = await ctx.newPage(), errs = [], searches = [], posts = [];
   p.on("pageerror", e => errs.push(e.message)); p.on("console", m => { if (m.type() === "error" && !/Failed to load resource|fetching the script/.test(m.text())) errs.push(m.text()); });
-  await p.route("https://raw.githubusercontent.com/junkcase/Deckhand/data/**", r => { const k = r.request().url().split("/data/history/")[1] || "", m = k.match(/^rising\/(\w+)\.json$/), d = m && RISING[m[1]];
+  await p.route("https://raw.githubusercontent.com/junkcase/Deckhand/data/**", r => { const k = r.request().url().split("/data/history/")[1] || "", m = k.match(/^rising(?:\/(\w+))?\.json$/), d = m && RISING[m[1] || ""];
     r.fulfill({ status: d ? 200 : 404, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: d ? JSON.stringify(d) : "404" }); });
   await p.route("https://cards.scryfall.io/**", r => r.fulfill({ status: 200, contentType: "image/png", body: PNG }));
   await p.route("https://api.scryfall.com/**", r => { const u = decodeURIComponent(r.request().url()), J = (j, st = 200) => r.fulfill({ status: st, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(j) });
