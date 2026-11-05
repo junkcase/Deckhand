@@ -5735,7 +5735,43 @@ function specResult(x, H) {
   }
   return r;
 }
-const MKT = { filter: "active", hist: {}, rrAsked: {} };
+const MKT = { filter: "active", hist: {}, rrAsked: {}, view: "watch", strat: "all", opps: null, oppErr: "" };
+/* Opportunities: cards that met measurable conditions in today's data, worked out once a day by the data job
+   (tools/opportunities.py). Each shows its evidence in numbers and its risks; there's no prediction or confidence
+   score, because no tested model is behind it. */
+const OPP_S = [["movers", "Big movers", "Up 20%+ over a month (medians, so one odd sale doesn't count)"], ["gaps", "Store price gaps", "Card Kingdom paying more than TCGplayer market, or Mana Pool listed well below it, the same day"],
+  ["played", "Played a lot", "In the top 1,000 Commander cards on EDHREC, with a printing at $3 or less"], ["lows", "90-day lows", "At its lowest price in 90 days, at least 25% under its 90-day high"], ["demand", "Rising demand", "EDHREC rank up sharply over 30 days of daily records"]];
+const scryImg = id => /^[0-9a-f-]{36}$/i.test(id) ? `https://cards.scryfall.io/small/front/${id[0]}/${id[1]}/${id}.jpg` : "";
+async function loadOpps() {
+  const r = await fetch("https://raw.githubusercontent.com/junkcase/Deckhand/data/opps/all.json", { cache: "no-cache" });
+  if (r.status === 404) return null; if (!r.ok) throw new Error("Couldn't load today's opportunities (" + r.status + ")");
+  return r.json();
+}
+function drawOpps(v) {
+  const O = MKT.opps, when = x => x ? dayLabel(/^\d{4}-\d{2}-\d{2}$/.test(x) ? Date.parse(x + "T12:00:00") : Date.parse(x)) : "—";     // a plain date is that day where you are, not UTC midnight
+  if (!O) { v.innerHTML = `<div class="box"><p class="small muted" style="margin:0">${MKT.oppErr ? esc(MKT.oppErr) : "Loading today's opportunities…"}</p></div>`; return; }
+  const S = O.strategies || {}, keys = MKT.strat === "all" ? OPP_S.map(x => x[0]) : [MKT.strat], seen = new Set();
+  const rows = keys.flatMap(k => (S[k] || []).map(c => Object.assign({ k }, c))).filter(c => MKT.strat !== "all" || !seen.has(c.id + c.k) && seen.add(c.id + c.k));
+  const label = Object.fromEntries(OPP_S.map(x => [x[0], x[1]])), ch = x => x == null ? "—" : `<span class="${x > 0 ? "up" : x < 0 ? "down" : ""}">${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.abs(x).toFixed(0)}%</span>`;
+  const daysOfRanks = O.rankSince ? Math.max(0, Math.round((Date.parse(O.as_of) - Date.parse(O.rankSince)) / 864e5)) : 0;
+  v.innerHTML = `<div class="chips scrollx" id="opS">${[["all", "All"], ...OPP_S].map(([k, l]) => `<button data-s="${k}" aria-pressed="${MKT.strat === k}">${l}${k !== "all" && S[k] ? ` <span class="num">${S[k].length}</span>` : ""}</button>`).join("")}</div>
+    ${MKT.strat !== "all" ? `<p class="small muted" style="margin:0">${esc((OPP_S.find(x => x[0] === MKT.strat) || [])[2] || "")}</p>` : ""}
+    ${MKT.strat === "demand" && !(S.demand || []).length ? `<div class="box"><p class="small" style="margin:0">Rising demand needs a month of daily EDHREC ranks. They've been recorded since ${esc(when(O.rankSince))} (${daysOfRanks} day${daysOfRanks === 1 ? "" : "s"} so far), so this list starts in about ${Math.max(1, 30 - daysOfRanks)} days. Until then nothing is shown, rather than treating price moves as demand.</p></div>` : ""}
+    ${rows.length ? rows.map(c => `<div class="box stack opp" style="gap:6px">
+      <div class="row" style="gap:10px;align-items:flex-start"><img loading="lazy" src="${esc(scryImg(c.id))}" alt="" style="width:56px;border-radius:5px;flex:none;aspect-ratio:63/88;object-fit:cover;background:var(--sunk)">
+        <div class="stack" style="gap:2px;min-width:0;flex:1"><div class="row wrap" style="gap:6px"><b>${esc(c.name)}</b><span class="chip">${esc(label[c.k])}</span></div>
+          <span class="small muted">${esc(c.setName)} · ${esc(c.set.toUpperCase())} #${esc(c.num)}${c.fin !== "nonfoil" ? " · " + esc(c.fin) : ""}</span>
+          <span class="small num">${c.price != null ? `<b>${money(c.price / 100)}</b> TCGplayer market` : "No TCGplayer price"} · 7 days ${ch(c.ch7)} · 30 days ${ch(c.ch30)}</span></div></div>
+      <div class="small"><b>Evidence:</b> ${c.ev.map(esc).join(" ")}</div>
+      ${c.risk.length ? `<div class="small"><b>Risks:</b><ul style="margin:2px 0 0;padding-left:18px">${c.risk.map(r => `<li>${esc(r)}</li>`).join("")}</ul></div>` : ""}
+      <div class="row wrap" style="gap:8px"><button class="btn sm" data-oopen="${esc(c.id)}">Open card</button><button class="btn sm" data-owatch="${esc(c.id)}">Watch this</button></div></div>`).join("")
+      : MKT.strat === "demand" ? "" : `<div class="box"><p class="small muted" style="margin:0">Nothing met these conditions in today's data.</p></div>`}
+    <p class="small muted">Data: TCGplayer market prices and history through MTGJSON (${esc(when(O.fresh && O.fresh.history))}), Mana Pool (${esc(when(O.fresh && O.fresh.manapool))}), Card Kingdom buylist (${esc(when(O.fresh && O.fresh.cardkingdom))}), printings and EDHREC ranks from Scryfall (${esc(when(O.fresh && O.fresh.scryfall))}). Worked out ${esc(when(O.as_of))}. These are cards that met measurable conditions, not predictions: there's no confidence score because no tested model is behind them. Your Watchlist record is the way to see how calls like these turn out.</p>`;
+  v.querySelector("#opS").onclick = e => { const b = e.target.closest("button"); if (b) { MKT.strat = b.dataset.s; drawOpps(v); } };
+  const get = async id => slim(await sf("/cards/" + encodeURIComponent(id), null, { now: true }));
+  v.querySelectorAll("[data-oopen]").forEach(b => b.onclick = async () => { b.disabled = true; try { openCard(await get(b.dataset.oopen)); } catch (e) { toast(e.message); } b.disabled = false; });
+  v.querySelectorAll("[data-owatch]").forEach(b => b.onclick = async () => { b.disabled = true; try { specForm(await get(b.dataset.owatch), "nonfoil"); } catch (e) { toast(e.message); } b.disabled = false; });
+}
 function specRecordSummary(list) {
   const done = list.filter(x => x.status !== "abandoned").map(x => ({ x, r: specResult(x, MKT.hist[x.card.id]) })).filter(o => o.r.verdict != null);
   return { n: done.length, right: done.filter(o => o.r.verdict).length, exit: done.filter(o => o.x.pred.exit != null && o.r.hitExit).length, withExit: done.filter(o => o.x.pred.exit != null).length };
@@ -5748,6 +5784,14 @@ function rrChip(x) {
 }
 function renderMarket() {
   setHead("Market", "");
+  if (MKT.view === "opps") {
+    $("#view").innerHTML = `<div class="stack"><span class="seg" id="mkV"><button data-v="watch" aria-pressed="false">Watchlist</button><button data-v="opps" aria-pressed="true">Opportunities</button></span><div class="stack" id="opV"></div></div>`;
+    $("#mkV").onclick = e => { const b = e.target.closest("button"); if (b) { MKT.view = b.dataset.v; renderMarket(); } };
+    const v = $("#opV"); drawOpps(v);
+    if (!MKT.opps || Date.now() - (MKT.oppsAt || 0) > 36e5) loadOpps().then(o => { MKT.opps = o; MKT.oppsAt = Date.now(); MKT.oppErr = o ? "" : "Today's opportunities haven't been worked out yet: they're made once a day."; },
+      e => { MKT.oppErr = e.message; }).then(() => { if (tab === "market" && MKT.view === "opps" && $("#opV")) drawOpps($("#opV")); });
+    return;
+  }
   const all = Object.values(S.spec || {}).sort((a, b) => b.created - a.created), counts = { active: 0, completed: 0, abandoned: 0 };
   for (const x of all) counts[x.status] = (counts[x.status] || 0) + 1;
   const list = MKT.filter === "all" ? all : all.filter(x => x.status === MKT.filter), rec = specRecordSummary(all);
@@ -5766,13 +5810,14 @@ function renderMarket() {
         ${x.pred.entry != null ? `<span>Buy ${money(x.pred.entry)}${r.hitEntry ? " ✓" : ""}</span>` : ""}${x.pred.exit != null ? `<span>Sell ${money(x.pred.exit)}${r.hitExit ? " ✓" : ""}</span>` : ""}${verdict}</div></div>
       <div class="right">${x.status !== "active" ? `<span class="chip">${x.status === "completed" ? "Completed" : "Abandoned"}</span>` : ""}${rrChip(x)}</div></button>`; };
   $("#view").innerHTML = `<div class="stack">
-    <h2 class="sec" style="margin:0">Watchlist</h2>
+    <span class="seg" id="mkV"><button data-v="watch" aria-pressed="true">Watchlist</button><button data-v="opps" aria-pressed="false">Opportunities</button></span>
     <div class="box stack" style="gap:6px"><div class="kv"><span class="label">Your calls</span><span class="small num">${counts.active || 0} active</span></div>
       ${rec.n ? `<span class="num"><b>${rec.right} of ${rec.n}</b> called the direction right${rec.withExit ? ` · sell target reached ${rec.exit} of ${rec.withExit}` : ""}</span>` : `<span class="small muted">Your record shows here once a prediction's time is up. Only real prices count: nothing is estimated.</span>`}
       <div class="ac"><input type="search" id="mkAdd" placeholder="Watch a card: type its name" autocomplete="off" autocapitalize="off" spellcheck="false"><ul id="mkAc" hidden></ul></div></div>
     <div class="chips" id="mkF">${[["active", "Active"], ["completed", "Completed"], ["abandoned", "Abandoned"], ["all", "All"]].map(([k, l]) => `<button data-f="${k}" aria-pressed="${MKT.filter === k}">${l}${k !== "all" && counts[k] ? ` <span class="num">${counts[k]}</span>` : ""}</button>`).join("")}</div>
     ${list.length ? `<div class="list">${list.map(row).join("")}</div>` : `<div class="empty"><h2>${all.length ? "Nothing here" : "No cards watched yet"}</h2><p>${all.length ? "Try another filter." : "Watch a card from its screen (Watch price) or type a name above. Say why, the price you'd buy and sell at, and which way you think it'll go."}</p></div>`}
     <p class="small muted">Prices: TCGplayer market, the same source as the price history. A call counts as right when the price ended at least 5% higher (Up), 5% lower (Down) or within 5% (Flat) at the end of its time frame.</p></div>`;
+  $("#mkV").onclick = e => { const b = e.target.closest("button"); if (b) { MKT.view = b.dataset.v; renderMarket(); } };
   $("#mkF").onclick = e => { const b = e.target.closest("button"); if (b) { MKT.filter = b.dataset.f; renderMarket(); } };
   $("#view").querySelectorAll("[data-spec]").forEach(b => b.onclick = () => specSheet(S.spec[b.dataset.spec]));
   attachAutocomplete($("#mkAdd"), $("#mkAc"), async name => { $("#mkAdd").value = "";

@@ -43,6 +43,15 @@ jobs:
             echo "::warning::MTGJSON download failed; keeping yesterday's price history"
           fi
           rm -rf "$RUNNER_TEMP/mtgjson"
+      - name: Market opportunities (uses the price history above plus Scryfall's daily card file)
+        run: |
+          pip install -q ijson
+          UA="Deckhand/1.0 (github.com/junkcase/Deckhand)"
+          URL=$(curl -sf -H "User-Agent: $UA" -H "Accept: application/json" https://api.scryfall.com/bulk-data/default-cards | python3 -c "import json,sys; print(json.load(sys.stdin)['download_uri'])") \
+            && curl -sf --compressed -H "User-Agent: $UA" -o "$RUNNER_TEMP/cards.json" "$URL" \
+            && python3 tools/opportunities.py "$RUNNER_TEMP/out" "$RUNNER_TEMP/cards.json" \
+            || echo "::warning::Opportunities not updated today; keeping yesterday's copy"
+          rm -f "$RUNNER_TEMP/cards.json"
       - name: Combos (Commander Spellbook)
         run: |
           pip install -q ijson
