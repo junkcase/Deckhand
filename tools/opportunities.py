@@ -137,13 +137,15 @@ def main(out, scry, today=None):
              "cardkingdom": meta_date(os.path.join(out, "cardkingdom", "meta.json")), "scryfall": (EPOCH + datetime.timedelta(days=today)).isoformat()}
     best_played = {}
     for sid, c in cards.items():
-        if c["basic"]:
+        if c["basic"] or c["stype"] == "memorabilia":       # gold borders, 30th Anniversary etc.: not tournament-legal, priced on their own terms
             continue
         h, o = hist.get(sid) or {}, oracle.get(c["o"])
         t = h.get("t")
         now = at_day(t, today) if t else None
         base = {"id": sid, "name": c["name"], "set": c["set"], "setName": c["setName"], "num": c["num"], "fin": "nonfoil"}
         risks = reprint_risks(o, today)
+        rel = (o or {}).get("sets", {}).get(c["set"], ("",))[0]
+        new_set = rel and rel >= (EPOCH + datetime.timedelta(days=today - 180)).isoformat()
         m7 = med(t, today - 9, today - 5) if t else None
         m30 = med(t, today - 33, today - 27) if t else None
         mnow = med(t, today - 4, today) if t else None          # five days, so a one- or two-day spike doesn't count
@@ -159,10 +161,10 @@ def main(out, scry, today=None):
                 + (["The price more than tripled in a month: moves this size on cheaper cards often come from a few sales or a buyout."] if mnow >= m30 * 3 else [])
             S["movers"].append(dict(row, ev=ev, risk=r, score=ch30))
         # 2. store price gaps, same day
-        if now and now >= 100 and krow and krow[0] and krow[0] >= now * 1.05 and krow[0] <= now * 1.5 and c["stype"] != "memorabilia":      # a buylist far above market is almost always a mismatched printing
+        if now and now >= 100 and krow and krow[0] and krow[0] >= now * 1.05 and krow[0] <= now * 1.5:      # a buylist far above market is almost always a mismatched printing
             S["gaps"].append(dict(row, ev=[f"Card Kingdom is paying {money(krow[0])} cash on its buylist; TCGplayer market is {money(now)} ({pct(krow[0], now):+.0f}%)." + (f" They want {krow[2]}." if krow[2] else "")],
                                   risk=risks + ["Buylist prices and wanted quantities change daily; check before selling.", "TCGplayer market is the price of recent sales, not a guaranteed buy price."], score=pct(krow[0], now)))
-        if now and now >= 200 and mrow and mrow[0] and mrow[0] <= now * 0.7 and mrow[0] >= now * 0.25 and c["stype"] != "memorabilia":
+        if now and now >= 200 and mrow and mrow[0] and mrow[0] <= now * 0.7 and mrow[0] >= now * 0.5:      # listings far below market are nearly always damaged or another language
             S["gaps"].append(dict(row, ev=[f"Mana Pool's lowest listing is {money(mrow[0])}, {abs(pct(mrow[0], now)):.0f}% below TCGplayer market {money(now)}."],
                                   risk=risks + ["The lowest listing may be a single copy, a worse condition or a different language.", "TCGplayer market is the price of recent sales, not a guaranteed sell price."], score=-pct(mrow[0], now)))
         # 3. played a lot for its price (the cheapest priced printing of each card)
@@ -179,7 +181,7 @@ def main(out, scry, today=None):
             hi, hid = max(meds) if meds else (None, None)
             if hi and now <= min(span) and now <= hi * 0.75 and hi <= now * 4:
                 S["lows"].append(dict(row, ev=[f"At its lowest TCGplayer price in 90 days: {money(now)}, down from {money(hi)} on {(EPOCH + datetime.timedelta(days=hid)).isoformat()}."],
-                                      risk=risks + thin + ["A falling price can keep falling: a low isn't a floor."], score=pct(hi, now)))
+                                      risk=risks + thin + (["Released " + rel + ": new cards usually fall from their release price, so this may be that drop."] if new_set else []) + ["A falling price can keep falling: a low isn't a floor."], score=pct(hi, now)))
         # 5. rising demand: EDHREC rank improving over 30+ days of records
         rk = ranks["r"].get(c["o"])
         if rk and today - ranks["since"] >= 30:
