@@ -1060,7 +1060,7 @@ async function refreshPrices(quiet) {
     S.meta.pricedAt = Date.now(); save();
     toast(hits ? `Prices updated · ${hits} price alert${hits > 1 ? "s" : ""}` : "Prices updated");
   } catch (e) { if (!quiet) toast("Couldn't update prices: " + e.message); }
-  finally { refreshing = false; if (tab === "coll") renderColl(); else updRefreshBtn(); }
+  finally { refreshing = false; if (tab === "coll") whenNotTyping(() => { if (tab === "coll") render(); else updRefreshBtn(); }); else updRefreshBtn(); }
 }
 function updRefreshBtn() { const b = $("#cRefresh"); if (b) { b.disabled = refreshing; b.textContent = refreshing ? refreshMsg : "Update prices"; } }
 function spark(vals) {
@@ -1125,7 +1125,24 @@ function go(t, extra) {
 // the Deckhand banner, at the size the screen needs
 const heroImg = () => `<img class="hero" src="images/welcome-800.jpg" srcset="images/welcome-800.jpg 800w, images/welcome-1600.jpg 1600w" sizes="(min-width: 900px) 860px, 100vw" width="1672" height="941" alt="Deckhand">`;
 function setHead(title, sub = "") { $("#viewTitle").textContent = title; $("#viewSub").textContent = sub; }
-function render() {
+/* Typing must never be cut off: on a phone, redrawing the screen replaces the box you're typing in and the keyboard
+   closes. Background updates (a sync, card details arriving, prices) wait until you leave the box; any redraw that
+   still happens puts the text, cursor and focus back. */
+const typingIn = () => { const a = document.activeElement, v = $("#view"); return !!(a && v && v.contains(a) && (a.tagName === "TEXTAREA" || (a.tagName === "INPUT" && /^(text|search|number|email|url|)$/.test(a.type)))); };
+let typingWait = null;
+function whenNotTyping(fn) { if (!typingIn()) return fn(); typingWait = fn; }        // the latest waiting update runs once you leave the box
+document.addEventListener("focusout", () => setTimeout(() => { if (typingWait && !typingIn()) { const f = typingWait; typingWait = null; f(); } }, 120));
+function keepTyping(fn) {
+  const a = document.activeElement, st = typingIn() && a.id ? { id: a.id, val: a.value, s: a.selectionStart, e: a.selectionEnd } : null;
+  fn();
+  if (!st) return;
+  const b = document.getElementById(st.id); if (!b || b === a || b.disabled) return;
+  const changed = b.value !== st.val; if (changed) b.value = st.val;
+  b.focus({ preventScroll: true }); try { b.setSelectionRange(st.s, st.e); } catch (e) {}
+  if (changed) b.dispatchEvent(new Event("input", { bubbles: true }));
+}
+function render() { keepTyping(render_); }
+function render_() {
   staleIndex();
   if (tab === "coll") renderColl();
   else if (tab === "scan") renderScan();
@@ -1993,7 +2010,7 @@ function applySynced(st, from) {
   if (gone.length) S.meta.syncRemoved = [{ id: uid(), at: Date.now(), from: from || "", cards: gone.slice(0, 8000) }, ...(S.meta.syncRemoved || [])].filter(x => Date.now() - x.at < 30 * 864e5).slice(0, 20);
   for (const k of SYNC_KEYS) S[k] = st[k];
   migrate(); save();
-  try { if (!$("#sheetRoot").innerHTML) render(); else if ($("#syBody")) drawSync(); } catch (e) { console.error(e); }     // a display problem mustn't stop the sync
+  try { if (!$("#sheetRoot").innerHTML) whenNotTyping(() => { if (!$("#sheetRoot").innerHTML) render(); }); else if ($("#syBody")) drawSync(); } catch (e) { console.error(e); }     // a display problem mustn't stop the sync
 }
 const syncCount = st => Object.values(st.coll || {}).reduce((a, e) => a + (e.qty || 0), 0);
 async function syncNow(manual) {
@@ -4543,7 +4560,7 @@ async function fillDeck(d) {
     const { found } = await cardsByIdentifiers([...new Set(need)].map(id => ({ id })));
     const map = {}; for (const c of found) map[c.id] = slim(c);
     for (const c of Object.values(d.cards)) { const s = map[c.id]; if (s) DECK_FIELDS.forEach(f => c[f] = s[f]); else { if (!c.leg) c.leg = {}; if (!c.roles) c.roles = []; } }
-    save(); if (tab === "decks" && deckOpen === d.id) renderDeck(d);
+    save(); whenNotTyping(() => { if (tab === "decks" && deckOpen === d.id && !$("#sheetRoot").innerHTML) renderDeck(d); });
   } catch (e) {} finally { filling.delete(d.id); }
 }
 /* ---------- EDHREC: community deck statistics (no official API, so kept behind this one provider) ----------
@@ -5167,7 +5184,8 @@ function renderDecks() {
     document.querySelectorAll("[data-tr]").forEach(b => b.onclick = () => { const x = items[+b.dataset.tr]; S.decks[x.deck.id] = Object.assign(x.deck, { updated: Date.now() }); save(); b.textContent = "Restored ✓"; b.disabled = true; });
   };
 }
-function renderDeck(d) {
+function renderDeck(d) { keepTyping(() => renderDeck_(d)); }
+function renderDeck_(d) {
   const st = deckStats(d), max = Math.max(1, ...st.curve), ck = checkDeck(d), cmd = d.format === "commander";
   if (ck.pending || Object.values(d.cards).some(c => !c.roles)) fillDeck(d);
   setHead(d.name, `${st.mainN} cards · ${money(st.value)}`);
