@@ -135,6 +135,9 @@ button.chip.deck{cursor:pointer}
 .price{font-weight:600}
 .item .scanned{color:var(--accent);white-space:nowrap}
 .group-h{padding:8px 10px;background:var(--sunk);font:600 12px var(--f-display);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);display:flex;justify-content:space-between}
+button.group-h{width:100%;border:0;border-top:1px solid var(--line);cursor:pointer;align-items:center;text-align:left;min-height:40px}
+button.group-h:hover{color:var(--ink)}
+button.group-h .chev{display:inline-block;width:1em;transition:transform .15s} button.group-h[aria-expanded="false"] .chev{transform:rotate(-90deg)}
 
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px}
 .grid button{border:0;padding:0;border-radius:6px;overflow:hidden;aspect-ratio:63/88;background:var(--sunk);position:relative}
@@ -5197,11 +5200,14 @@ function renderDeck_(d) {
       <div class="item ${fl ? "flagged" : ""}"><img loading="lazy" src="${esc(c.img)}" alt=""><button class="tap" data-open="${esc(k)}"><div class="name">${esc(c.name)}</div>
         <div class="meta"><span>${pips(c.mana)}</span><span class="small muted">${esc((c.set || "").toUpperCase())} #${esc(c.num || "")}</span>${ownChip}<span class="num">${money(priceOf(c))}</span>${fl ? fl.map(f => `<span class="chip warn">${esc(f)}</span>`).join("") : ""}</div></button>
         <div class="right"><span class="stepper"><button data-dec="${esc(k)}" aria-label="Remove one">−</button><span class="num">${c.qty}</span><button data-inc="${esc(k)}" aria-label="Add one">+</button></span></div></div>`; };
+  // sections (Creatures, Instants…) fold away with a tap; remembered per deck on this device
+  const folded = new Set((S.meta.deckFold || {})[d.id] || []);
+  const foldHead = (key, label, n) => `<button class="group-h" data-fold="${esc(key)}" aria-expanded="${!folded.has(key)}"><span><span class="chev" aria-hidden="true">▾</span> ${esc(label)}</span><span class="num">${n}</span></button>`;
   const group = (cards, title) => {
     if (!cards.length) return "";
     const by = {}; for (const c of cards) (by[typeOf(c.type)] = by[typeOf(c.type)] || []).push(c);
-    return [...TYPES, "Other"].filter(t => by[t]).map(t => `<div class="group-h"><span>${title ? title + " · " : ""}${t}</span><span class="num">${by[t].reduce((a, c) => a + c.qty, 0)}</span></div>` +
-      by[t].sort((a, b) => a.cmc - b.cmc || a.name.localeCompare(b.name)).map(row).join("")).join("");
+    return [...TYPES, "Other"].filter(t => by[t]).map(t => foldHead((title || "Main") + ":" + t, (title ? title + " · " : "") + t, by[t].reduce((a, c) => a + c.qty, 0)) +
+      (folded.has((title || "Main") + ":" + t) ? "" : by[t].sort((a, b) => a.cmc - b.cmc || a.name.localeCompare(b.name)).map(row).join(""))).join("");
   };
   const cmdCards = cmd ? d.cmdr.map(k => d.cards[k]).filter(Boolean) : [];
   const mainRest = st.main.filter(c => !cmdCards.includes(c));
@@ -5237,7 +5243,8 @@ function renderDeck_(d) {
       <div class="curve">${st.curve.map(v => `<div class="bar" style="height:${v / max * 100}%"><span class="num">${v || ""}</span></div>`).join("")}</div>
       <div class="curve-x"><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7+</span></div></div>
       ${playtestHTML(d)}` : ""}
-    <div class="list" id="dl">${cmdCards.length ? `<div class="group-h"><span>Commander</span><span class="num">${cmdCards.length}</span></div>${cmdCards.map(row).join("")}` : ""}
+    ${Object.keys(d.cards).length > 1 ? `<div class="row" style="justify-content:flex-end;gap:12px;margin-bottom:-4px"><button class="linkbtn small" id="dFoldAll">Collapse all</button><button class="linkbtn small" id="dOpenAll">Expand all</button></div>` : ""}
+    <div class="list" id="dl">${cmdCards.length ? foldHead("Commander", "Commander", cmdCards.length) + (folded.has("Commander") ? "" : cmdCards.map(row).join("")) : ""}
       ${group(mainRest, "") || (cmdCards.length ? "" : `<div class="empty" style="border:0"><p>No cards yet. Type above, or use Deck options → Paste a deck list.</p></div>`)}${group(st.side, "Side")}</div></div></div>`;
   $("#back").onclick = () => go("decks");
   $("#dThemeAdd").onclick = () => { $("#dThemeBox").hidden = false; $("#dThemeIn").focus(); };
@@ -5282,8 +5289,12 @@ function renderDeck_(d) {
   const pk = $("#dPick"), pk2 = $("#dPick2"); if (pk) drawCmdrPicker(d, pk, false); else if (pk2) drawCmdrPicker(d, pk2, true);
   if (cmd && d.cmdr.length && (!themeSug[d.id] || themeSug[d.id].cmd !== deckCommanderName(d))) loadThemeSuggestions(d); else drawThemeSug(d);
   wirePlaytest(d);
+  const setFold = keys => { S.meta.deckFold = Object.assign({}, S.meta.deckFold, { [d.id]: [...keys] }); if (!keys.size) delete S.meta.deckFold[d.id]; save(); renderDeck(d); };
+  const fa = $("#dFoldAll"); if (fa) fa.onclick = () => setFold(new Set([...$("#dl").querySelectorAll("[data-fold]")].map(b => b.dataset.fold)));
+  const oa = $("#dOpenAll"); if (oa) oa.onclick = () => setFold(new Set());
   $("#dl").onclick = e => {
     const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.fold) { const k = b.dataset.fold; folded.has(k) ? folded.delete(k) : folded.add(k); setFold(folded); return; }
     const k = b.dataset.inc || b.dataset.dec || b.dataset.open, c = d.cards[k]; if (!c) return;
     if (b.dataset.inc) { c.qty++; d.updated = Date.now(); save(); renderDeck(d); }
     else if (b.dataset.dec) { c.qty--; if (c.qty <= 0) { delete d.cards[k]; d.cmdr = d.cmdr.filter(x => x !== k); } d.updated = Date.now(); save(); renderDeck(d); }
