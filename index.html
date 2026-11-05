@@ -215,12 +215,13 @@ details.box summary::after{content:" ▾"}
 .mvrow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mvrow>span:last-child{text-align:right}.mvhead{margin-top:4px}
 #mvRar button{font-size:13px}#mvRar .rar-mythic{border-color:#c4622d}#mvRar .rar-rare{border-color:#b8962e}#mvRar .rar-uncommon{border-color:#7d8a96}
 ol.welcome{text-align:left;max-width:460px;margin:8px auto 14px;padding-left:20px;display:flex;flex-direction:column;gap:6px}
-.seg.wide{display:flex}
+.seg.wide{display:flex;overflow-x:auto;scrollbar-width:none}
 .swap{border-top:1px solid var(--line);padding:10px 0;display:flex;flex-direction:column;gap:6px}.swap.over{opacity:.6}
 .swapcards{display:grid;grid-template-columns:1fr 18px 1fr;gap:6px;align-items:center}.swapcards .arrow{text-align:center;color:var(--muted)}
 .sc{display:flex;gap:6px;align-items:flex-start;text-align:left;border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer;min-width:0}.sc img{width:44px;aspect-ratio:63/88;object-fit:cover;border-radius:4px;flex:none;background:var(--sunk)}.sc span{min-width:0;overflow-wrap:anywhere}
 .cmpgrid{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(150px,1fr);gap:8px;overflow-x:auto;padding-bottom:4px}.cmpcol{display:flex;flex-direction:column;gap:3px;min-width:0}.cmpcol img{width:100%;border-radius:8px;aspect-ratio:63/88;object-fit:cover;background:var(--sunk)}
-details>summary{cursor:pointer}.seg.wide button{flex:1}
+details>summary{cursor:pointer}.seg.wide button{flex:1 1 auto;min-width:0;white-space:nowrap}
+@media (max-width:520px){.seg.wide button{padding:6px 5px;font-size:13px}}
 .cgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}
 .ctile{display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--surface);cursor:pointer;font:inherit;color:inherit}
 .ctile img{width:100%;aspect-ratio:63/88;object-fit:cover;border-radius:6px;background:var(--sunk)}.ctile .nm{font-size:12px;text-align:center;line-height:1.2}
@@ -4834,14 +4835,17 @@ function bracketHTML(d) {
   if (d.format !== "commander") return "";
   if (!BRK.lists) return `<div class="box" id="brBox"><span class="label">Commander bracket</span><p class="small muted" style="margin:4px 0 0">Checking the deck against the current Game Changers list…</p></div>`;
   const r = bracketOf(d, BRK.lists), list = (lab, a) => a.length ? `<div class="small"><b>${lab} (${a.length}):</b> ${a.map(esc).join(", ")}</div>` : "";
+  const tc = twoCardCombos(d);
+  if (tc && tc.length) { r.b = Math.max(r.b, 3); r.why.push(`${tc.length} two-card combo${tc.length === 1 ? "" : "s"} (brackets 1–2 allow none; bracket 3 only late in the game)`); }
   return `<div class="box stack" style="gap:6px" id="brBox"><div class="kv"><span class="label">Commander bracket</span><b>${r.b === 2 ? "2 (Core) or lower" : r.b + " (" + BRACKETS[r.b] + ")"}${r.b === 4 ? " or higher" : ""}</b></div>
     <span class="small">${r.why.length ? "Because of " + r.why.map(esc).join("; ") + "." : "No Game Changers, mass land denial, chains of extra turns or piles of tutors."}</span>
-    ${list("Game Changers", r.gc)}${list("Mass land denial", r.mld)}${list("Extra turns", r.xt)}${list("Tutors", r.tutors)}
-    <span class="small muted">Not checked: two-card combos (any early-game combo makes it bracket 4) and what the deck is built to do, which only you can judge. Bracket 1 is about a theme deck's intent; bracket 5 is for competitive (cEDH) decks. Brackets are a guide for talking with your playgroup, not strict rules. Game Changers from Scryfall's copy of the official list; mass land denial and extra turns from Scryfall's community card tags. Refreshed weekly.</span></div>`;
+    ${list("Game Changers", r.gc)}${list("Mass land denial", r.mld)}${list("Extra turns", r.xt)}${list("Tutors", r.tutors)}${tc ? list("Two-card combos", tc.map(o => o.cards.map(c => c.name).join(" + "))) : ""}
+    <span class="small muted">${tc ? "Two-card combos from Commander Spellbook; an early-game one makes it bracket 4. " : "Two-card combos: loading the combo list… "}Not checked: what the deck is built to do, which only you can judge. Bracket 1 is about a theme deck's intent; bracket 5 is for competitive (cEDH) decks. Brackets are a guide for talking with your playgroup, not strict rules. Game Changers from Scryfall's copy of the official list; mass land denial and extra turns from Scryfall's community card tags. Refreshed weekly.</span></div>`;
 }
 function drawBalance(d) {
   const el = $("#dPane"); if (!el) return;
   const g = deckGaps(d), main = Object.values(d.cards).filter(c => !c.side);
+  if (d.format === "commander" && !CMB.data) comboData().then(() => { const b = $("#brBox"); if (b && BRK.lists) b.outerHTML = bracketHTML(d); }).catch(() => {});
   if (d.format === "commander" && !BRK.lists) bracketLists().then(() => { const b = $("#brBox"); if (b) b.outerHTML = bracketHTML(d); }).catch(e => { const b = $("#brBox"); if (b) b.innerHTML = `<span class="label">Commander bracket</span><p class="small muted" style="margin:4px 0 0">Couldn't load the Game Changers list: ${esc(e.message)}</p>`; });
   el.innerHTML = `${bracketHTML(d)}${deckValueHTML(d)}${g.ranges ? `<p class="small muted">Suggested ranges for a Commander deck, from common deck-building guidance. They're a starting point, not rules: tune them to your deck.</p>` : `<p class="small muted">Card roles in this deck.</p>`}
     <div class="box baltable"><div class="balrow head small muted"><span>Role</span><span>Now</span><span>Suggested</span><span></span><span></span></div>${(g.ranges || ROLES.map(r => [r, null, null])).map(([r, lo, hi]) => { const v = g.n[r] || 0, st = lo == null ? "" : v < lo ? "low" : v > hi ? "high" : "ok";
@@ -5076,6 +5080,71 @@ function upgConfirm(d, s, i, how) {
   $("#sn-" + i).onclick = () => { box.hidden = true; };
 }
 function upgLog(d, h) { h.id = uid(); h.at = Date.now(); (d.history = d.history || []).push(h); if (d.history.length > 200) d.history.splice(0, d.history.length - 200); return h; }
+/* ---------- Combos: known combos from Commander Spellbook (commanderspellbook.com, a free community database) ----------
+   A daily copy (tools/combos-mirror.py) on the "data" branch, as their API only answers their own website. Shows the
+   combos already in a deck and those one card away (with whether you own that card). Nothing is guessed: only combos
+   in their list are shown, and each links to its full steps there. */
+const CMB = { base: "https://raw.githubusercontent.com/junkcase/Deckhand/data/combos/", meta: null, name: "Combo list", key: "cmb", data: null, p: null };
+async function comboData() {
+  const meta = await storeMeta(CMB);
+  if (CMB.data && CMB.data.as_of === meta.as_of) return CMB.data;
+  if (CMB.p) return CMB.p;
+  return CMB.p = (async () => {
+    let c = null; try { c = idb.ok ? await idbGet("combos") : null; } catch (e) {}
+    let data = c && c.as_of === meta.as_of ? c.data : null;
+    if (!data) { const r = await fetch(CMB.base + "all.json"); if (!r.ok) throw new Error("Couldn't load the combo list (" + r.status + ")"); data = await r.json(); if (idb.ok) idbSet("combos", { as_of: meta.as_of, data }).catch(() => {}); }
+    const by = new Map(), key = n => n.toLowerCase();
+    data.combos.forEach((x, i) => { for (const u of x[1]) { const n = key(data.cards[u < 0 ? -u - 1 : u]); (by.get(n) || by.set(n, []).get(n)).push(i); } });
+    CMB.data = Object.assign(data, { as_of: meta.as_of, by }); return CMB.data;
+  })().finally(() => { CMB.p = null; });
+}
+const comboNames = (data, x) => x[1].map(u => ({ name: data.cards[u < 0 ? -u - 1 : u], cmdr: u < 0 }));
+function deckCombos(d, data) {
+  const main = Object.values(d.cards).filter(c => !c.side), keys = c => { const n = c.name.toLowerCase(); return [n, n.split(" // ")[0]]; };
+  const have = new Set(main.flatMap(keys)), cmdr = new Set(d.cmdr.map(k => d.cards[k]).filter(Boolean).flatMap(keys)), ci = deckCI(d);
+  const cand = new Set(); for (const n of have) for (const i of data.by.get(n) || []) cand.add(i);
+  const included = [], almost = [];
+  for (const i of cand) {
+    const x = data.combos[i], cards = comboNames(data, x), inDeck = n => have.has(n.toLowerCase()) || have.has(n.toLowerCase().split(" // ")[0]);
+    if (ci && x[5] !== "C" && [...x[5]].some(c => !ci.includes(c))) continue;            // outside the commander's colours
+    const missing = cards.filter(c => !inDeck(c.name));
+    if (cards.some(c => c.cmdr && (missing.includes(c) || !cmdr.has(c.name.toLowerCase())))) continue;   // needs a different commander
+    const o = { id: x[0], cards, gives: x[2].map(f => data.feats[f]), needs: x[3].map(t => data.tmpl[t]), pop: x[4] };
+    if (!missing.length) included.push(o); else if (missing.length === 1) almost.push(Object.assign(o, { missing: missing[0].name }));
+  }
+  const byPop = (a, b) => b.pop - a.pop; included.sort(byPop); almost.sort(byPop);
+  return { included, almost };
+}
+const cbState = {};
+async function drawCombos(d) {
+  const el = $("#dPane"); if (!el) return;
+  const st = cbState[d.id] = cbState[d.id] || { own: false, nIn: 20, nAl: 20 };
+  if (!CMB.data) el.innerHTML = `<div class="box"><p class="small muted" style="margin:0">Loading the combo list…</p></div>`;
+  let data; try { data = await comboData(); } catch (e) { if ($("#dPane") === el) el.innerHTML = `<div class="box"><p class="small" style="margin:0">${esc(e.message)}. Try again later.</p></div>`; return; }
+  if ($("#dPane") !== el || (deckTab[d.id] || "cards") !== "combos") return;
+  const R = deckCombos(d, data), seen = new Set(), owned = n => ownedByName(n);
+  const almost = R.almost.filter(o => !seen.has(o.id) && seen.add(o.id) && (!st.own || owned(o.missing) > 0));
+  const card = (o, miss) => `<div class="box stack combo" style="gap:6px">
+      <div class="chips">${o.cards.map(c => `<span class="chip ${c.name === miss ? "warn" : "ok"}">${c.name === miss ? "+ " : ""}${esc(c.name)}${c.cmdr ? " (commander)" : ""}</span>`).join("")}${o.cards.length === 2 ? `<span class="chip acc">Two-card combo</span>` : ""}</div>
+      ${o.gives.length ? `<span class="small"><b>Gives:</b> ${o.gives.map(esc).join(" · ")}</span>` : ""}
+      ${o.needs.length ? `<span class="small"><b>Also needs:</b> ${o.needs.map(esc).join(" · ")}</span>` : ""}
+      <div class="row wrap" style="gap:8px">${miss ? (owned(miss) ? `<span class="chip ok">You own ${owned(miss)}</span>` : `<span class="small muted">Not in your collection</span>`) + `<button class="btn sm" data-cadd="${esc(miss)}">Add ${esc(miss)} to the deck</button>` : ""}
+        <a class="linkbtn small" href="https://commanderspellbook.com/combo/${encodeURIComponent(o.id)}/" target="_blank" rel="noopener">How it works ↗</a></div></div>`;
+  el.innerHTML = `<div class="box"><div class="kv"><span class="label">Combos</span><span class="num small">${R.included.length} in this deck · ${R.almost.length} one card away</span></div>
+      <span class="small muted">Known combos from Commander Spellbook's community database. List updated: ${esc(dayLabel(Date.parse(data.as_of) || Date.now()))}. Only combos within ${deckCI(d) ? "your commander's colours" : "the deck's cards"} are shown.</span></div>
+    <h2 class="sec">In this deck</h2>
+    ${R.included.length ? R.included.slice(0, st.nIn).map(o => card(o)).join("") + (R.included.length > st.nIn ? `<button class="btn" id="cbMoreIn">Show more</button>` : "") : `<p class="small muted">No known combos in this deck${d.cmdr.length || d.format !== "commander" ? "" : " yet. Choose a commander first so combos that need it can be found"}.</p>`}
+    <div class="row wrap" style="align-items:center"><h2 class="sec grow" style="margin:0">One card away</h2><span class="seg" id="cbOwn"><button data-o="0" aria-pressed="${!st.own}">All</button><button data-o="1" aria-pressed="${st.own}">Cards I own</button></span></div>
+    ${almost.length ? almost.slice(0, st.nAl).map(o => card(o, o.missing)).join("") + (almost.length > st.nAl ? `<button class="btn" id="cbMoreAl">Show more</button>` : "") : `<p class="small muted">${st.own ? "None of the missing pieces are in your collection." : "No combos are one card away."}</p>`}`;
+  const mi = $("#cbMoreIn"); if (mi) mi.onclick = () => { st.nIn += 30; drawCombos(d); };
+  const ma = $("#cbMoreAl"); if (ma) ma.onclick = () => { st.nAl += 30; drawCombos(d); };
+  $("#cbOwn").onclick = e => { const b = e.target.closest("button"); if (b) { st.own = b.dataset.o === "1"; drawCombos(d); } };
+  el.querySelectorAll("[data-cadd]").forEach(b => b.onclick = async () => { const n = b.dataset.cadd; b.disabled = true;
+    try { const mine = ownedPrinting(n), c = mine || await sf("/cards/named?exact=" + encodeURIComponent(n), null, { now: true }); addToDeck(d, c, 1, false); toast(`Added ${n} to ${d.name}`); drawCombos(d); }
+    catch (e) { b.disabled = false; toast(`Couldn't add ${n}: ${e.message}`); } });
+}
+// two-card combos in the deck, for the bracket check (null until the combo list is loaded)
+const twoCardCombos = d => CMB.data ? deckCombos(d, CMB.data).included.filter(o => o.cards.length === 2) : null;
 function applyUpgrade(d, s, how, moveFrom) {
   const h = { text: "", price: s.group === "buy" ? priceOf(s.best.card) : 0, cut: s.cut.card.name, add: s.best.card.name };
   if (how === "replace") {
@@ -5225,7 +5294,7 @@ function renderDeck_(d) {
         <button class="chip" id="dThemeAdd">＋ Add theme</button></div>
       <div id="dThemeSug" class="chips"></div>
       <div class="row" id="dThemeBox" hidden><input type="text" id="dThemeIn" class="grow" list="themeList" placeholder="Pick or type a theme, e.g. Tokens" maxlength="30"><datalist id="themeList">${THEMES.map(t => `<option value="${esc(t)}">`).join("")}</datalist><button class="btn sm primary" id="dThemeGo">Add</button></div></div>
-    ${(() => { const dt = deckTab[d.id] || "cards"; return `<div class="seg wide" id="dTabs"><button data-t="cards" aria-pressed="${dt === "cards"}">Cards</button><button data-t="suggest" aria-pressed="${dt === "suggest"}">Suggestions</button><button data-t="balance" aria-pressed="${dt === "balance"}">Balance</button><button data-t="upgrade" aria-pressed="${dt === "upgrade"}">Upgrade</button></div>
+    ${(() => { const dt = deckTab[d.id] || "cards"; return `<div class="seg wide" id="dTabs"><button data-t="cards" aria-pressed="${dt === "cards"}">Cards</button><button data-t="suggest" aria-pressed="${dt === "suggest"}">Suggestions</button><button data-t="balance" aria-pressed="${dt === "balance"}">Balance</button><button data-t="upgrade" aria-pressed="${dt === "upgrade"}">Upgrade</button><button data-t="combos" aria-pressed="${dt === "combos"}">Combos</button></div>
     <div id="dPane" class="stack" ${dt === "cards" ? "hidden" : ""}></div>`; })()}
     <div id="dCards" class="stack" ${(deckTab[d.id] || "cards") !== "cards" ? "hidden" : ""}>
     ${cmd && !d.cmdr.length ? `<div class="box stack" id="dPick" style="gap:8px"></div>` : cmd && d.cmdr.length === 1 && (d.cards[d.cmdr[0]] || {}).partner && !d.noPartner ? `<div class="box stack" id="dPick2" style="gap:8px"></div>` : ""}
@@ -5285,7 +5354,7 @@ function renderDeck_(d) {
   $("#dTabs").onclick = e => { const b = e.target.closest("button"); if (!b) return; deckTab[d.id] = b.dataset.t; renderDeck(d); };
   if (deckRefocus && !$("#sheetRoot").children.length) { deckRefocus = false; $("#dAdd").focus(); }      // card added: the box is empty and ready for the next one
   const dt = deckTab[d.id] || "cards";
-  if (dt === "suggest") drawSuggest(d); else if (dt === "balance") drawBalance(d); else if (dt === "upgrade") drawUpgrade(d);
+  if (dt === "suggest") drawSuggest(d); else if (dt === "balance") drawBalance(d); else if (dt === "upgrade") drawUpgrade(d); else if (dt === "combos") drawCombos(d);
   const pk = $("#dPick"), pk2 = $("#dPick2"); if (pk) drawCmdrPicker(d, pk, false); else if (pk2) drawCmdrPicker(d, pk2, true);
   if (cmd && d.cmdr.length && (!themeSug[d.id] || themeSug[d.id].cmd !== deckCommanderName(d))) loadThemeSuggestions(d); else drawThemeSug(d);
   wirePlaytest(d);
