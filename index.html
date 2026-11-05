@@ -3186,8 +3186,10 @@ function openCard(card, finish, binder, ctx) {
     const rrb = myBody.querySelector("#rrBox");
     if (rrb && rrFor === s.name) rrb.innerHTML = rrHtml;
     else if (rrb && rrWant !== s.name) { const nm = rrWant = s.name; rrb.innerHTML = `<span class="small muted">Checking printing history…</span>`;
-      reprintData(s).then(d => reprintHTML(reprintRisk(d), d), e => `<span class="small muted">Reprint risk: couldn't load the printing history (${esc(e.message)}).</span>`)
-        .then(h => { rrFor = nm; rrHtml = h; const b = $("#sheetBody") === myBody && myBody.querySelector("#rrBox"); if (b && s.name === nm) b.innerHTML = h; }); }
+      // a moment's wait: flicking through cards doesn't send a lookup for each, and searches you start go first
+      new Promise(r => setTimeout(r, 1200)).then(() => { if (!myBody.isConnected || s.name !== nm) throw Object.assign(new Error("closed"), { closed: true }); return reprintData(s); })
+        .then(d => reprintHTML(reprintRisk(d), d), e => { if (e.closed) { rrWant = null; throw e; } return `<span class="small muted">Reprint risk: couldn't load the printing history (${esc(e.message)}).</span>`; })
+        .then(h => { rrFor = nm; rrHtml = h; const b = $("#sheetBody") === myBody && myBody.querySelector("#rrBox"); if (b && s.name === nm) b.innerHTML = h; }).catch(() => {}); }
     else if (rrb) rrb.innerHTML = `<span class="small muted">Checking printing history…</span>`;
 
     const fs = $("#finSeg"); if (fs) fs.onclick = e => { const b = e.target.closest("button"); if (b) { fin = b.dataset.f; draw(); } };
