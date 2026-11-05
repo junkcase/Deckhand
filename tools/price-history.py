@@ -87,7 +87,7 @@ def window_median(points, start, end):
 
 def rising(hist, sets, today_day, days=30, per_set=60, overall=250, falling=False):
     """Cards whose TCGplayer market price went up (or, falling=True, down) most over `days` (normal, or foil for foil-only
-    cards). Changes of more than 10x either way are taken as bad data. Cheap cards are left out: now and then at least 50c
+    cards). Rises of more than 10x, and drops of more than 75%, are taken as bad data. Cheap cards are left out: now and then at least 50c
     for the price that's higher, 25c for the lower one."""
     rows = []
     for sf, v in hist.items():
@@ -100,7 +100,7 @@ def rising(hist, sets, today_day, days=30, per_set=60, overall=250, falling=Fals
             if now is None or then is None:
                 continue
             hi, lo = (then, now) if falling else (now, then)
-            if hi < 50 or lo < 25 or hi < lo * 1.05 or hi > lo * 10:
+            if hi < 50 or lo < 25 or hi < lo * 1.05 or hi > lo * (4 if falling else 10):      # drops beyond -75% are almost always a bad price at one end
                 continue
             rows.append([sf, sets.get(sf, ""), now, then, foil])
     rows.sort(key=lambda r: ((r[2] - r[3]) / r[3], -r[3]) if falling else (-(r[2] - r[3]) / r[3], -r[2]))
