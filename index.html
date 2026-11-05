@@ -3095,7 +3095,7 @@ function setDeckPrinting(d, k, picked) {
 }
 function openCard(card, finish, binder, ctx) {
   let s = isSlim(card) ? card : slim(card), editing = null, addQty = 1, aEdit = AEDIT_NEXT; AEDIT_NEXT = null;
-  let phH = null, phRange = S.meta.phRange || "3M", phOff = {}, phWant = null;
+  let phH = null, phRange = S.meta.phRange || "3M", phOff = {}, phWant = null, rrHtml = null, rrFor = null, rrWant = null;
   let full = card.oracle_text !== undefined || card.card_faces ? card : null;
   let fin = finish && s.finishes.includes(finish) ? finish : s.finishes[0] || "nonfoil";
   let bsel = binder && S.binders[binder] ? binder : (cv.binder !== "all" && S.binders[cv.binder] ? cv.binder : defaultBinder());
@@ -3120,6 +3120,7 @@ function openCard(card, finish, binder, ctx) {
       <div class="prices" style="margin-top:10px">
         <div><span class="label">Normal</span><b class="num">${money(p.usd)}</b></div><div><span class="label">Foil</span><b class="num">${money(p.usd_foil)}</b></div>
         <div><span class="label">Etched</span><b class="num">${money(p.usd_etched)}</b></div><div><span class="label">EUR</span><b class="num">${p.eur ? "€" + p.eur : "—"}</b></div></div>
+      <div class="box stack" id="rrBox" style="margin-top:10px;gap:4px"></div>
       <div class="box stack" id="phBox" style="margin-top:10px;gap:6px${phHTML === null ? ";display:none" : ""}">${phHTML || `<span class="small muted">Loading price history…</span>`}</div>
       ${hist.length >= 2 ? `<div class="box" id="phLocal" style="margin-top:10px${phHTML ? ";display:none" : ""}"><div class="kv"><span class="label">Your price history</span><span class="small muted num">${dayStr(hist[0][0])} → ${dayStr(hist.at(-1)[0])}</span></div>
         ${spark(hist.map(x => x[1]))}<div class="kv small num"><span>${money(hist[0][1])}</span><span class="${hist.at(-1)[1] >= hist[0][1] ? "up" : "down"}">${signed(hist.at(-1)[1] - hist[0][1])}</span><span>${money(hist.at(-1)[1])}</span></div></div>` : ""}
@@ -3181,6 +3182,13 @@ function openCard(card, finish, binder, ctx) {
     if (phH && phH.id === s.id) phFill();
     else if (phWant !== s.id) { const id = phWant = s.id;
       priceHistory(id).then(h => ({ id, h }), () => ({ id, h: null })).then(x => { if (x.id !== s.id || $("#sheetBody") !== myBody || !myBody.isConnected) return; phH = x; phFill(); }); }
+    // reprint risk: the printing history is the same for every printing, so it's looked up once per card name
+    const rrb = myBody.querySelector("#rrBox");
+    if (rrb && rrFor === s.name) rrb.innerHTML = rrHtml;
+    else if (rrb && rrWant !== s.name) { const nm = rrWant = s.name; rrb.innerHTML = `<span class="small muted">Checking printing history…</span>`;
+      reprintData(s).then(d => reprintHTML(reprintRisk(d), d), e => `<span class="small muted">Reprint risk: couldn't load the printing history (${esc(e.message)}).</span>`)
+        .then(h => { rrFor = nm; rrHtml = h; const b = $("#sheetBody") === myBody && myBody.querySelector("#rrBox"); if (b && s.name === nm) b.innerHTML = h; }); }
+    else if (rrb) rrb.innerHTML = `<span class="small muted">Checking printing history…</span>`;
 
     const fs = $("#finSeg"); if (fs) fs.onclick = e => { const b = e.target.closest("button"); if (b) { fin = b.dataset.f; draw(); } };
     $("#bSel").onchange = e => { bsel = e.target.value; S.meta.binder = bsel; save(); draw(); };
@@ -5623,6 +5631,71 @@ function compareSheet(aId, bId) {
   if (!CMB.data) later.push(comboData().catch(() => {}));
   if (later.length) Promise.all(later).then(() => { if ($("#cmpBody")) draw(); });
 }
+/* ================= REPRINT RISK =================
+   A transparent read of a card's printing history (Scryfall, all paper printings): how often and how recently it has
+   been reprinted, in which kinds of products, special treatments, demand, and the Reserved List. It describes the
+   past only: it isn't a forecast of what Wizards of the Coast will do. A printing Scryfall lists from a set that has
+   been revealed but not released yet is the one thing shown as confirmed, with its set and date. */
+const RR = { mem: {} }, RR_DAY = 864e5;
+const RR_KIND = { masters: "Masters set", commander: "Commander product", core: "core set", expansion: "expansion", draft_innovation: "draft set", funny: "Un-set / playtest", promo: "promo", box: "boxed product", starter: "starter product", duel_deck: "Duel Deck", from_the_vault: "From the Vault", spellbook: "Signature Spellbook", premium_deck: "premium deck", arsenal: "Commander collection", memorabilia: "collector product" };
+async function reprintData(card) {
+  const name = card.name, key = (card.oid || name).toLowerCase(), hit = RR.mem[key];
+  if (hit && Date.now() - hit.at < 7 * RR_DAY) return hit;
+  let c = null; try { c = idb.ok ? await idbGet("rr:" + key) : null; } catch (e) {}
+  if (c && Date.now() - c.at < 7 * RR_DAY) return RR.mem[key] = c;
+  const out = []; let url = `/cards/search?q=${encodeURIComponent('!"' + name + '" game:paper')}&unique=prints&order=released&dir=asc&include_extras=true`;
+  while (url && out.length < 400) { const r = await sf(url); out.push(...(r.data || [])); url = r.has_more ? r.next_page : null; }
+  const prints = out.filter(p => !p.digital && p.layout !== "art_series").map(p => ({ set: p.set, setName: p.set_name, type: p.set_type, date: p.released_at, promo: !!p.promo,
+    treat: [...(p.frame_effects || []).filter(f => ["showcase", "extendedart", "etched", "inverted", "textless"].includes(f)), p.border_color === "borderless" ? "borderless" : null, p.full_art ? "full art" : null, ...(p.promo_types || []).filter(t => ["serialized", "surgefoil", "galaxyfoil", "textured", "halofoil", "confettifoil", "raisedfoil"].includes(t))].filter(Boolean) }));
+  const first = out[0] || {}, d = { at: Date.now(), name, reserved: !!out.some(p => p.reserved), er: (out.find(p => p.edhrec_rank) || {}).edhrec_rank || null,
+    usd: Math.min(...out.map(p => parseFloat(p.prices && p.prices.usd)).filter(x => x > 0)), prints };
+  if (!isFinite(d.usd)) d.usd = null;
+  if (idb.ok) idbSet("rr:" + key, d).catch(() => {});
+  return RR.mem[key] = d;
+}
+function reprintRisk(d) {
+  const now = Date.now(), t = s => Date.parse(s + "T12:00:00Z"), released = d.prints.filter(p => t(p.date) <= now), coming = d.prints.filter(p => t(p.date) > now);
+  const sets = [...new Map(released.map(p => [p.set, p])).values()], main = sets.filter(p => !p.promo && p.type !== "promo" && p.type !== "memorabilia");
+  const last = main[main.length - 1] || sets[sets.length - 1] || null, first = sets[0] || null, yrs = x => (now - t(x.date)) / (365.25 * RR_DAY);
+  const recent3 = main.filter(p => yrs(p) <= 3), kinds = {}; for (const p of main) kinds[p.type] = (kinds[p.type] || 0) + 1;
+  const treated = released.filter(p => p.treat.length), f = [];
+  const R = { level: null, score: 0, factors: f, coming, last, first, nSets: sets.length, nMain: main.length, limited: [], checked: d.at };
+  if (d.reserved) { R.level = "Reserved List"; f.push({ s: 0, t: "On the Reserved List: Wizards' published policy is not to reprint these cards." }); }
+  if (coming.length) f.push({ s: 0, t: `Confirmed: a new printing in ${coming.map(p => `${p.setName} (${dayStr(Math.floor(t(p.date) / RR_DAY))})`).join(", ")}, listed on Scryfall.`, sure: true });
+  if (!d.reserved) {
+    const add = (s, txt) => { R.score += s; f.push({ s, t: txt }); };
+    if (main.length >= 8) add(2, `Printed in ${main.length} different sets and products: reprinted often.`);
+    else if (main.length >= 3) add(1, `Printed in ${main.length} different sets and products.`);
+    else add(0, `Only ${main.length || sets.length} printing${(main.length || sets.length) === 1 ? "" : "s"} so far.`);
+    if (recent3.length >= 3) add(2, `${recent3.length} printings in the last 3 years.`);
+    else if (recent3.length) add(1, `${recent3.length} printing${recent3.length === 1 ? "" : "s"} in the last 3 years.`);
+    else if (last) add(0, `Not reprinted in the last 3 years (last: ${last.setName}, ${last.date.slice(0, 4)}).`);
+    const reprintKinds = ["masters", "commander", "arsenal", "spellbook", "from_the_vault", "duel_deck"].filter(k => kinds[k]);
+    if (reprintKinds.length) add(1, `Has appeared in ${reprintKinds.map(k => `${kinds[k]} ${RR_KIND[k] || k}${kinds[k] > 1 ? "s" : ""}`).join(" and ")}: products built around reprints.`);
+    if (d.er && d.er <= 500) add(1, `High Commander demand: #${d.er} on EDHREC.`);
+    if (d.usd != null && d.usd >= 20) add(1, `Its cheapest printing is ${money(d.usd)}: expensive cards are frequent reprint picks.`);
+    else if (d.usd != null && d.usd < 1) add(0, `Its cheapest printing is ${money(d.usd)}: a reprint would change little.`);
+    if (treated.length) f.push({ s: 0, t: `${treated.length} printing${treated.length === 1 ? " has" : "s have"} special treatments (${[...new Set(treated.flatMap(p => p.treat))].slice(0, 5).join(", ")}).` });
+    R.level = coming.length ? "Reprint confirmed" : R.score >= 5 ? "High" : R.score >= 3 ? "Medium" : "Low";
+  }
+  if (d.reserved) return R;                      // the policy settles it; the gaps below don't matter
+  if (sets.length < 2) R.limited.push("it has only been printed once");
+  if (first && yrs(first) < 1) R.limited.push("its first printing is less than a year old");
+  if (!d.er) R.limited.push("there's no EDHREC rank for it");
+  return R;
+}
+function reprintHTML(R, d) {
+  const col = R.level === "High" || R.level === "Reprint confirmed" ? "down" : R.level === "Low" || R.level === "Reserved List" ? "up" : "gold";
+  return `<div class="kv"><span class="label">Reprint risk</span><b class="${col}">${esc(R.level)}</b></div>
+    <ul class="small" style="margin:4px 0;padding-left:18px">${R.factors.map(x => `<li>${x.sure ? "<b>" : ""}${esc(x.t)}${x.sure ? "</b>" : ""}${x.s ? ` <span class="muted">(+${x.s})</span>` : ""}</li>`).join("")}</ul>
+    ${R.limited.length ? `<span class="small gold">Limited assessment: ${esc(R.limited.join(", "))}.</span>` : ""}
+    <span class="small muted">Based only on this card's printing history; it isn't a forecast of what Wizards will do.${R.level !== "Reserved List" ? ` Low = 0–2 points, Medium = 3–4, High = 5+${R.coming.length ? ` (this one scores ${R.score}, but a new printing is already listed)` : ""}.` : ""} Source: Scryfall (all paper printings), checked ${esc(dayLabel(R.checked))}.</span>`;
+}
+async function fillReprint(box, card) {
+  if (!box) return; box.innerHTML = `<span class="small muted">Checking printing history…</span>`;
+  try { const d = await reprintData(card); if (!box.isConnected) return; box.innerHTML = reprintHTML(reprintRisk(d), d); }
+  catch (e) { if (box.isConnected) box.innerHTML = `<span class="small muted">Reprint risk: couldn't load the printing history (${esc(e.message)}).</span>`; }
+}
 /* ================= MARKET: speculation watchlist =================
    Cards you're watching, each with a prediction: why, the price you'd buy at and sell at, which way you expect it
    to go and over how long. The prediction (direction, targets, time frame, starting price and date) is locked once
@@ -5660,10 +5733,16 @@ function specResult(x, H) {
   }
   return r;
 }
-const MKT = { filter: "active", hist: {} };
+const MKT = { filter: "active", hist: {}, rrAsked: {} };
 function specRecordSummary(list) {
   const done = list.filter(x => x.status !== "abandoned").map(x => ({ x, r: specResult(x, MKT.hist[x.card.id]) })).filter(o => o.r.verdict != null);
   return { n: done.length, right: done.filter(o => o.r.verdict).length, exit: done.filter(o => o.x.pred.exit != null && o.r.hitExit).length, withExit: done.filter(o => o.x.pred.exit != null).length };
+}
+// the reprint level on a watched card, when its printing history has been looked at (on its screen or the watchlist)
+function rrChip(x) {
+  const d = RR.mem[(x.card.oid || x.card.name).toLowerCase()]; if (!d) return "";
+  const R = reprintRisk(d);
+  return R.coming.length && x.pred.dir === "up" && x.status === "active" ? `<span class="chip warn" title="A new printing is listed on Scryfall">Reprint coming</span>` : `<span class="chip" title="Reprint risk from its printing history">Reprint: ${esc(R.level)}</span>`;
 }
 function renderMarket() {
   setHead("Market", "");
@@ -5673,6 +5752,9 @@ function renderMarket() {
   // load each watched card's daily price history (small files, cached), then redraw once
   const need = [...new Set(all.map(x => x.card.id))].filter(id => !(id in MKT.hist));
   if (need.length) Promise.all(need.map(id => priceHistory(id).then(h => { MKT.hist[id] = h; }, () => { MKT.hist[id] = null; }))).then(() => whenNotTyping(() => { if (tab === "market") renderMarket(); }));
+  // reprint risk for active watched cards (cached a week; loaded one after another, as the screen is open)
+  const rrNeed = all.filter(x => x.status === "active" && !RR.mem[(x.card.oid || x.card.name).toLowerCase()] && !MKT.rrAsked[x.card.name]);
+  if (rrNeed.length) { for (const x of rrNeed) MKT.rrAsked[x.card.name] = 1; (async () => { for (const x of rrNeed) { try { await reprintData(x.card); } catch (e) {} } whenNotTyping(() => { if (tab === "market") renderMarket(); }); })(); }
   const row = x => { const r = specResult(x, MKT.hist[x.card.id]), ch = r.change, c = x.card;
     const verdict = r.verdict != null ? `<span class="chip ${r.verdict ? "ok" : "warn"}">${r.verdict ? "Called it" : "Missed"} · ${r.endChange >= 0 ? "+" : "−"}${Math.abs(r.endChange * 100).toFixed(0)}%</span>`
       : r.noData ? `<span class="chip">No price recorded at the end</span>` : r.left > 0 ? `<span class="small muted">${r.left} day${r.left === 1 ? "" : "s"} to go</span>` : "";
@@ -5680,7 +5762,7 @@ function renderMarket() {
       <img loading="lazy" src="${esc(c.img)}" alt=""><div style="min-width:0"><div class="name">${esc(c.name)} <span class="chip ${x.pred.dir === "up" ? "ok" : x.pred.dir === "down" ? "warn" : ""}">${x.pred.dir === "up" ? "▲" : x.pred.dir === "down" ? "▼" : "▶"} ${SPEC_DIR[x.pred.dir]}</span></div>
       <div class="meta small num"><span>${esc(c.set.toUpperCase())}${x.finish !== "nonfoil" ? " · " + esc(x.finish) : ""}</span><span>${money(r.start)} → ${money(r.now)}</span>${ch != null ? `<span class="${ch > 0 ? "up" : ch < 0 ? "down" : ""}">${ch >= 0 ? "+" : "−"}${Math.abs(ch * 100).toFixed(1)}%</span>` : ""}
         ${x.pred.entry != null ? `<span>Buy ${money(x.pred.entry)}${r.hitEntry ? " ✓" : ""}</span>` : ""}${x.pred.exit != null ? `<span>Sell ${money(x.pred.exit)}${r.hitExit ? " ✓" : ""}</span>` : ""}${verdict}</div></div>
-      <div class="right">${x.status !== "active" ? `<span class="chip">${x.status === "completed" ? "Completed" : "Abandoned"}</span>` : ""}</div></button>`; };
+      <div class="right">${x.status !== "active" ? `<span class="chip">${x.status === "completed" ? "Completed" : "Abandoned"}</span>` : ""}${rrChip(x)}</div></button>`; };
   $("#view").innerHTML = `<div class="stack">
     <h2 class="sec" style="margin:0">Watchlist</h2>
     <div class="box stack" style="gap:6px"><div class="kv"><span class="label">Your calls</span><span class="small num">${counts.active || 0} active</span></div>
@@ -5747,6 +5829,7 @@ function specSheet(x) {
         <span class="small num">${P.entry != null ? `Buy at ${money(P.entry)}: ${r.hitEntry ? `reached ${esc(dd(r.hitEntry[0]))} (${money(r.hitEntry[1])})` : "not reached yet"}` : "No buy price set"}</span>
         <span class="small num">${P.exit != null ? `Sell at ${money(P.exit)}: ${r.hitExit ? `reached ${esc(dd(r.hitExit[0]))} (${money(r.hitExit[1])})` : "not reached yet"}` : "No sell price set"}</span>
         <span class="small"><b>Why:</b> ${esc(x.reason)}</span></div>
+      <div class="box stack" id="spRR" style="gap:4px;margin-top:10px"></div>
       <div class="box stack" style="gap:4px;margin-top:10px"><span class="label">Result</span>
         ${r.verdict != null ? `<span><b class="${r.verdict ? "up" : "down"}">${r.verdict ? "Called it." : "Missed."}</b> On ${esc(dd(r.end.day))} it was ${money(r.end.p)}: ${r.endChange >= 0 ? "+" : "−"}${Math.abs(r.endChange * 100).toFixed(1)}% from the start.</span>`
           : r.noData ? `<span class="small">The time frame ended ${esc(dd(r.due))}, but no price was recorded within 3 days of it, so there's no honest result.</span>`
@@ -5759,6 +5842,7 @@ function specSheet(x) {
         <span class="seg" id="spSt">${[["active", "Active"], ["completed", "Completed"], ["abandoned", "Abandoned"]].map(([k, l]) => `<button data-s="${k}" aria-pressed="${x.status === k}">${l}</button>`).join("")}</span>
         <span class="small muted">${x.statusAt ? `Set ${esc(new Date(x.statusAt).toLocaleDateString())}. ` : ""}Abandoned calls don't count toward your record.</span></div>
       <div class="row" style="margin-top:10px"><button class="btn sm danger" id="spDel">Delete</button><span class="small muted grow">Deleting removes it and its result.</span></div>`;
+    fillReprint($("#spRR"), x.card);
     $("#spNGo").onclick = () => { const t = $("#spN").value.trim(); if (!t) return; x.notes = [...(x.notes || []), { at: Date.now(), text: t }]; x.updated = Date.now(); save(); draw(); };
     $("#spSt").onclick = e => { const b = e.target.closest("button"); if (!b || b.dataset.s === x.status) return; x.status = b.dataset.s; x.statusAt = x.updated = Date.now(); save(); draw(); };
     $("#spDel").onclick = () => { const back = x; delete S.spec[x.id]; save(); closeSheet(); toast(`Stopped watching ${c.name}`, { label: "Undo", fn: () => { S.spec[back.id] = back; save(); render(); } }); };
