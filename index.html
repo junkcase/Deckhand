@@ -104,6 +104,7 @@ select{width:auto;max-width:100%}
 
 .list{display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .item{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px 10px;border-top:1px solid var(--line)}
+#clist .item,#dl .item{content-visibility:auto;contain-intrinsic-size:auto 66px}      /* rows off screen aren't laid out until scrolled to: big collections stay quick */
 .item:first-child{border-top:0}
 .item img{width:44px;height:61px;object-fit:cover;border-radius:4px;background:var(--sunk);display:block}
 .item .name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -345,7 +346,8 @@ h2.sec{margin:6px 0 0;font:700 18px var(--f-display)}
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const money = n => (n == null || isNaN(n)) ? "—" : "$" + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const MONEY_FMT = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });      // made once: toLocaleString with options rebuilds it on every call
+const money = n => (n == null || isNaN(n)) ? "—" : "$" + MONEY_FMT.format(Number(n));
 const signed = n => (n > 0 ? "+" : n < 0 ? "−" : "") + money(Math.abs(n));
 const uid = () => Math.random().toString(36).slice(2, 10);
 const today = () => Math.floor(Date.now() / 864e5);
@@ -1132,7 +1134,8 @@ function render() {
 }
 
 /* ================= COLLECTION ================= */
-const cv = { q: "", sort: "value", binder: "all", select: false, sel: new Set(), f: null, fOpen: false };
+const cv = { q: "", sort: "value", binder: "all", select: false, sel: new Set(), f: null, fOpen: false, limit: 100 };
+const COLL_PAGE = 100;      // rows drawn at a time; "Show more" adds the next ones
 /* Collection filters: the Search tab's filter settings (colors and how to match them, type, rarity, format, mana value,
    price, set) plus things only your own cards have. Search sends them to Scryfall; here they're checked on this device. */
 const collDefaultF = () => Object.assign(defaultF(), { sub: "", num: "", priceMin: "", fin: [], lang: "", ownMin: "", ownMax: "", availMin: "", asg: "", deck: "", tag: "" });
@@ -1236,17 +1239,20 @@ function collFilterPanel(f, sets) {
 }
 // Dashboard numbers for one binder (or everything owned), all from the cards actually stored.
 function collStats(binder) {
-  const sets = {}, rar = { rare: 0, mythic: 0 }, list = []; let noPrice = 0;
-  for (const [k, e] of Object.entries(S.coll)) {
-    if (binder === "all" ? isWish(e.binder) : e.binder !== binder) continue;
-    list.push([k, e]);
-    if (e.set) { const x = sets[e.set] || (sets[e.set] = { code: e.set, name: e.setName || e.set.toUpperCase(), n: 0, val: 0 }); x.n += e.qty; x.val += (priceOf(e, e.finish) || 0) * e.qty; }
+  const sets = {}, rar = { rare: 0, mythic: 0 }; let noPrice = 0;
+  const when = e => Math.max(e.added || 0, e.scanned || 0), top = [], recent = [], wish = {};
+  // keeps the 5 highest by score, without sorting the whole collection
+  const keep5 = (arr, item, score) => { if (arr.length === 5 && score <= arr[4][2]) return; arr.push([item[0], item[1], score]); arr.sort((a, b) => b[2] - a[2]); if (arr.length > 5) arr.pop(); };
+  for (const k in S.coll) {
+    const e = S.coll[k], b = e.binder;
+    if (binder === "all" ? (wish[b] ?? (wish[b] = isWish(b))) : b !== binder) continue;
+    const p = priceOf(e, e.finish);
+    if (e.set) { const x = sets[e.set] || (sets[e.set] = { code: e.set, name: e.setName || e.set.toUpperCase(), n: 0, val: 0 }); x.n += e.qty; x.val += (p || 0) * e.qty; }
     if (e.rarity === "rare" || e.rarity === "mythic") rar[e.rarity] += e.qty;
-    if (priceOf(e, e.finish) == null) noPrice += e.qty;
+    if (p == null) noPrice += e.qty; else keep5(top, [k, e], p * e.qty);
+    const w = when(e); if (w) keep5(recent, [k, e], w);
   }
-  const val = e => (priceOf(e, e.finish) || 0) * e.qty, when = e => Math.max(e.added || 0, e.scanned || 0);
-  const top = list.filter(([, e]) => priceOf(e, e.finish) != null).sort((a, b) => val(b[1]) - val(a[1])).slice(0, 5);
-  const recent = list.filter(([, e]) => when(e)).sort((a, b) => when(b[1]) - when(a[1])).slice(0, 5);
+  for (const a of [top, recent]) for (const x of a) x.length = 2;
   return { sets, nSets: Object.keys(sets).length, rar, noPrice, top, recent, when };
 }
 // value change over the last n days from the saved daily totals; null when the history doesn't reach back that far
@@ -1261,7 +1267,7 @@ function collFiltersChanged(st) {
   const chips = collFilterChips(cv.f, st.sets), n = chips.filter(c => c[0] !== "q").length;
   const cc = $("#cfChips"); if (cc) { cc.innerHTML = chipsHTML(chips); wireChips(st); }
   const t = $("#cfTog"); if (t) { t.textContent = "Filters" + (n ? ` · ${n}` : ""); t.classList.toggle("on", !!n); }
-  drawCollList();
+  cv.limit = COLL_PAGE; drawCollList();
 }
 function wireChips(st) {
   $("#cfChips").querySelectorAll("[data-fx]").forEach(b => b.onclick = () => {
@@ -1446,7 +1452,7 @@ function renderColl() {
     <div id="clist"></div></div>`;
   $("#cs").value = cv.sort; updRefreshBtn();
   $("#cq").oninput = debounce(e => { cv.q = e.target.value; collFiltersChanged(st); }, 150);
-  $("#cs").onchange = e => { cv.sort = e.target.value; drawCollList(); };
+  $("#cs").onchange = e => { cv.sort = e.target.value; cv.limit = COLL_PAGE; drawCollList(); };
   $("#cRefresh").onclick = () => refreshPrices(false);
   $("#cMore").onclick = ioSheet; $("#cSync").onclick = syncSheet; syncBadge(); const ci = $("#cInst"); if (ci) ci.onclick = installApp;
   $("#cImp").onclick = () => pickCSV({ kind: "coll" });
@@ -1462,7 +1468,7 @@ function renderColl() {
   const np = $("#dNoP"); if (np) np.onclick = valueSheet;
   wireCollFilters(st);
   $("#cSel").onclick = () => { cv.select = !cv.select; cv.sel.clear(); renderColl(); };
-  $("#bChips").onclick = e => { const b = e.target.closest("button"); if (!b) return; if (b.dataset.b === "__manage") binderSheet(); else { cv.binder = b.dataset.b; renderColl(); } };
+  $("#bChips").onclick = e => { const b = e.target.closest("button"); if (!b) return; if (b.dataset.b === "__manage") binderSheet(); else { cv.binder = b.dataset.b; cv.limit = COLL_PAGE; renderColl(); } };
   v.querySelectorAll("[data-seen]").forEach(b => b.onclick = () => { const a = S.alerts[b.dataset.seen], l = a && a.log.find(x => x.id === b.dataset.l); if (l) { l.seen = true; a.updated = Date.now(); save(); } renderColl(); });
   v.querySelectorAll("[data-alert]").forEach(b => b.onclick = () => openAlertCard(b.dataset.alert));
   $("#cAlerts").onclick = () => alertsSheet(); const aa = $("#alAll"); if (aa) aa.onclick = () => alertsSheet("hist");
@@ -1533,23 +1539,24 @@ function drawCollList() {
     set: (a, b) => a[1].set.localeCompare(b[1].set) || (parseInt(a[1].num) || 0) - (parseInt(b[1].num) || 0), recent: (a, b) => Math.max(b[1].added || 0, b[1].scanned || 0) - Math.max(a[1].added || 0, a[1].scanned || 0),
     scanned: (a, b) => (b[1].scanned || 0) - (a[1].scanned || 0) || a[1].name.localeCompare(b[1].name) }[cv.sort] || ((a, b) => val(b[1]) - val(a[1]));
   rows.sort(cmp);
-  const shown = rows.slice(0, 400);
+  const shown = rows.slice(0, Math.max(COLL_PAGE, cv.limit || COLL_PAGE));
   const el = $("#clist"), uses = deckUse();
   for (const k of [...cv.sel]) if (!S.coll[k]) cv.sel.delete(k);
   if (!rows.length) { el.innerHTML = `<p class="muted">${filtered ? `No cards match${q ? ` “${esc(cv.q)}”` : ""}${pred ? (q ? " with these filters" : " these filters") : ""}. <button class="linkbtn" id="cfNone">Clear all</button>` : "Nothing in this binder yet. Add cards from Search or Scan and pick this binder."}</p>`;
     const cn0 = $("#cfNone"); if (cn0) cn0.onclick = () => { cv.f = collDefaultF(); cv.q = ""; renderColl(); }; return; }
-  let lastDay = null;
+  let lastDay = null, perDay = null;
   const dayHead = e => {
     if (cv.sort !== "scanned") return "";
     const lab = e.scanned ? dayLabel(e.scanned) : "Never scanned";
     if (lab === lastDay) return ""; lastDay = lab;
-    const same = rows.filter(([, x]) => (x.scanned ? dayLabel(x.scanned) : "Never scanned") === lab).reduce((a, [, x]) => a + x.qty, 0);
+    if (!perDay) { perDay = {}; for (const [, x] of rows) { const l = x.scanned ? dayLabel(x.scanned) : "Never scanned"; perDay[l] = (perDay[l] || 0) + x.qty; } }      // once, not per heading
+    const same = perDay[lab] || 0;
     return `<div class="group-h"><span>${esc(lab)}</span><span class="num">${same} card${same === 1 ? "" : "s"}</span></div>`;
   };
   const nSel = [...cv.sel].reduce((a, k) => a + (S.coll[k] ? S.coll[k].qty : 0), 0);
   const selBar = !cv.select ? "" : `<div class="box selbar">
       <div class="row wrap"><b class="grow">${cv.sel.size ? `${cv.sel.size} selected (${nSel} card${nSel === 1 ? "" : "s"})` : "Tap cards to select them"}</b>
-        <button class="btn sm ghost" id="sAll">Select all ${shown.length}</button>${cv.sel.size ? `<button class="btn sm ghost" id="sNone">Clear</button>` : ""}</div>
+        <button class="btn sm ghost" id="sAll">Select all ${rows.length.toLocaleString()}</button>${cv.sel.size ? `<button class="btn sm ghost" id="sNone">Clear</button>` : ""}</div>
       ${cv.sel.size ? `<div class="row wrap"><select id="sBin" class="grow" aria-label="Move selected to">${binderOptions(cv.binder !== "all" ? cv.binder : defaultBinder())}</select><button class="btn sm primary" id="sMove">Move</button><button class="btn sm" id="sAlert">Price alert</button><button class="btn sm" id="sSell">Sell list</button><button class="btn sm danger" id="sDel">Remove</button></div>
       <div class="row" id="sDelC" hidden><span class="grow small">Remove ${nSel} cards from your collection?</span><button class="btn sm danger" id="sDelY">Remove</button><button class="btn sm ghost" id="sDelN">Keep</button></div>` : ""}</div>`;
   el.innerHTML = `${filtered ? `<p class="small muted" style="margin:0 0 6px">Showing ${nCards.toLocaleString()} of ${cv.lastN.ofCards.toLocaleString()} card${cv.lastN.ofCards === 1 ? "" : "s"}${rows.length > 1 ? ` (${rows.length.toLocaleString()} entries)` : ""}</p>` : ""}${selBar}<div class="list">${shown.map(([k, e]) => { const c = phChange(e), on = cv.sel.has(k); return `${dayHead(e)}
@@ -1561,9 +1568,10 @@ function drawCollList() {
           ${e.scanned ? `<span class="scanned num" title="Last scanned ${esc(new Date(e.scanned).toLocaleString())}">Scanned ${esc(cv.sort === "scanned" ? clock(e.scanned) : scanWhen(e.scanned))}</span>` : ""}${deckChips(uses[e.name])}</div></button>
       <div class="right"><span class="price gold num">${money(val(e))}</span>
         <span class="stepper"><button data-dec="${esc(k)}" aria-label="Remove one">−</button><span class="num">${e.qty}</span><button data-inc="${esc(k)}" aria-label="Add one">+</button></span></div></div>`; }).join("")}</div>
-    ${rows.length > shown.length ? `<p class="small muted">Showing the top 400 of ${rows.length}. Use the filter to find others.</p>` : ""}`;
+    ${rows.length > shown.length ? `<div class="row" style="margin-top:8px"><button class="btn" id="cMoreRows">Show ${Math.min(COLL_PAGE * 2, rows.length - shown.length)} more</button><span class="small muted grow">${shown.length.toLocaleString()} of ${rows.length.toLocaleString()} shown</span></div>` : ""}`;
+  const mr = $("#cMoreRows"); if (mr) mr.onclick = () => { cv.limit = shown.length + COLL_PAGE * 2; drawCollList(); };
   if (cv.select) {
-    const keys = shown.map(([k]) => k), redraw = () => drawCollList();
+    const keys = rows.map(([k]) => k), redraw = () => drawCollList();
     $("#sAll").onclick = () => { keys.forEach(k => cv.sel.add(k)); redraw(); };
     const sn = $("#sNone"); if (sn) sn.onclick = () => { cv.sel.clear(); redraw(); };
     const sa = $("#sAlert"); if (sa) sa.onclick = () => bulkAlertSheet([...cv.sel]);
@@ -5389,7 +5397,7 @@ function splash() {
   if (!isStandalone() || sessionStorage.getItem("dh-splash")) return () => {};
   try { sessionStorage.setItem("dh-splash", "1"); } catch (e) {}
   const el = document.createElement("div"); el.id = "splash"; el.setAttribute("aria-hidden", "true");
-  el.innerHTML = `<img src="images/welcome-1600.jpg" alt="">`; document.body.appendChild(el);
+  el.innerHTML = `<img src="images/welcome-800.jpg" srcset="images/welcome-800.jpg 800w, images/welcome-1600.jpg 1600w" sizes="100vw" alt="">`; document.body.appendChild(el);
   const t0 = Date.now(); let gone = false;
   const hide = () => { if (gone) return; gone = true; el.classList.add("out"); setTimeout(() => el.remove(), 400); };
   el.onclick = hide; setTimeout(hide, 4000);
