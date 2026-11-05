@@ -44,6 +44,7 @@ async function device(name) {
   const ad = A.S().decks.k1;
   ok(ad.name === "Krenko!" && Object.keys(ad.cards).length === 2, "change on the phone (card added, renamed) reaches the tablet");
   // the automatic background sync (no manual button): a few seconds after the change
+  A.SYNC.lastPush = 0;                 // (the manual syncs just above uploaded; automatic uploads are spaced 20 s apart)
   A.addToDeck(A.S().decks.k1, A.slim(cs), 1, false);
   await new Promise(r => setTimeout(r, 7000)); await B.sync();
   ok(Object.keys(B.S().decks.k1.cards).length === 3, "a deck change syncs on its own a few seconds later");

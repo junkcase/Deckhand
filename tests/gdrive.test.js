@@ -51,7 +51,8 @@ async function run(opts, shot) {
   // 31 more backups: only the newest 30 kept, older ones to Drive's trash
   // more backups the same day replace today's file; 35 older days already there (old and new names): only the newest 30 are kept
   const folderId = first.parents[0];
-  for (let i = 1; i <= 35; i++) { const d = new Date(Date.now() - i * 864e5).toISOString(); G.files["old" + i] = { id: "old" + i, name: i % 2 ? `Deckhand backup ${d.slice(0, 10)}.json.gz` : `deckhand-backup-${d.slice(0, 10)}T1200-tablet.json.gz`, parents: [folderId], createdTime: d, modifiedTime: d, data: first.data, appProperties: { device: "tablet", cards: "1", decks: "0" } }; }
+  for (let i = 1; i <= 35; i++) { const t = new Date(Date.now() - i * 864e5), d = t.toISOString(), day = new Date(t - t.getTimezoneOffset() * 6e4).toISOString().slice(0, 10);     // local days, like the app (UTC's date is a day ahead in the evening in the US)
+    G.files["old" + i] = { id: "old" + i, name: i % 2 ? `Deckhand backup ${day}.json.gz` : `deckhand-backup-${day}T1200-tablet.json.gz`, parents: [folderId], createdTime: d, modifiedTime: d, data: first.data, appProperties: { device: "tablet", cards: "1", decks: "0" } }; }
   for (let i = 0; i < 3; i++) await p.evaluate(() => gdBackupNow(true));
   R.todays = Object.values(G.files).filter(f => f.name === first.name && !f.trashed).length; R.updates = G.uploads.filter(x => /^update /.test(x)).length;
   R.kept = Object.values(G.files).filter(f => /^(Deckhand backup |deckhand-backup-)/.test(f.name || "") && !f.trashed).length; R.trashed = Object.values(G.files).filter(f => f.trashed).length;

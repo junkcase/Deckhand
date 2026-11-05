@@ -1720,6 +1720,17 @@ async function gh(path, opts = {}) {
   const r = await fetch(path.startsWith("http") ? path : "https://api.github.com" + path, Object.assign({ cache: "no-store" }, opts,
     { headers: Object.assign({ Authorization: "token " + cfg.token, Accept: "application/vnd.github+json" }, opts.body ? { "Content-Type": "application/json" } : {}, opts.headers || {}) }));
   if (r.status === 401) throw Object.assign(new Error("GitHub didn't accept the token (it may have expired or been deleted). Paste a new one."), { auth: true });
+  if ((r.status === 403 || r.status === 429) && !r.ok) {
+    let msg = ""; try { msg = String((await r.clone().json()).message || ""); } catch (e) {}
+    const H = k => r.headers.get(k), after = +H("retry-after"), reset = +H("x-ratelimit-reset");
+    // GitHub limits how often a token can save (a burst of saves while scanning can hit it); it says when to try again
+    if (r.status === 429 || H("x-ratelimit-remaining") === "0" || /rate limit|abuse/i.test(msg)) {
+      const until = after > 0 ? Date.now() + after * 1e3 : reset > 0 ? reset * 1e3 + 2e3 : Date.now() + 60e3;
+      throw Object.assign(new Error(`GitHub is limiting how often Deckhand can save right now (too many saves close together). It will try again by ${new Date(until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`), { rate: true, until });
+    }
+    if (/not accessible|permission|scope/i.test(msg)) throw Object.assign(new Error("GitHub says this token isn't allowed to save gists. Make a new token with the \"gist\" permission and paste it in Sync."), { auth: true });
+    throw new Error("GitHub refused the request (403)" + (msg ? ": " + msg : ""));
+  }
   if (!r.ok && r.status !== 304) throw new Error("GitHub returned " + r.status);
   return r;
 }
@@ -1864,7 +1875,8 @@ async function gdPushSync(state) {
   GDS.version = r.version || null;
 }
 const readRemote = () => isGoogleSync() ? gdReadSync() : readGist();
-const pushRemote = st => isGoogleSync() ? gdPushSync(st) : pushGist(st);
+const pushRemote = st => { SYNC.lastPush = Date.now(); return isGoogleSync() ? gdPushSync(st) : pushGist(st); };
+const PUSH_GAP = 20e3;          // at most one automatic upload every 20 seconds, so a scanning session doesn't hit GitHub's limits
 // set up Google sync (from a tap: Google's sign-in window opens)
 async function connectGoogleSync() {
   await gdSignIn();
@@ -1958,6 +1970,8 @@ async function syncNow(manual) {
   if (isGoogleSync(cfg) && !gdSignedIn()) { SYNC.needTap = true; syncBadge(); if ($("#syBody")) drawSync(); return; }      // Google's hour has run out: wait for a tap
   if (!manual && (sc.busy || sc.gridBusy || ana.shooting)) { scheduleSync(5000); return; }        // don't slow down a scan in progress
   if (!navigator.onLine) { SYNC.err = "Offline: will sync when you're back online."; if ($("#syBody")) drawSync(); return; }
+  if (!manual && SYNC.holdUntil > Date.now()) { scheduleSync(SYNC.holdUntil - Date.now() + 500); return; }              // GitHub asked us to wait
+  if (!manual && SYNC.dirty && SYNC.lastPush && Date.now() - SYNC.lastPush < PUSH_GAP) { scheduleSync(PUSH_GAP - (Date.now() - SYNC.lastPush) + 200); return; }
   SYNC.busy = true; if ($("#syBody")) drawSync(); syncBadge();
   try {
     if (saveT) await flushSave();
@@ -1985,9 +1999,10 @@ async function syncNow(manual) {
       if (ms !== J_(R)) await pushRemote(merged);
       await setSyncBase(merged); SYNC.lastJ = ms;
     }
-    SYNC.at = Date.now(); SYNC.err = ""; SYNC.needTap = false;
+    SYNC.at = Date.now(); SYNC.err = ""; SYNC.needTap = false; SYNC.holdUntil = 0;
   } catch (e) {
     if (e.needTap) { SYNC.needTap = true; SYNC.dirty = true; return; }                                   // signed out of Google partway: not an error, just needs a tap
+    if (e.rate) { SYNC.holdUntil = e.until; scheduleSync(Math.max(5e3, e.until - Date.now() + 500)); }
     SYNC.err = e.message || String(e); SYNC.dirty = true;
     // keep the details so a problem that only happens on one device can be tracked down
     SYNC.errDetail = String(e && e.stack || e).split("\n").slice(0, 3).map(x => x.trim().replace(/\(?https?:\/\/[^)\s]*\/([^/)\s]+)\)?/g, "$1")).join(" ← ");
