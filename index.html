@@ -135,6 +135,9 @@ button.chip.deck{cursor:pointer}
 .price{font-weight:600}
 .item .scanned{color:var(--accent);white-space:nowrap}
 .group-h{padding:8px 10px;background:var(--sunk);font:600 12px var(--f-display);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);display:flex;justify-content:space-between}
+table.cmp{width:100%;border-collapse:collapse;font-size:14px} table.cmp th,table.cmp td{padding:5px 6px;border-bottom:1px solid var(--line);text-align:right;vertical-align:middle} table.cmp th:first-child,table.cmp td:first-child{text-align:left;color:var(--muted)} table.cmp th{font-weight:700;max-width:30vw;overflow-wrap:anywhere}
+table.cmp .cmph td{color:var(--ink);font:600 12px var(--f-display);letter-spacing:.08em;text-transform:uppercase;background:var(--sunk);text-align:left} table.cmp td.cmpw{font-weight:800;color:var(--accent)}
+.cmpcurve{display:flex;align-items:flex-end;gap:2px;height:34px;width:86px;margin-left:auto}.cmpcurve span{flex:1;background:var(--accent);opacity:.75;border-radius:2px 2px 0 0;min-height:1px}
 .phmv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.phmv>div{display:flex;flex-direction:column;background:var(--sunk);border-radius:8px;padding:6px 8px}
 #gf table.odds{font-size:12.5px} #gf table.odds td:first-child,#gf table.odds th:first-child{white-space:nowrap;text-align:left;padding-right:8px} #gf .summary{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
 button.group-h{width:100%;border:0;border-top:1px solid var(--line);cursor:pointer;align-items:center;text-align:left;min-height:40px}
@@ -5241,7 +5244,7 @@ function renderDecks() {
   $("#view").innerHTML = `<div class="stack">
     <form id="nd" class="stack" style="gap:8px"><input type="text" id="ndName" placeholder="New deck name, e.g. Atraxa Superfriends" maxlength="60">
       <div class="row"><select id="ndFmt" class="grow" aria-label="Format">${Object.entries(FORMATS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select><button class="btn primary">Create deck</button></div></form>
-    <div class="row wrap"><button class="btn sm" id="ndImp">Import a deck file (CSV or text)</button>${(S.meta.deckTrash || []).filter(x => !S.decks[x.deck.id] && Date.now() - x.at < 30 * 864e5).length ? `<button class="btn sm" id="ndTrash">Recently deleted</button>` : ""}${syncOn() ? `<button class="btn sm ghost" id="ndOld">Missing a deck?</button>` : ""}</div>
+    <div class="row wrap"><button class="btn sm" id="ndImp">Import a deck file (CSV or text)</button>${(S.meta.deckTrash || []).filter(x => !S.decks[x.deck.id] && Date.now() - x.at < 30 * 864e5).length ? `<button class="btn sm" id="ndTrash">Recently deleted</button>` : ""}${Object.keys(S.decks).length > 1 ? `<button class="btn sm" id="ndCmp">Compare decks</button>` : ""}${syncOn() ? `<button class="btn sm ghost" id="ndOld">Missing a deck?</button>` : ""}</div>
     ${decks.length ? decks.map(d => { const st = deckStats(d), ck = checkDeck(d); return `<button class="deck-card" data-d="${esc(d.id)}"><div style="min-width:0"><h3>${esc(d.name)}</h3>
       <div class="small muted num">${FORMATS[d.format] || "Casual"} · ${st.mainN}${st.target ? "/" + st.target : ""} cards · ${money(st.value)}${st.missing ? ` · <span class="down">${st.missing} not owned</span>` : ""}</div>
       ${(d.themes || []).length ? `<div class="small" style="margin-top:2px">${d.themes.map(esc).join(" · ")}</div>` : ""}
@@ -5252,6 +5255,7 @@ function renderDecks() {
   $("#nd").onsubmit = e => { e.preventDefault(); const nm = $("#ndName").value.trim(); if (!nm) { $("#ndName").focus(); return; } const id = uid(); S.decks[id] = { id, name: nm, format: $("#ndFmt").value, cmdr: [], cards: {}, created: Date.now(), updated: Date.now() }; save(); go("decks", id); };
   $("#view").querySelectorAll("[data-d]").forEach(b => b.onclick = () => go("decks", b.dataset.d));
   $("#ndImp").onclick = () => pickCSV({ kind: "deck", id: "__new" });
+  const ncm = $("#ndCmp"); if (ncm) ncm.onclick = () => compareSheet();
   const ndo = $("#ndOld"); if (ndo) ndo.onclick = oldDecksSheet;
   const ndt = $("#ndTrash"); if (ndt) ndt.onclick = () => {
     const items = (S.meta.deckTrash || []).filter(x => !S.decks[x.deck.id] && Date.now() - x.at < 30 * 864e5);
@@ -5543,6 +5547,76 @@ function wireGoldfish(d) {
   const one = $("#gfOne"); if (one) one.onclick = () => { const cmdr = d.format === "commander" ? d.cmdr.map(k => d.cards[k]).filter(Boolean)[0] || null : null;
     st.log = goldfishGame(d, deckLibrary(d), rng(Date.now()), { onDraw: hand.onDraw, turns: 6, cmdr, log: true }).log; redraw(); };
 }
+/* ---------- Compare two decks side by side: curve, roles, land odds, goldfish speed, bracket, combos, value, overlap.
+   Everything shown is measured from the decks themselves (the speed from the same goldfish games as a deck's own
+   Playtest); there's no single "power" number, and the screen says so. */
+function deckProfile(d) {
+  const st = deckStats(d), g = deckGaps(d), o = landOdds(d), lib = deckLibrary(d);
+  const gf = lib.length >= 8 ? goldfish(d, { games: 1000, seed: 12345 }) : null;
+  const R = BRK.lists && d.format === "commander" ? bracketOf(d, BRK.lists) : null, tc = d.format === "commander" ? twoCardCombos(d) : null;
+  if (R && tc && tc.length) R.b = Math.max(R.b, 3);
+  const combos = CMB.data ? deckCombos(d, CMB.data) : null;
+  return { d, st, g, o, gf, R, combos, lands: lib.filter(isLandCard).length, names: new Set(st.main.map(c => c.name)) };
+}
+function compareSheet(aId, bId) {
+  const ids = Object.keys(S.decks); let a = S.decks[aId] ? aId : ids[0], b = S.decks[bId] && bId !== a ? bId : ids.find(x => x !== a);
+  openSheet(`<div id="cmpBody"></div>`, () => render());
+  const draw = () => {
+    const el = $("#cmpBody"); if (!el) return;
+    const opts = cur => Object.values(S.decks).sort((x, y) => x.name.localeCompare(y.name)).map(d => `<option value="${esc(d.id)}" ${d.id === cur ? "selected" : ""}>${esc(d.name)}</option>`).join("");
+    if (!a || !b) { el.innerHTML = `<h2>Compare decks</h2><p class="small muted">Make at least two decks to compare them.</p>`; return; }
+    const A = deckProfile(S.decks[a]), B = deckProfile(S.decks[b]);
+    const both = [...A.names].filter(n => B.names.has(n)).sort();
+    // a row: label, the two values, and which side is "ahead" when that's meaningful (lower = better for speed rows)
+    const row = (label, va, vb, fa = va, fb = vb, lowGood = false, unit = "") => {
+      const num = typeof fa === "number" && typeof fb === "number" && isFinite(fa) && isFinite(fb) && fa !== fb, win = num ? ((fa < fb) === lowGood ? "a" : "b") : "";
+      return `<tr><td>${esc(label)}</td><td class="num ${win === "a" ? "cmpw" : ""}">${va}${unit}</td><td class="num ${win === "b" ? "cmpw" : ""}">${vb}${unit}</td></tr>`; };
+    const roleRow = r => row(r, A.g.n[r] || 0, B.g.n[r] || 0, null, null);
+    const T = x => x == null ? "—" : x > 8 ? "after 8" : x.toFixed(1);
+    const curveCell = P => { const m = Math.max(1, ...A.st.curve, ...B.st.curve); return `<div class="cmpcurve">${P.st.curve.map((v, i) => `<span title="${i === 7 ? "7+" : i}: ${v}" style="height:${Math.round(v / m * 100)}%"></span>`).join("")}</div>`; };
+    const comboN = P => P.combos ? `${P.combos.included.length}` : "…";
+    el.innerHTML = `<h2>Compare decks</h2>
+      <div class="row" style="gap:8px;margin:8px 0"><select id="cmpA" class="grow" aria-label="First deck">${opts(a)}</select><span class="small muted">vs</span><select id="cmpB" class="grow" aria-label="Second deck">${opts(b)}</select></div>
+      <div style="overflow-x:auto"><table class="cmp"><thead><tr><th></th><th>${esc(A.d.name)}</th><th>${esc(B.d.name)}</th></tr></thead><tbody>
+        <tr class="cmph"><td colspan="3">Basics</td></tr>
+        ${row("Format", FORMATS[A.d.format] || "Casual", FORMATS[B.d.format] || "Casual")}
+        ${row("Cards (main)", A.st.mainN, B.st.mainN, null, null)}
+        ${row("Lands", A.lands, B.lands, null, null)}
+        ${row("Value", money(A.st.value), money(B.st.value), A.st.value, B.st.value, true)}
+        ${row("Not owned", A.st.missing, B.st.missing, A.st.missing, B.st.missing, true)}
+        <tr class="cmph"><td colspan="3">Mana</td></tr>
+        <tr><td>Curve (0 → 7+)</td><td>${curveCell(A)}</td><td>${curveCell(B)}</td></tr>
+        ${row("Average mana value", A.g.avg.toFixed(2), B.g.avg.toFixed(2), A.g.avg, B.g.avg, true)}
+        ${row("Opening 7 with 2–5 lands", A.o ? pctS(A.o.keep) : "—", B.o ? pctS(B.o.keep) : "—", A.o ? A.o.keep : null, B.o ? B.o.keep : null)}
+        <tr class="cmph"><td colspan="3">Speed (1,000 goldfish games each, on the play)</td></tr>
+        ${row("4 mana by turn", T(A.gf && A.gf.avg4), T(B.gf && B.gf.avg4), A.gf && A.gf.avg4, B.gf && B.gf.avg4, true)}
+        ${row("6 mana by turn", T(A.gf && A.gf.avg6), T(B.gf && B.gf.avg6), A.gf && A.gf.avg6, B.gf && B.gf.avg6, true)}
+        ${A.gf && A.gf.cmdrName || B.gf && B.gf.cmdrName ? row("Commander out by turn", T(A.gf && A.gf.avgCmdr), T(B.gf && B.gf.avgCmdr), A.gf && A.gf.avgCmdr, B.gf && B.gf.avgCmdr, true) : ""}
+        ${row("Mana used by turn 4", A.gf ? pctS(A.gf.spent[3] / (A.gf.mana[3] || 1)) : "—", B.gf ? pctS(B.gf.spent[3] / (B.gf.mana[3] || 1)) : "—", A.gf ? A.gf.spent[3] / (A.gf.mana[3] || 1) : null, B.gf ? B.gf.spent[3] / (B.gf.mana[3] || 1) : null)}
+        ${row("Missed a land drop by turn 4", A.gf ? pctS(A.gf.screw / A.gf.games) : "—", B.gf ? pctS(B.gf.screw / B.gf.games) : "—", A.gf ? A.gf.screw : null, B.gf ? B.gf.screw : null, true)}
+        <tr class="cmph"><td colspan="3">Card roles</td></tr>
+        ${ROLES.filter(r => r !== "Land").map(roleRow).join("")}
+        <tr class="cmph"><td colspan="3">Power signals</td></tr>
+        ${A.d.format === "commander" || B.d.format === "commander" ? row("Bracket (estimate)", A.R ? A.R.b + (A.R.b === 2 ? " or lower" : "") : A.d.format === "commander" ? "…" : "—", B.R ? B.R.b + (B.R.b === 2 ? " or lower" : "") : B.d.format === "commander" ? "…" : "—") : ""}
+        ${A.R || B.R ? row("Game Changers", A.R ? A.R.gc.length : "—", B.R ? B.R.gc.length : "—", null, null) : ""}
+        ${row("Known combos in the deck", comboN(A), comboN(B), null, null)}
+      </tbody></table></div>
+      <p class="small muted" style="margin:6px 0">Bold marks the deck ahead where lower or higher is clearly better (faster, cheaper, fewer missed land drops). There's no single power score: speed, the bracket estimate, Game Changers, combos and tutors (under card roles) are the measurable parts. The goldfish speed doesn't model colours or tapped lands.</p>
+      <details class="box" ${both.length ? "" : ""}><summary class="small"><b>${both.length} card${both.length === 1 ? "" : "s"} in both decks</b>${both.length ? "" : " (none)"}</summary>${both.length ? `<p class="small" style="margin:6px 0 0">${both.map(esc).join(" · ")}</p>` : ""}</details>
+      <div class="row wrap" style="gap:8px;margin-top:8px"><button class="btn sm" id="cmpSwap">Swap sides</button><button class="btn sm" id="cmpOpenA">Open ${esc(A.d.name)}</button><button class="btn sm" id="cmpOpenB">Open ${esc(B.d.name)}</button></div>`;
+    $("#cmpA").onchange = e => { a = e.target.value; if (a === b) b = ids.find(x => x !== a); draw(); };
+    $("#cmpB").onchange = e => { b = e.target.value; if (a === b) a = ids.find(x => x !== b); draw(); };
+    $("#cmpSwap").onclick = () => { [a, b] = [b, a]; draw(); };
+    $("#cmpOpenA").onclick = () => { sheetOnClose = null; closeSheet(); go("decks", a); };
+    $("#cmpOpenB").onclick = () => { sheetOnClose = null; closeSheet(); go("decks", b); };
+  };
+  draw();
+  // the bracket lists and combo list fill in when they arrive (both are cached on the device)
+  const later = [];
+  if (!BRK.lists && Object.values(S.decks).some(d => d.format === "commander")) later.push(bracketLists().catch(() => {}));
+  if (!CMB.data) later.push(comboData().catch(() => {}));
+  if (later.length) Promise.all(later).then(() => { if ($("#cmpBody")) draw(); });
+}
 function deckText(d) {
   const line = c => `${c.qty} ${c.name} (${c.set.toUpperCase()}) ${c.num}`;
   const cm = d.format === "commander" ? d.cmdr.map(k => d.cards[k]).filter(Boolean) : [];
@@ -5753,7 +5827,7 @@ function deckMenu(d) {
   openSheet(`<h2>${esc(d.name)}</h2>
     <div class="stack" style="margin-top:12px">
       <div class="box"><span class="label">Rename</span><div class="row"><input type="text" id="rn" class="grow" value="${esc(d.name)}" maxlength="60"><button class="btn sm" id="rnGo">Save</button></div></div>
-      <div class="box stack" style="gap:8px"><button class="btn" id="dDup">Duplicate this deck</button>
+      <div class="box stack" style="gap:8px">${Object.keys(S.decks).length > 1 ? `<button class="btn" id="dCmp">Compare with another deck</button>` : ""}<button class="btn" id="dDup">Duplicate this deck</button>
         <label class="toggle"><input type="checkbox" id="dOpenAdd" ${S.settings.openAfterAdd !== false ? "checked" : ""}> Open a card's screen after adding it from the deck's search box</label>
         <label class="toggle"><input type="checkbox" id="dShare" ${shareCopies() ? "checked" : ""}> Let one copy of a card count toward several decks</label>
         <span class="small muted">Off: each copy belongs to one deck, and copies used in other decks show as not available. Applies to all decks.</span>
@@ -5769,6 +5843,7 @@ function deckMenu(d) {
     </div>`, () => render());
   $("#rnGo").onclick = () => { const v = $("#rn").value.trim(); if (v) { d.name = v; d.updated = Date.now(); save(); toast("Renamed"); } };
   $("#dDup").onclick = () => { const id = uid(), now = Date.now(), c = JSON.parse(JSON.stringify(d)); Object.assign(c, { id, name: d.name + " (copy)", created: now, updated: now }); S.decks[id] = c; save(); closeSheet(); go("decks", id); toast("Made a copy: " + c.name); };
+  const dcm = $("#dCmp"); if (dcm) dcm.onclick = () => { closeSheet(); compareSheet(d.id); };
   $("#dShare").onchange = e => { S.settings.shareCopies = e.target.checked; save(); };
   $("#dOpenAdd").onchange = e => { S.settings.openAfterAdd = e.target.checked; save(); };
   $("#dCsv").onclick = () => pickCSV({ kind: "deck", id: d.id });
