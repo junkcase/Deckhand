@@ -3630,6 +3630,18 @@ function drawSession() {
    binder the first matching sort rule names, else the binder picked on the Scan screen. */
 const scanDeck = () => S.meta.scanDeck && S.decks[S.meta.scanDeck] ? S.decks[S.meta.scanDeck] : null;
 const RAR_RANK = { common: 1, uncommon: 2, rare: 3, mythic: 4 };
+// order of cards inside each section of a deck (sections stay by card type); remembered on this device
+const byName_ = (a, b) => a.name.localeCompare(b.name);
+const colorKey = c => { const cs = c.colors || []; return cs.length > 1 ? 5 : cs.length ? "WUBRG".indexOf(cs[0]) : 6; };      // W U B R G, then multicolor, then colorless
+const DECK_SORTS = {
+  cmc: ["Mana value", (a, b) => a.cmc - b.cmc || byName_(a, b)],
+  name: ["Name A–Z", byName_],
+  price: ["Price, high to low", (a, b) => (deckPrice(b) ?? -1) - (deckPrice(a) ?? -1) || byName_(a, b)],
+  color: ["Color", (a, b) => colorKey(a) - colorKey(b) || a.cmc - b.cmc || byName_(a, b)],
+  rarity: ["Rarity", (a, b) => (RAR_RANK[b.rarity] || 0) - (RAR_RANK[a.rarity] || 0) || byName_(a, b)],
+};
+const deckPrice = c => { const p = c.prices || {}, v = parseFloat(p.usd ?? p.usd_foil ?? p.usd_etched); return isNaN(v) ? null : v; };
+const deckSortKey = () => DECK_SORTS[S.meta.deckSort] ? S.meta.deckSort : "cmc";
 const scanRules = () => ((S.settings && S.settings.scanRules) || []).filter(r => r && S.binders[r.binder]);
 function scanRuleMatch(r, card, finish) {
   if (r.rar && (RAR_RANK[card.rarity] || 0) < RAR_RANK[r.rar]) return false;
@@ -5512,7 +5524,7 @@ function renderDeck_(d) {
     if (!cards.length) return "";
     const by = {}; for (const c of cards) (by[typeOf(c.type)] = by[typeOf(c.type)] || []).push(c);
     return [...TYPES, "Other"].filter(t => by[t]).map(t => foldHead((title || "Main") + ":" + t, (title ? title + " · " : "") + t, by[t].reduce((a, c) => a + c.qty, 0)) +
-      (folded.has((title || "Main") + ":" + t) ? "" : by[t].sort((a, b) => a.cmc - b.cmc || a.name.localeCompare(b.name)).map(row).join(""))).join("");
+      (folded.has((title || "Main") + ":" + t) ? "" : by[t].sort(DECK_SORTS[deckSortKey()][1]).map(row).join(""))).join("");
   };
   const cmdCards = cmd ? d.cmdr.map(k => d.cards[k]).filter(Boolean) : [];
   const mainRest = st.main.filter(c => !cmdCards.includes(c));
@@ -5549,7 +5561,7 @@ function renderDeck_(d) {
       <div class="curve-x"><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7+</span></div>
       ${curveVerdict(d, st)}</div>
       ${playtestHTML(d)}${goldfishHTML(d)}` : ""}
-    ${Object.keys(d.cards).length > 1 ? `<div class="row" style="justify-content:flex-end;gap:12px;margin-bottom:-4px"><button class="linkbtn small" id="dFoldAll">Collapse all</button><button class="linkbtn small" id="dOpenAll">Expand all</button></div>` : ""}
+    ${Object.keys(d.cards).length > 1 ? `<div class="row" style="justify-content:flex-end;gap:12px;margin-bottom:-4px;align-items:center"><label class="small muted row" style="gap:6px;align-items:center;margin-right:auto">Sort by <select id="dSort" aria-label="Sort cards by" style="width:auto;min-height:0;padding:4px 8px">${Object.entries(DECK_SORTS).map(([k, v]) => `<option value="${k}"${deckSortKey() === k ? " selected" : ""}>${v[0]}</option>`).join("")}</select></label><button class="linkbtn small" id="dFoldAll">Collapse all</button><button class="linkbtn small" id="dOpenAll">Expand all</button></div>` : ""}
     <div class="list" id="dl">${cmdCards.length ? foldHead("Commander", "Commander", cmdCards.length) + (folded.has("Commander") ? "" : cmdCards.map(row).join("")) : ""}
       ${group(mainRest, "") || (cmdCards.length ? "" : `<div class="empty" style="border:0"><p>No cards yet. Type above, or use Deck options → Paste a deck list.</p></div>`)}${st.side.length ? `<div class="row" style="justify-content:flex-end;margin:6px 0"><button class="btn sm" id="dSideMain">Move all ${st.side.reduce((a, c) => a + c.qty, 0)} sideboard cards to the main deck</button></div>` : ""}${group(st.side, "Side")}</div></div></div>`;
   $("#back").onclick = () => go("decks");
@@ -5601,6 +5613,7 @@ function renderDeck_(d) {
     for (const [k, c] of Object.entries(d.cards)) if (c.side) { const m = k.replace(/\|1$/, "|0"); if (d.cards[m]) d.cards[m].qty += c.qty; else d.cards[m] = Object.assign({}, c, { side: false }); n += c.qty; delete d.cards[k]; }
     d.updated = Date.now(); staleIndex(); save(); renderDeck(d); toast(`Moved ${n} card${n === 1 ? "" : "s"} to the main deck`);
   };
+  const ds = $("#dSort"); if (ds) ds.onchange = () => { S.meta.deckSort = ds.value; save(); renderDeck(d); };
   const fa = $("#dFoldAll"); if (fa) fa.onclick = () => setFold(new Set([...$("#dl").querySelectorAll("[data-fold]")].map(b => b.dataset.fold)));
   const oa = $("#dOpenAll"); if (oa) oa.onclick = () => setFold(new Set());
   $("#dl").onclick = e => {
