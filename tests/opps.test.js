@@ -2,7 +2,7 @@
 const { chromium, devices } = require("playwright"); const { spawn } = require("child_process");
 const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exitCode = 1; };
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
-const ID = "0aa0c3d1-1111-4222-8333-444455556666", today = new Date().toISOString().slice(0, 10);
+const ID = "0aa0c3d1-1111-4222-8333-444455556666", today = new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 10);   // local date, as the page shows it
 const OPPS = { as_of: today, rankSince: today, fresh: { history: today, manapool: today + "T10:41:00Z", cardkingdom: today + "T06:00:00Z", scryfall: today }, strategies: {
   movers: [{ id: ID, name: "Mover Card", set: "cmm", setName: "Commander Masters", num: "12", fin: "nonfoil", price: 900, ch7: 80, ch30: 80, ev: ["TCGplayer market $5.00 a month ago → $9.00 now (+80%), +80% in the last week."], risk: ["Most of the rise came in the last week: recent jumps often settle back."] }],
   gaps: [{ id: ID, name: "Gap Card", set: "abc", setName: "ABC", num: "1", fin: "nonfoil", price: 300, ch7: 0, ch30: null, ev: ["Card Kingdom is paying $4.10 cash on its buylist; TCGplayer market is $3.00 (+37%)."], risk: [] }],
