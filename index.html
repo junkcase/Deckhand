@@ -248,6 +248,9 @@ details>summary{cursor:pointer}.seg.wide button{flex:1 1 auto;min-width:0;white-
 .bcard .bq{position:absolute;right:4px;bottom:4px;background:var(--accent);color:var(--accent-ink);font-weight:700;font-size:.75rem;padding:1px 6px;border-radius:9px}
 .bcard .bmiss{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.7);color:#fff;font-size:.7rem;padding:2px 7px;border-radius:9px;letter-spacing:.03em}
 .bcap{display:flex;justify-content:space-between;gap:4px}
+.cnav{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-4px 0 4px}.cnav .btn{font-size:1.4rem;line-height:1;min-width:44px}
+@keyframes slideL{from{transform:translateX(40px);opacity:.3}to{transform:none;opacity:1}}@keyframes slideR{from{transform:translateX(-40px);opacity:.3}to{transform:none;opacity:1}}
+.slide-l{animation:slideL .18s ease-out}.slide-r{animation:slideR .18s ease-out}@media (prefers-reduced-motion:reduce){.slide-l,.slide-r{animation:none}}
 .bcard.new .bimg{outline:4px solid #e2b23a;outline-offset:-4px;box-shadow:inset 0 0 14px rgba(226,178,58,.9)}.bcard .bnew{position:absolute;left:50%;top:8px;transform:translateX(-50%);background:#e2b23a;color:#1a1200;box-shadow:0 1px 4px rgba(0,0,0,.35);font-weight:800;font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;padding:2px 9px;border-radius:9px}
 .btext{display:flex;flex-direction:column;border-top:1px solid var(--line)}.brow{display:grid;grid-template-columns:3.2em 1fr auto 1.4em 4.6em 2.8em;gap:6px;align-items:center;padding:7px 4px;border:0;border-bottom:1px solid var(--line);background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
 .brow.miss{opacity:.45}.brow.own .nm{font-weight:600}.brow.new{box-shadow:inset 4px 0 0 #e2b23a}.brow .num{text-align:right}.brow .own-q{color:var(--accent)}.brow .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1511,7 +1514,8 @@ function setDetail(code, back, keep, host) {
           return `<button class="bcard ${r ? "own" : "miss"}${nw ? " new" : ""}" data-bc="${esc(c.id)}" title="${esc(c.name)} #${esc(c.num)}${r ? "" : " (missing)"}${nw ? " (new)" : ""}"><span class="bimg"><img loading="lazy" src="${esc(c.img)}" alt="${esc(c.name)}">${nw ? `<span class="bnew">New</span>` : ""}${r ? `<span class="bq">×${r.qty}${f.some(x => x !== "nonfoil") ? " ✦" : ""}</span>` : `<span class="bmiss">Missing</span>`}</span>
             <span class="bcap small"><span class="muted">#${esc(c.num)}</span> <span class="${r ? "" : "muted"}">${c.usd != null ? money(c.usd) : "—"}</span></span></button>`; }).join("")}</div>`
           : `<p class="small muted">${o.b.show === "miss" && all.length ? "You have every card here. ✓" : "No cards match these filters."}</p>`}`;
-      g.querySelectorAll("[data-bc]").forEach(b => b.onclick = () => { const c = o.list.find(x => x.id === b.dataset.bc); if (c) wireBinder.open(c.card); });
+      const bcs = [...g.querySelectorAll("[data-bc]")], byBc = id => o.list.find(x => x.id === id);
+      bcs.forEach(b => b.onclick = () => openFromList(bcs, b, x => byBc(x.dataset.bc), c => wireBinder.open(c.card)));
     };
     const wireBinder = openHere => {
       wireBinder.open = openHere;
@@ -1555,10 +1559,12 @@ function setDetail(code, back, keep, host) {
     const tt = $("#sdTr"); if (tt) tt.onclick = e => { const b = e.target.closest("button"); if (b) { o.tr = b.dataset.tr; draw(); } };
     const scroller = () => $("#view").scrollHeight > $("#view").clientHeight ? $("#view") : document.scrollingElement;
     const openHere = card => { o.scroll = scroller().scrollTop; openCard(card, undefined, undefined, { back: () => { if (tab === "search" && sv.mode === "sets" && sv.setCode === code) { draw(); } else render(); } }); };
-    el.querySelectorAll("[data-sc]").forEach(b => b.onclick = () => { const c = o.list.find(x => x.id === b.dataset.sc); if (c) openHere(c.card); });
+    const scs = [...el.querySelectorAll("[data-sc]")];
+    scs.forEach(b => b.onclick = () => openFromList(scs, b, x => o.list.find(y => y.id === x.dataset.sc), c => openHere(c.card)));
     if (o.tab === "bind") wireBinder(openHere);
     if (o.scroll) { scroller().scrollTop = o.scroll; o.scroll = 0; }
-    el.querySelectorAll("[data-own]").forEach(b => b.onclick = () => { const e = S.coll[b.dataset.own]; if (e) openCard(e, e.finish, e.binder); });
+    const ows = [...el.querySelectorAll("[data-own]")];
+    ows.forEach(b => b.onclick = () => openFromList(ows, b, x => S.coll[x.dataset.own], e => { o.scroll = scroller().scrollTop; openCard(e, e.finish, e.binder, { back: () => { if (tab === "search" && sv.mode === "sets" && sv.setCode === code) draw(); else render(); } }); }));
     const wb = $("#sdWish"); if (wb) wb.onclick = () => {
       let w = Object.values(S.binders).find(x => x.wish); if (!w) w = S.binders.wish = { id: "wish", name: "Wishlist", wish: true };
       const onW = new Set(Object.values(S.coll).filter(e => e.binder === w.id).map(e => e.id)); let n = 0;
@@ -1675,7 +1681,8 @@ function renderColl() {
   v.querySelectorAll("[data-alert]").forEach(b => b.onclick = () => openAlertCard(b.dataset.alert));
   $("#cAlerts").onclick = () => alertsSheet(); const aa = $("#alAll"); if (aa) aa.onclick = () => alertsSheet("hist");
   const ao = $("#alOkAll"); if (ao) ao.onclick = () => { for (const [, a, l] of alertHits) { l.seen = true; a.updated = Date.now(); } save(); renderColl(); };
-  v.querySelectorAll("[data-mover]").forEach(b => b.onclick = () => { const e = S.coll[b.dataset.mover]; if (e) openCard(e, e.finish, e.binder); });
+  const mvs = [...v.querySelectorAll("[data-mover]")];
+  mvs.forEach(b => b.onclick = () => openFromList(mvs, b, x => S.coll[x.dataset.mover], e => openCard(e, e.finish, e.binder)));
   wireGdNudge();
   const bn = $("#bkNow"); if (bn) { bn.onclick = () => { backupNow(); renderColl(); }; $("#bkSync").onclick = syncSheet; $("#bkLater").onclick = () => { S.meta.backupSnooze = Date.now() + 7 * 864e5; save(); renderColl(); }; }
   const mp = $("#mvPer"); if (mp) mp.onclick = e => { const b = e.target.closest("button"); if (!b) return; S.meta.moversPeriod = +b.dataset.p; save(); renderColl(); };
@@ -1790,7 +1797,7 @@ function drawCollList() {
       const k = b.dataset.dec, e = S.coll[k];
       if (e.qty > 1) { e.qty--; save(); renderColl(); }
       else { const back = Object.assign({}, e); delete S.coll[k]; save(); renderColl(); toast("Removed " + e.name, { label: "Undo", fn: () => { S.coll[k] = back; save(); renderColl(); } }); }
-    } else if (b.dataset.open) { const e = S.coll[b.dataset.open]; openCard(e, e.finish, e.binder); }
+    } else if (b.dataset.open) { const os = [...el.querySelectorAll("[data-open]")]; openFromList(os, b, x => S.coll[x.dataset.open], e => openCard(e, e.finish, e.binder)); }
   };
 }
 function valueSheet() {
@@ -2974,7 +2981,8 @@ function drawStaples() {
     ${stp.show === "all" && all.length > stp.n ? `<button class="btn" id="stMore">Show 30 more</button>` : ""}`;
   const byId = id => all.find(c => c.id === id);
   el.querySelectorAll("[data-mk]").forEach(b => b.onclick = () => { setMark(byId(b.dataset.id), b.dataset.mk); drawStaples(); });
-  el.querySelectorAll("[data-open]").forEach(b => b.onclick = () => openCard(byId(b.dataset.open)));
+  const sts = [...el.querySelectorAll("[data-open]")];
+  sts.forEach(b => b.onclick = () => openFromList(sts, b, x => byId(x.dataset.open), c => openCard(c)));
   const mo = $("#stMore"); if (mo) mo.onclick = () => { stp.n += 30; drawStaples(); };
   const wb = $("#stWish"); if (wb) wb.onclick = () => {
     let w = Object.values(S.binders).find(b => b.wish); if (!w) w = S.binders.wish = { id: "wish", name: "Wishlist", wish: true };
@@ -3262,7 +3270,7 @@ function drawResults() {
       ${priceOf(c) != null ? `<span class="pr num">${money(priceOf(c))}</span>` : ""}${(t => t ? `<span class="tg tg-${t.k}" title="${esc(t.tip)}">${esc(t.label)}</span>` : "")(cardTags(c)[0])}</button>
       <span class="cap num">${esc(c.set.toUpperCase())} · ${esc((c.released_at || "").slice(0, 4))}</span></div>`).join("")}</div>
     ${sv.next ? `<p><button class="btn" id="smore" ${sv.busy ? "disabled" : ""}>${sv.busy ? "Loading…" : "Load more"}</button></p>` : ""}`;
-  el.querySelector(".grid").onclick = e => { const b = e.target.closest("button"); if (b) { if (sv.keepQ && sv.q === sv.keepQ) sv.refocus = true; openCard(sv.results[+b.dataset.i]); } };
+  el.querySelector(".grid").onclick = e => { const b = e.target.closest("button"); if (b) { if (sv.keepQ && sv.q === sv.keepQ) sv.refocus = true; const rs = [...el.querySelectorAll(".grid [data-i]")]; openFromList(rs, b, x => sv.results[+x.dataset.i], c => openCard(c)); } };
   const m = $("#smore"); if (m) m.onclick = async () => {
     sv.busy = true; drawResults();
     try { const r = await sf(sv.next); sv.results.push(...(r.data || [])); sv.next = r.has_more ? r.next_page : null; } catch (e) { toast(e.message); }
@@ -3297,7 +3305,44 @@ function setDeckPrinting(d, k, picked) {
   d.cmdr = d.cmdr.map(x => x === k ? nk : x);
   d.updated = Date.now(); save(); return nk;
 }
+/* Swipe between cards: a list opens a card with the cards it shows (in its order) and where this one is.
+   The card screen then moves to the next/previous card by a sideways swipe, its ‹ › buttons, or the arrow keys. */
+let CARDNAV_NEXT = null, CARDNAV = null;
+function openFromList(btns, btn, toItem, open) {
+  const items = btns.map(toItem), i = btns.indexOf(btn); if (i < 0 || !items[i]) return;
+  CARDNAV_NEXT = { items, i, open }; open(items[i]);
+}
+function cardNavGo(step) {
+  const n = CARDNAV; if (!n) return; const j = n.i + step; if (j < 0 || j >= n.items.length || !n.items[j]) return;
+  CARDNAV_NEXT = Object.assign({}, n, { i: j, dir: step }); n.open(n.items[j]);
+}
+const navImg = it => it && (it.img || (it.card && (it.card.img || (it.card.image_uris && it.card.image_uris.normal))) || (it.image_uris && it.image_uris.normal) || "");
+function wireCardNav(sheet) {
+  const n = CARDNAV, bar = sheet.querySelector("#cnav"); if (!bar) return;
+  if (!n || n.items.length < 2) { bar.hidden = true; return; }
+  bar.hidden = false;
+  bar.innerHTML = `<button class="btn sm ghost" id="cnPrev" aria-label="Previous card" ${n.i ? "" : "disabled"}>‹</button><span class="small muted num" id="cnPos">${n.i + 1} of ${n.items.length}</span><button class="btn sm ghost" id="cnNext" aria-label="Next card" ${n.i < n.items.length - 1 ? "" : "disabled"}>›</button>`;
+  bar.querySelector("#cnPrev").onclick = () => cardNavGo(-1); bar.querySelector("#cnNext").onclick = () => cardNavGo(1);
+  for (const j of [n.i - 1, n.i + 1]) { const u = navImg(n.items[j]); if (u) { const im = new Image(); im.src = u; } }     // next pictures ready before the swipe
+  if (n.dir) { const b = sheet.querySelector("#sheetBody"); if (b) { b.classList.add(n.dir > 0 ? "slide-l" : "slide-r"); } n.dir = 0; }
+  let x0 = 0, y0 = 0, t0 = 0, on = false;
+  sheet.addEventListener("touchstart", e => {
+    on = e.touches.length === 1 && !e.target.closest("input, textarea, select, .scrollx, .seg.wide, .chips, #phBox, .phwrap, [data-noswipe]");
+    if (on) { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; t0 = Date.now(); }
+  }, { passive: true });
+  sheet.addEventListener("touchend", e => {
+    if (!on) return; on = false;
+    const t = e.changedTouches[0], dx = t.clientX - x0, dy = t.clientY - y0;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > 1.6 * Math.abs(dy) && Date.now() - t0 < 800) cardNavGo(dx < 0 ? 1 : -1);      // a clear sideways swipe; scrolling up and down is left alone
+  }, { passive: true });
+}
+document.addEventListener("keydown", e => {
+  if (!CARDNAV || !document.querySelector("#sheetRoot #cnav") || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+  const a = document.activeElement; if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
+  e.preventDefault(); cardNavGo(e.key === "ArrowRight" ? 1 : -1);
+});
 function openCard(card, finish, binder, ctx) {
+  CARDNAV = CARDNAV_NEXT; CARDNAV_NEXT = null;
   let s = isSlim(card) ? card : slim(card), editing = null, addQty = 1, aEdit = AEDIT_NEXT; AEDIT_NEXT = null;
   let phH = null, phRange = S.meta.phRange || "3M", phOff = {}, phWant = null, rrHtml = null, rrFor = null, rrWant = null;
   let full = card.oracle_text !== undefined || card.card_faces ? card : null;
@@ -3458,7 +3503,8 @@ function openCard(card, finish, binder, ctx) {
     }, $("#cDeckPrintBox"));
     $("#cPrints").onclick = () => showPrints(s, picked => { s = slim(picked); full = picked; fin = s.finishes.includes(fin) ? fin : s.finishes[0]; draw(); });
   };
-  openSheet(`<div id="sheetBody"></div>`, () => ctx && ctx.back ? ctx.back() : render());
+  openSheet(`<div id="cnav" class="cnav" hidden></div><div id="sheetBody"></div>`, () => { CARDNAV = null; ctx && ctx.back ? ctx.back() : render(); });
+  wireCardNav($("#sheetRoot .sheet"));
   const myBody = $("#sheetBody");
   draw();
   const askedId = s.id;
@@ -5087,7 +5133,8 @@ function drawRecList(d) {
     const r = rows[+b.dataset.radd]; addToDeck(d, r.card, 1, false); R.rows = R.rows.filter(x => x !== r);
     const al = allocFor(r.name, d.id); toast(`Added ${r.name} · ${al.own ? `you own ${al.own}` : "not in your collection"}`); renderDeck(d);
   });
-  el.querySelectorAll("[data-rinfo]").forEach(b => b.onclick = () => openCard(rows[+b.dataset.rinfo].card));
+  const ris = [...el.querySelectorAll("[data-rinfo]")];
+  ris.forEach(b => b.onclick = () => openFromList(ris, b, x => rows[+x.dataset.rinfo].card, c => openCard(c)));
   const rf = $("#rRefresh"); if (rf) rf.onclick = async () => { for (const k of [...EDH.mem.keys()]) EDH.mem.delete(k); const cmd = deckCommanderName(d), t = rs.theme;
     for (const p of [cmd && "commanders/" + edhSlug(cmd), t && "tags/" + themeSlugOf(d, t), cmd && t && `commanders/${edhSlug(cmd)}/${themeSlugOf(d, t)}`]) if (p && idb.ok) await idbSet("edh:" + p, null).catch(() => {});
     rs.data = null; drawSuggest(d); };
@@ -5673,7 +5720,7 @@ function renderDeck_(d) {
     const k = b.dataset.inc || b.dataset.dec || b.dataset.open, c = d.cards[k]; if (!c) return;
     if (b.dataset.inc) { c.qty++; d.updated = Date.now(); save(); renderDeck(d); }
     else if (b.dataset.dec) { c.qty--; if (c.qty <= 0) { delete d.cards[k]; d.cmdr = d.cmdr.filter(x => x !== k); } d.updated = Date.now(); save(); renderDeck(d); }
-    else openCard(c, null, null, { deck: d, key: k });
+    else { const os = [...$("#dl").querySelectorAll("[data-open]")].filter(x => d.cards[x.dataset.open]); openFromList(os, b, x => x.dataset.open, kk => openCard(d.cards[kk], null, null, { deck: d, key: kk })); }
   };
 }
 /* Playtest: a sample game from the deck's library (the main deck, without the commander). London mulligan: draw 7,
@@ -6051,7 +6098,8 @@ function drawOpps(v) {
     <p class="small muted">Data: TCGplayer market prices and history through MTGJSON (${esc(when(O.fresh && O.fresh.history))}), Mana Pool (${esc(when(O.fresh && O.fresh.manapool))}), Card Kingdom buylist (${esc(when(O.fresh && O.fresh.cardkingdom))}), printings and EDHREC ranks from Scryfall (${esc(when(O.fresh && O.fresh.scryfall))}). Worked out ${esc(when(O.as_of))}. These are cards that met measurable conditions, not predictions: there's no confidence score because no tested model is behind them. Your Watchlist record is the way to see how calls like these turn out.</p>`;
   v.querySelector("#opS").onclick = e => { const b = e.target.closest("button"); if (b) { MKT.strat = b.dataset.s; drawOpps(v); } };
   const get = async id => slim(await sf("/cards/" + encodeURIComponent(id), null, { now: true }));
-  v.querySelectorAll("[data-oopen]").forEach(b => b.onclick = async () => { b.disabled = true; try { openCard(await get(b.dataset.oopen)); } catch (e) { toast(e.message); } b.disabled = false; });
+  const oos = [...v.querySelectorAll("[data-oopen]")];
+  oos.forEach(b => b.onclick = () => openFromList(oos, b, x => x.dataset.oopen, async id => { try { openCard(await get(id)); } catch (e) { toast(e.message); } }));
   v.querySelectorAll("[data-owatch]").forEach(b => b.onclick = async () => { b.disabled = true; try { specForm(await get(b.dataset.owatch), "nonfoil"); } catch (e) { toast(e.message); } b.disabled = false; });
 }
 function specRecordSummary(list) {
