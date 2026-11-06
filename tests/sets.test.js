@@ -27,10 +27,12 @@ async function run(opts, shot) {
     addToColl(slim(A[2]), "foil", 2, "tr"); addToColl(slim(A[10]), "nonfoil", 1, "main");  // #3 again (foil, other binder) and bonus #11
     addToColl(slim(A[8]), "nonfoil", 1, "wish");                                           // #9 only wished for
     for (const c of B) addToColl(slim(c), "nonfoil", 1, "main");                            // BBB complete
+    for (const e of Object.values(S.coll)) e.newAt = Date.now() - 2 * 864e5;               // added two days ago: no longer "New"
     save(); go("coll"); }, [AAA, BBB]);
   await p.waitForTimeout(400);
   const R = {}, rows = () => p.$$eval("#setsBody .setrow", a => a.map(x => x.querySelector(".nm").textContent.replace(/\s+/g, " ").trim() + " | " + ((x.querySelector(".setbar .num") || {}).textContent || "")));
   await p.click('#dash [data-dash="sets"]'); await p.waitForSelector("#setsBody .setrow");
+  R.tileGoes = await p.evaluate(() => [tab, sv.mode, document.querySelector('#sMode [aria-pressed="true"]').textContent]);
   R.def = await rows();
   await p.click('#setSort [data-s="done"]'); await p.waitForTimeout(100); R.done = await rows();
   await p.click('#setAll [data-a="1"]'); await p.waitForTimeout(100); R.every = await rows(); await p.click('#setAll [data-a="0"]');
@@ -55,14 +57,14 @@ async function run(opts, shot) {
   if (shot) await p.screenshot({ path: __dirname + "/" + shot.replace(".png", "_owned.png") });
   await p.click('#sdOwned [data-own]'); await p.waitForTimeout(300); R.opened = await p.evaluate(() => !!document.querySelector(".sheet h2, #sheet h2") && document.body.textContent.includes("AAA Card 1"));
   await p.evaluate(() => closeSheet()); await p.waitForTimeout(150);
-  await p.click('#dash [data-dash="sets"]'); await p.waitForSelector("#setsBody .setrow"); await p.click('#setsBody [data-set="aaa"]'); await p.click('#sdTab [data-t="miss"]'); await p.waitForSelector("#sdRar");
+  await p.evaluate(() => setsSheet()); await p.waitForSelector("#setsBody .setrow"); await p.click('#setsBody [data-set="aaa"]'); await p.click('#sdTab [data-t="miss"]'); await p.waitForSelector("#sdRar");
   await p.click('#sdAll [data-a="1"]'); await p.waitForTimeout(100); R.missAll = await miss(); await p.click('#sdAll [data-a="0"]');
   await p.click("#sdCopy"); await p.waitForTimeout(150); R.clip = await p.evaluate(() => navigator.clipboard.readText());
   await p.click("#sdWish"); await p.waitForTimeout(150); R.wish = await p.evaluate(() => Object.values(S.coll).filter(e => e.binder === "wish").map(e => e.collector_number || e.num).sort((a, b) => a - b).join(","));
   await p.click("#sdWish"); await p.waitForTimeout(150); R.wishToast = await p.$eval("#toastRoot", e => e.textContent);
   await p.click("#sdMine"); await p.waitForTimeout(300); R.mine = await p.$$eval("#clist .item .name", a => a.length); R.chip = await p.$$eval("#cfChips [data-fx]", a => a.map(x => x.dataset.fx).join());
   // the binder: every card in the set, owned ones highlighted, missing ones greyed out
-  await p.click('#dash [data-dash="sets"]'); await p.waitForSelector("#setsBody .setrow"); await p.click('#setsBody [data-set="aaa"]'); await p.waitForSelector("#sdGrid .bcard");
+  await p.evaluate(() => setsSheet()); await p.waitForSelector("#setsBody .setrow"); await p.click('#setsBody [data-set="aaa"]'); await p.waitForSelector("#sdGrid .bcard");
   const grid = () => p.$$eval("#sdGrid .bcard", a => a.map(x => x.querySelector(".bcap .muted").textContent.slice(1) + (x.classList.contains("own") ? "+" + x.querySelector(".bq").textContent : "-")));
   const nums = async () => (await grid()).map(x => x.replace(/[+-].*/, "")).join(",");
   const cnt = () => p.$eval("#bCount", e => e.textContent.replace(/\s+/g, " ").trim());
@@ -85,14 +87,26 @@ async function run(opts, shot) {
   await p.click('#bShow [data-v="miss"]'); await p.waitForTimeout(60); await p.click('#sdGrid [data-bc="aaa-5"]'); await p.waitForSelector("#cPlus"); await p.click("#cPlus"); await p.waitForTimeout(150);
   await p.click("#sheetClose"); await p.waitForSelector("#sdGrid"); await p.waitForTimeout(100);
   R.bBack = [await p.$eval('#sdTab [aria-pressed="true"]', e => e.textContent), await p.$eval('#bShow [aria-pressed="true"]', e => e.textContent), await nums(), await cnt()];
+  await p.click('#bShow [data-v="all"]'); await p.waitForTimeout(60);
+  if (shot) await (await p.$("#sdGrid")).screenshot({ path: __dirname + "/" + shot.replace(".png", "_new.png") });
+  R.newGrid = await p.$eval('#sdGrid [data-bc="aaa-5"]', e => [e.classList.contains("new"), (e.querySelector(".bnew") || {}).textContent || ""]).catch(() => "absent");
+  R.oldNotNew = await p.$$eval("#sdGrid .bcard.new", a => a.length);
+  await p.click('#bShow [data-v="all"]'); await p.click('#bView [data-v="text"]'); await p.waitForTimeout(80);
+  R.text = await p.$$eval("#sdGrid .brow", a => a.map(x => (x.classList.contains("own") ? "+" : "-") + (x.classList.contains("new") ? "N" : "") + x.textContent.replace(/\s+/g, " ").trim()));
+  R.textSaved = await p.evaluate(() => S.meta.binderView);
+  if (shot) await p.screenshot({ path: __dirname + "/" + shot.replace(".png", "_text.png") });
+  await p.click('#bView [data-v="img"]'); await p.waitForTimeout(60);
+  R.onPage = await p.evaluate(() => !!document.querySelector("#view #setD") && !document.querySelector("#sheetRoot").innerHTML.trim() && document.querySelector("#viewTitle").textContent);
   await p.evaluate(() => { for (const [k, e] of Object.entries(S.coll)) if (e.id === "aaa-5" && e.binder !== "wish") delete S.coll[k]; save(); });
   await p.evaluate(() => closeSheet()); await p.waitForTimeout(100);
   // find any set, including one you have no cards from
-  await p.click('#dash [data-dash="sets"]'); await p.waitForSelector("#setsBody .setrow");
+  await p.evaluate(() => setsSheet()); await p.waitForSelector("#setsBody .setrow");
   await p.click("#setFind"); await p.keyboard.type("gam"); await p.waitForTimeout(100);
   R.find = await p.$$eval("#setFindRes [data-find]", a => a.map(x => x.textContent.replace(/\s+/g, " ").trim())); R.findFocus = await p.evaluate(() => document.activeElement.id);
   await p.fill("#setFind", "zzz"); await p.waitForTimeout(80); R.findNone = await p.$eval("#setFindRes", e => e.textContent.trim());
-  await p.fill("#setFind", "gam"); await p.waitForTimeout(80); await p.click('#setFindRes [data-find="ccc"]'); await p.waitForSelector("#sdGrid .bcard");
+  R.tabs = await p.$$eval("#sMode button", a => a.map(x => x.textContent.trim()));
+  await p.fill("#setFind", "a"); await p.waitForTimeout(80); R.dropIcons = await p.$$eval("#setFindRes .setopt .si .sym", a => a.length); if (shot) await p.screenshot({ path: __dirname + "/" + shot.replace(".png", "_drop.png") });
+  await p.fill("#setFind", "gam"); await p.waitForTimeout(80); await p.press("#setFind", "ArrowDown"); await p.press("#setFind", "Enter"); await p.waitForSelector("#sdGrid .bcard");
   R.ccc = [await grid(), await cnt()];
   await p.click("#sdBack"); await p.waitForSelector("#setsBody .setrow"); await p.fill("#setFind", ""); await p.waitForTimeout(60);
   await p.click('#setsBody [data-set="bbb"]'); await p.click('#sdTab [data-t="miss"]'); await p.waitForTimeout(400);
@@ -103,6 +117,7 @@ async function run(opts, shot) {
 (async () => {
   for (const [label, opts, shot] of [["desktop", { viewport: { width: 1280, height: 900 } }, null], ["phone", devices["Pixel 7"], "sets_phone.png"]]) {
     const R = await run(opts, shot);
+    ok(JSON.stringify(R.tileGoes) === '["search","sets","Sets"]', `${label}: the Collection page's Sets tile opens Search → Sets ${JSON.stringify(R.tileGoes)}`);
     ok(JSON.stringify(R.def) === JSON.stringify(["AAA Set AAA | 4/10", "BBB Set BBB | 4/4 ✓"]), `${label}: main-set progress counts different numbered cards in any binder, not wishlist or bonus ones ${JSON.stringify(R.def)}`);
     ok(R.done[0].startsWith("BBB Set"), `${label}: sort by most complete`);
     ok(R.every.includes("AAA Set AAA | 5/12"), `${label}: “Everything” counts the bonus versions too ${JSON.stringify(R.every)}`);
@@ -129,8 +144,13 @@ async function run(opts, shot) {
     ok(R.bRange === "3,4,5,6" && /These cards: 2 of 4 owned/.test(R.bRangeCount) && R.bFocus === "bTo", `${label}: collector-number range, typing isn't interrupted ${JSON.stringify([R.bRange, R.bRangeCount, R.bFocus])}`);
     ok(R.bEvery === 12 && R.bShowcase === "12", `${label}: Everything shows the bonus printings, filterable by printing type ${R.bEvery} ${R.bShowcase}`);
     ok(JSON.stringify(R.bBack) === JSON.stringify(["Binder", "Missing", "2,4,8,9,10", "5 of 10 owned (50%)"]), `${label}: add a missing card from the binder and come back to it lit up, filters kept ${JSON.stringify(R.bBack)}`);
-    ok(R.find.length === 1 && /Gamma Test CCC · 2026/.test(R.find[0]) && /none yet/.test(R.find[0]) && R.findFocus === "setFind" && /No set matches/.test(R.findNone), `${label}: find any set by name, keyboard stays up ${JSON.stringify([R.find, R.findFocus, R.findNone])}`);
+    ok(R.find.length === 1 && /^CCC\s*Gamma Test Jan 1, 2026 · Expansion · 4 cards none yet$/.test(R.find[0]) && /none yet/.test(R.find[0]) && R.findFocus === "setFind" && /No set matches/.test(R.findNone), `${label}: find any set by name, keyboard stays up ${JSON.stringify([R.find, R.findFocus, R.findNone])}`);
     ok(R.ccc[0].length === 4 && R.ccc[0].every(x => x.endsWith("-")) && /^0 of 4 owned/.test(R.ccc[1]), `${label}: a set you have none of opens fully greyed out ${JSON.stringify(R.ccc)}`);
+    ok(JSON.stringify(R.newGrid) === '[true,"New"]' && R.oldNotNew === 1, `${label}: a card added today gets the gold "New" mark; ones added days ago don't ${JSON.stringify([R.newGrid, R.oldNotNew])}`);
+    ok(R.text.length === 10 && R.text[0] === "+#1AAA Card 1 2M $0.50×1" && R.text[1] === "-#2AAA Card 2 2M $1.00" && /^\+#3.*×3✦$/.test(R.text[2]) && /^\+N#5AAA Card 5 New 2R \$2\.50×1$/.test(R.text[4]) && R.textSaved === "text", `${label}: Text view: one line per card (number, name, cost, rarity, price, copies), missing faded, new marked; remembered ${JSON.stringify(R.text.slice(0, 5))}`);
+    ok(R.onPage === "Sets", `${label}: the set opens on the Search page itself, not a pop-up (${R.onPage})`);
+    ok(JSON.stringify(R.tabs) === '["Search cards","Sets","Staples","Lists"]', `${label}: Search page tabs ${JSON.stringify(R.tabs)}`);
+    ok(R.dropIcons >= 2, `${label}: the dropdown shows each set's symbol (${R.dropIcons})`);
     ok(R.clip.split("\n")[0] === "1 AAA Card 2 (AAA) 2" && R.clip.split("\n").length === 6, `${label}: copy list with set and number ${JSON.stringify(R.clip.split("\n")[0])}`);
     ok(R.wish === "2,4,5,8,9,10" && /already/.test(R.wishToast), `${label}: wishlist gets the missing cards once (the #9 already wanted isn't doubled) (${R.wish})`);
     ok(R.mine === 6 && R.chip === "set", `${label}: Show my cards filters the collection to that set (${R.mine} entries)`);

@@ -45,7 +45,7 @@ R.played = await names(); R.q1 = searches.at(-1); R.note = await p.$eval("#sres 
   // Set completion → Best cards in this set
   await p.evaluate(() => { stp.rank = "edhrec"; stp.role = "ramp"; const c = { id: "x1", oid: "o", name: "Green Thing", set: "dsk", setName: "Duskmourn", num: "1", rarity: "rare", type: "Creature", cmc: 2, colors: ["G"], ci: ["G"], img: "", prices: { usd: "3" }, finishes: ["nonfoil"] };
     addToColl(c, "nonfoil", 1, defaultBinder()); go("coll"); }); await p.waitForTimeout(300);
-  await p.evaluate(() => setDetail("dsk", () => {})); await p.waitForTimeout(300); await p.click("#sdBest"); await p.waitForTimeout(1500);
+  await p.evaluate(() => { sv.mode = "sets"; sv.setCode = "dsk"; go("search"); }); await p.waitForSelector("#sdBest"); await p.waitForTimeout(300); await p.click("#sdBest"); await p.waitForTimeout(1500);
   R.jump = await p.evaluate(() => [tab, sv.mode, document.querySelector("#stSet").value, stp.role, !!document.querySelector(".sheet.open, #sheet.open")]); R.jumpList = await names();
   R.overflow = await p.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
   R.posts = posts; R.errs = errs; await b.close(); srv.kill(); return R;
