@@ -1362,34 +1362,86 @@ async function setCards(code) {
   while (url) { const r = await sf(url); out.push(...(r.data || []).map(c => ({ id: c.id, name: c.name, num: c.collector_number, rarity: c.rarity, usd: priceOf(c, "nonfoil"), img: imgOf(c), card: c }))); url = r.has_more ? r.next_page : null; }
   return SETCARDS[code] = out;
 }
+/* Printing types inside a set, for "every printing" completion. Main-set numbers always count as the main set;
+   everything past the printed size is sorted by what Scryfall says about it, first match wins. */
+const TREAT = [["serial", "Serialized", c => (c.promo_types || []).includes("serialized")], ["borderless", "Borderless", c => c.border_color === "borderless"],
+  ["showcase", "Showcase", c => (c.frame_effects || []).includes("showcase")], ["extended", "Extended art", c => (c.frame_effects || []).includes("extendedart")],
+  ["retro", "Retro frame", c => c.frame === "1997" || c.frame === "1993"], ["fullart", "Full art", c => !!c.full_art], ["promo", "Promo", c => !!c.promo]];
+const hasExtras = z => z && z.printed > 0 && z.printed < z.count;
+function treatOf(card, z) {
+  if (!hasExtras(z) || isMainNum(card.collector_number, z.printed)) return "main";
+  const t = TREAT.find(x => x[2](card)); return t ? t[0] : "other";
+}
+const treatName = k => k === "main" ? "Main set" : k === "other" ? "Other extras" : (TREAT.find(x => x[0] === k) || [, k])[1];
+const PRICE_BANDS = [["", "Any price"], ["u1", "Under $1", v => v < 1], ["1-5", "$1–5", v => v >= 1 && v < 5], ["5-20", "$5–20", v => v >= 5 && v < 20], ["20", "$20+", v => v >= 20]];
+const FIN_NAME = { nonfoil: "normal", foil: "foil", etched: "etched" };
+// what you own from one set, one row per collector number (copies, finishes and binders added up; wishlists don't count)
+function setOwnedRows(code) {
+  const m = {};
+  for (const [k, e] of Object.entries(S.coll)) {
+    if (isWish(e.binder) || e.set !== code) continue;
+    const r = m[e.num] = m[e.num] || { num: String(e.num), name: e.name, img: e.img, key: k, qty: 0, fin: {}, val: 0 };
+    r.qty += e.qty; r.fin[e.finish] = (r.fin[e.finish] || 0) + e.qty; r.val += (priceOf(e, e.finish) || 0) * e.qty;
+  }
+  return Object.values(m).sort((a, b) => (parseInt(a.num) || 1e9) - (parseInt(b.num) || 1e9) || a.num.localeCompare(b.num));
+}
 function setDetail(code, back) {
-  const z = (SETS && SETS[code]) || {}, o = { all: setOpt.all, rar: "", list: null, err: "" };
+  const z = (SETS && SETS[code]) || {}, o = { all: setOpt.all, rar: "", price: "", sort: "set", tab: "miss", tr: "", list: null, err: "" };
   openSheet(`<div id="setD"></div>`, () => render());
   const draw = () => {
     const el = $("#setD"); if (!el) return;
     const own = setOwned()[code], nums = own ? own.nums : new Set(), pr = setProgress(code, nums, o.all);
+    const prMain = setProgress(code, nums, false), prAll = setProgress(code, nums, true), extras = hasExtras(z);
     const main = pr && pr.main, inScope = c => !main || isMainNum(c.num, z.printed);
-    const miss = o.list ? o.list.filter(c => inScope(c) && !nums.has(String(c.num)) && (!o.rar || c.rarity === o.rar)) : [];
+    const tr = o.list ? Object.fromEntries(o.list.map(c => [c.num, treatOf(c.card, z)])) : {};
+    const band = PRICE_BANDS.find(b => b[0] === o.price);
+    let miss = o.list ? o.list.filter(c => inScope(c) && !nums.has(String(c.num)) && (!o.rar || c.rarity === o.rar) && (!o.price || (c.usd != null && band[2](c.usd))) && (!o.all || !o.tr || tr[c.num] === o.tr)) : [];
+    if (o.sort !== "set") miss = miss.slice().sort((a, b) => (a.usd == null) - (b.usd == null) || (o.sort === "cheap" ? a.usd - b.usd : b.usd - a.usd));
     const cost = miss.reduce((a, c) => a + (c.usd || 0), 0), noPrice = miss.filter(c => c.usd == null).length;
+    // "you have another version": owned printings of the same card name in this set
+    const rows = setOwnedRows(code), byName = {};
+    for (const r of rows) (byName[r.name] = byName[r.name] || []).push(r.num);
+    const other = c => (byName[c.name] || []).filter(n => n !== String(c.num));
+    // owned / total for each kind of printing, once the set list is loaded
+    const kinds = {};
+    if (o.list) for (const c of o.list) { const k = tr[c.num], x = kinds[k] = kinds[k] || { have: 0, total: 0 }; x.total++; if (nums.has(String(c.num))) x.have++; }
+    const kindOrder = ["main", ...TREAT.map(t => t[0]), "other"].filter(k => kinds[k]);
+    const totalQty = rows.reduce((a, r) => a + r.qty, 0), ownVal = rows.reduce((a, r) => a + r.val, 0);
+    const missRow = c => { const ot = other(c); return `<div class="item"><img loading="lazy" src="${esc(c.img)}" alt=""><button class="tap" data-sc="${esc(c.id)}"><div class="name">${esc(c.name)}</div>
+            <div class="meta small"><span class="muted">#${esc(c.num)} · ${esc(c.rarity || "")}${extras && tr[c.num] !== "main" ? " · " + esc(treatName(tr[c.num])) : ""}</span>${ot.length ? `<span class="small" style="display:block;color:var(--ok)">You have ${ot.map(n => "#" + esc(n) + (tr[n] ? " (" + esc(treatName(tr[n])) + ")" : "")).join(", ")}</span>` : ""}</div></button><div class="right"><span class="price gold num">${c.usd != null ? money(c.usd) : `<span class="muted">—</span>`}</span></div></div>`; };
+    const ownedTab = `<div class="summary" style="margin-top:8px"><div><span class="label">Different cards</span><b class="num">${rows.length}</b></div><div><span class="label">Copies</span><b class="num">${totalQty}</b></div><div><span class="label">Value</span><b class="num gold">${money(ownVal)}</b></div></div>
+      ${rows.length ? `<div class="list" id="sdOwned" style="margin-top:6px">${rows.map(r => `<div class="item"><img loading="lazy" src="${esc(r.img || "")}" alt=""><button class="tap" data-own="${esc(r.key)}"><div class="name">${esc(r.name)}</div>
+        <div class="meta small"><span class="muted">#${esc(r.num)}${tr[r.num] && tr[r.num] !== "main" ? " · " + esc(treatName(tr[r.num])) : ""} · ${Object.entries(r.fin).map(([f, n]) => n + " " + (FIN_NAME[f] || f)).join(", ")}</span></div></button>
+        <div class="right"><span class="num"><b>×${r.qty}</b></span></div></div>`).join("")}</div>` : `<p class="small muted" style="margin-top:10px">You don't have any cards from this set yet.</p>`}`;
     el.innerHTML = `<div class="row"><button class="btn sm ghost" id="sdBack">← Sets</button></div>
       <h2 style="margin-top:6px">${setIcon(code, "common")} ${esc(z.name || code.toUpperCase())} <span class="small muted">${esc(code.toUpperCase())}${z.year ? " · " + esc(z.year) : ""}</span></h2>
       ${pr ? `<div class="setbar" style="margin:6px 0"><span class="meter"><span style="width:${(pr.p * 100).toFixed(1)}%"></span></span><span class="num"><b>${pr.have}</b> of ${pr.total} (${Math.floor(pr.p * 100)}%)</span></div>` : ""}
-      <div class="row wrap" style="gap:6px 12px">${z.printed > 0 && z.printed < z.count ? `<span class="seg" id="sdAll"><button data-a="0" aria-pressed="${!o.all}">Main set (${z.printed})</button><button data-a="1" aria-pressed="${o.all}">Everything (${z.count})</button></span>` : ""}
+      ${extras && prMain && prAll ? `<p class="small muted" id="sdBoth" style="margin:0 0 6px">Main set <b class="num">${prMain.have}/${prMain.total}</b> (${Math.floor(prMain.p * 100)}%) · Every printing <b class="num">${prAll.have}/${prAll.total}</b> (${Math.floor(prAll.p * 100)}%). The main set is the ${z.printed} numbered cards; every printing adds the borderless, showcase and other versions. Copies and foils don't count twice.</p>` : ""}
+      <div class="row wrap" style="gap:6px 12px">${extras ? `<span class="seg" id="sdAll"><button data-a="0" aria-pressed="${!o.all}">Main set (${z.printed})</button><button data-a="1" aria-pressed="${o.all}">Everything (${z.count})</button></span>` : ""}
         <button class="btn sm" id="sdMine" ${own ? "" : "disabled"}>Show my cards from this set</button><button class="btn sm" id="sdBest">Best cards in this set</button></div>
-      ${!o.list ? `<div class="row" style="margin-top:10px"><button class="btn primary" id="sdLoad">Show missing cards</button><span class="small muted grow">${o.err ? `<span class="down">${esc(o.err)}</span>` : `loads the set list from Scryfall, a second or two`}</span></div>`
-      : `<div class="row wrap" style="margin-top:10px;gap:6px"><span class="chips" id="sdRar">${[["", "All"], ["mythic", "Mythic"], ["rare", "Rare"], ["uncommon", "Uncommon"], ["common", "Common"]].map(([k, l]) => `<button data-r="${k}" aria-pressed="${o.rar === k}">${l}</button>`).join("")}</span></div>
+      <span class="seg" id="sdTab" style="margin-top:10px"><button data-t="miss" aria-pressed="${o.tab === "miss"}">Missing</button><button data-t="own" aria-pressed="${o.tab === "own"}">Owned (${rows.length})</button></span>
+      ${o.tab === "own" ? ownedTab : !o.list ? `<div class="row" style="margin-top:10px"><button class="btn primary" id="sdLoad">Show missing cards</button><span class="small muted grow">${o.err ? `<span class="down">${esc(o.err)}</span>` : `loads the set list from Scryfall, a second or two`}</span></div>`
+      : `${extras && kindOrder.length > 1 ? (o.all ? `<div class="chips scrollx" id="sdTr" style="margin-top:10px"><button data-tr="" aria-pressed="${!o.tr}">All printings</button>${kindOrder.map(k => `<button data-tr="${k}" aria-pressed="${o.tr === k}">${esc(treatName(k))} <span class="num">${kinds[k].have}/${kinds[k].total}</span></button>`).join("")}</div>`
+          : `<p class="small muted" id="sdKinds" style="margin:10px 0 0">Other printings: ${kindOrder.filter(k => k !== "main").map(k => `${esc(treatName(k))} ${kinds[k].have}/${kinds[k].total}`).join(" · ")}. Choose Everything to see them.</p>`) : ""}
+        <div class="row wrap" style="margin-top:10px;gap:6px"><span class="chips" id="sdRar">${[["", "All"], ["mythic", "Mythic"], ["rare", "Rare"], ["uncommon", "Uncommon"], ["common", "Common"]].map(([k, l]) => `<button data-r="${k}" aria-pressed="${o.rar === k}">${l}</button>`).join("")}</span></div>
+        <div class="row wrap" style="margin-top:6px;gap:6px"><span class="chips" id="sdPrice">${PRICE_BANDS.map(([k, l]) => `<button data-p="${k}" aria-pressed="${o.price === k}">${l}</button>`).join("")}</span>
+          <select id="sdSort" aria-label="Order"><option value="set"${o.sort === "set" ? " selected" : ""}>Set order</option><option value="cheap"${o.sort === "cheap" ? " selected" : ""}>Cheapest first</option><option value="dear"${o.sort === "dear" ? " selected" : ""}>Most expensive first</option></select></div>
         ${miss.length ? `<div class="summary" style="margin-top:8px"><div><span class="label">Missing</span><b class="num">${miss.length}</b></div><div><span class="label">To buy (1 each)</span><b class="num gold">${money(cost)}</b>${noPrice ? `<span class="small muted">${noPrice} without a price</span>` : ""}</div></div>
           <div class="row wrap" style="margin-top:8px"><button class="btn" id="sdWish">Add to my wishlist</button><button class="btn" id="sdCopy">Copy list</button></div>
-          <div class="list" style="margin-top:6px">${miss.map(c => `<div class="item"><img loading="lazy" src="${esc(c.img)}" alt=""><button class="tap" data-sc="${esc(c.id)}"><div class="name">${esc(c.name)}</div>
-            <div class="meta small"><span class="muted">#${esc(c.num)} · ${esc(c.rarity || "")}</span></div></button><div class="right"><span class="price gold num">${c.usd != null ? money(c.usd) : `<span class="muted">—</span>`}</span></div></div>`).join("")}</div>`
-          : `<p class="small" style="margin-top:10px">${o.rar ? "Nothing missing at this rarity." : "You have every card. ✓"}</p>`}`}`;
+          <div class="list" style="margin-top:6px">${miss.map(missRow).join("")}</div>`
+          : `<p class="small" style="margin-top:10px">${o.rar || o.price || (o.all && o.tr) ? "Nothing missing with these filters." : "You have every card. ✓"}</p>`}`}`;
     $("#sdBack").onclick = () => { closeSheet(); back(); };
-    const sa = $("#sdAll"); if (sa) sa.onclick = e => { const b = e.target.closest("button"); if (b) { o.all = b.dataset.a === "1"; draw(); } };
+    const sa = $("#sdAll"); if (sa) sa.onclick = e => { const b = e.target.closest("button"); if (b) { o.all = b.dataset.a === "1"; o.tr = ""; draw(); } };
+    $("#sdTab").onclick = e => { const b = e.target.closest("button"); if (b) { o.tab = b.dataset.t; draw(); } };
     $("#sdBest").onclick = () => { stp.set = code; stp.n = 30; stp.role = "all"; S.meta.staples = Object.assign({}, S.meta.staples, { set: code, role: "all" }); save(); sv.mode = "staples"; sheetOnClose = null; closeSheet(); go("search"); };
     $("#sdMine").onclick = () => { cv.f = collDefaultF(); cv.q = ""; cv.f.set = code; closeSheet(); showList(); };
     const ld = $("#sdLoad"); if (ld) ld.onclick = async () => { ld.disabled = true; ld.textContent = "Loading…"; try { o.list = await setCards(code); } catch (e) { o.err = "Couldn't load the set: " + e.message; } draw(); };
     const rr = $("#sdRar"); if (rr) rr.onclick = e => { const b = e.target.closest("button"); if (b) { o.rar = b.dataset.r; draw(); } };
+    const pp = $("#sdPrice"); if (pp) pp.onclick = e => { const b = e.target.closest("button"); if (b) { o.price = b.dataset.p; draw(); } };
+    const so = $("#sdSort"); if (so) so.onchange = () => { o.sort = so.value; draw(); };
+    const tt = $("#sdTr"); if (tt) tt.onclick = e => { const b = e.target.closest("button"); if (b) { o.tr = b.dataset.tr; draw(); } };
     el.querySelectorAll("[data-sc]").forEach(b => b.onclick = () => { const c = o.list.find(x => x.id === b.dataset.sc); if (c) openCard(c.card); });
+    el.querySelectorAll("[data-own]").forEach(b => b.onclick = () => { const e = S.coll[b.dataset.own]; if (e) openCard(e, e.finish, e.binder); });
     const wb = $("#sdWish"); if (wb) wb.onclick = () => {
       let w = Object.values(S.binders).find(x => x.wish); if (!w) w = S.binders.wish = { id: "wish", name: "Wishlist", wish: true };
       const onW = new Set(Object.values(S.coll).filter(e => e.binder === w.id).map(e => e.id)); let n = 0;
