@@ -2567,12 +2567,26 @@ function pickCSV(target) { pickFile("", f => csvImport(f, target)); }
 // a text list turned into the same rows a CSV gives: sections ("Commander", "Sideboard", "SB:") become the board column
 function textListRows(lines) {
   const rows = [["Quantity", "Name", "Set code", "Collector number", "Foil", "Board"]]; let board = "main";
-  // MTGO / older exports: no headings, the sideboard is the group after the one blank line
+  // No headings and two groups split by a blank line: work out what the smaller group is.
+  //  - a Commander list (about 100 cards): the group of 1 or 2 cards is the commander, first or last (Moxfield puts it first, MTGO last)
+  //  - a 60-card list: a last group of up to 15 cards is the sideboard (the MTGO way)
+  //  - anything else: all main deck, rather than guess
   while (lines.length && !lines[lines.length - 1]) lines.pop(); while (lines.length && !lines[0]) lines.shift();
   const blank = lines.indexOf(""), groups = lines.join("\n").split(/\n\s*\n/);
-  const sideFrom = !lines.some(l => LIST_HEAD.test(l)) && groups.length === 2 ? lines.findIndex((l, i) => i > blank && l) : -1;
+  const qtyOf = g => g.split("\n").reduce((a, l) => { const it = parseListText(l.replace(/^SB:\s*/i, ""))[0]; return a + (it ? it.qty : 0); }, 0);
+  let groupBoard = null;
+  if (!lines.some(l => LIST_HEAD.test(l)) && groups.length === 2) {
+    const [a, b] = groups.map(qtyOf), total = a + b;
+    if (total >= 90 && b >= 1 && b <= 2) groupBoard = ["main", "commander"];
+    else if (total >= 90 && a >= 1 && a <= 2) groupBoard = ["commander", "main"];
+    else if (total < 90 && b <= 15 && a >= 2 * b) groupBoard = ["main", "sideboard"];
+  }
+  if (groupBoard) board = groupBoard[0];
+  const secondFrom = groupBoard ? lines.findIndex((l, i) => i > blank && l) : -1;
   for (let i = 0; i < lines.length; i++) {
-    const l = lines[i]; if (!l) continue; if (i === sideFrom) board = "sideboard";
+    const l = lines[i];
+    if (!l) { if (board === "commander" && !groupBoard) board = "main"; continue; }      // a blank line ends a "Commander" section that has no "Deck" heading after it
+    if (i === secondFrom) board = groupBoard[1];
     const h = l.match(LIST_HEAD); if (h) { const w = h[1].toLowerCase(); board = /^command/.test(w) ? "commander" : /^(side|sb)/.test(w) ? "sideboard" : /maybe|consider/.test(w) ? "maybeboard" : /token/.test(w) ? "tokens" : "main"; continue; }
     const sb = /^SB:\s*/i.test(l), it = parseListText(l)[0]; if (!it) continue;
     rows.push([String(it.qty), it.name, it.set || "", it.num || "", it.finish === "nonfoil" ? "" : it.finish, sb ? "sideboard" : board]);
@@ -5499,7 +5513,7 @@ function renderDeck_(d) {
       ${playtestHTML(d)}${goldfishHTML(d)}` : ""}
     ${Object.keys(d.cards).length > 1 ? `<div class="row" style="justify-content:flex-end;gap:12px;margin-bottom:-4px"><button class="linkbtn small" id="dFoldAll">Collapse all</button><button class="linkbtn small" id="dOpenAll">Expand all</button></div>` : ""}
     <div class="list" id="dl">${cmdCards.length ? foldHead("Commander", "Commander", cmdCards.length) + (folded.has("Commander") ? "" : cmdCards.map(row).join("")) : ""}
-      ${group(mainRest, "") || (cmdCards.length ? "" : `<div class="empty" style="border:0"><p>No cards yet. Type above, or use Deck options → Paste a deck list.</p></div>`)}${group(st.side, "Side")}</div></div></div>`;
+      ${group(mainRest, "") || (cmdCards.length ? "" : `<div class="empty" style="border:0"><p>No cards yet. Type above, or use Deck options → Paste a deck list.</p></div>`)}${st.side.length ? `<div class="row" style="justify-content:flex-end;margin:6px 0"><button class="btn sm" id="dSideMain">Move all ${st.side.reduce((a, c) => a + c.qty, 0)} sideboard cards to the main deck</button></div>` : ""}${group(st.side, "Side")}</div></div></div>`;
   $("#back").onclick = () => go("decks");
   $("#dThemeAdd").onclick = () => { $("#dThemeBox").hidden = false; $("#dThemeIn").focus(); };
   const addTheme = () => { const t = $("#dThemeIn").value.trim(); if (!t) return; d.themes = [...new Set([...(d.themes || []), t])]; d.updated = Date.now(); save(); renderDeck(d); };
@@ -5544,6 +5558,11 @@ function renderDeck_(d) {
   if (cmd && d.cmdr.length && (!themeSug[d.id] || themeSug[d.id].cmd !== deckCommanderName(d))) loadThemeSuggestions(d); else drawThemeSug(d);
   wirePlaytest(d); wireGoldfish(d);
   const setFold = keys => { S.meta.deckFold = Object.assign({}, S.meta.deckFold, { [d.id]: [...keys] }); if (!keys.size) delete S.meta.deckFold[d.id]; save(); renderDeck(d); };
+  const sm = $("#dSideMain"); if (sm) sm.onclick = () => {
+    let n = 0;
+    for (const [k, c] of Object.entries(d.cards)) if (c.side) { const m = k.replace(/\|1$/, "|0"); if (d.cards[m]) d.cards[m].qty += c.qty; else d.cards[m] = Object.assign({}, c, { side: false }); n += c.qty; delete d.cards[k]; }
+    d.updated = Date.now(); staleIndex(); save(); renderDeck(d); toast(`Moved ${n} card${n === 1 ? "" : "s"} to the main deck`);
+  };
   const fa = $("#dFoldAll"); if (fa) fa.onclick = () => setFold(new Set([...$("#dl").querySelectorAll("[data-fold]")].map(b => b.dataset.fold)));
   const oa = $("#dOpenAll"); if (oa) oa.onclick = () => setFold(new Set());
   $("#dl").onclick = e => {
@@ -6296,7 +6315,7 @@ function deckMenu(d) {
   $("#plGo").onclick = async () => {
     const msg = $("#plMsg"), lines = $("#pl").value.split(/\n/); let side = false, cmdrSec = false; const want = [];
     for (const raw of lines) {
-      const l = raw.trim(); if (!l) continue;
+      const l = raw.trim(); if (!l) { cmdrSec = false; continue; }      // a blank line ends the Commander section
       if (/^(sideboard|side|sb:?)$/i.test(l)) { side = true; cmdrSec = false; continue; }
       if (/^commanders?:?$/i.test(l)) { cmdrSec = true; side = false; continue; }
       if (/^(deck|main|mainboard|companion|about)$/i.test(l)) { cmdrSec = false; continue; }

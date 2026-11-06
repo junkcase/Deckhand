@@ -101,6 +101,19 @@ Sideboard
 3 Island`, "mtgo-deck.txt", { kind: "deck", id: "__new" });
   const dk2 = Object.values(r.S.decks)[0];
   ok(dk2 && Object.values(dk2.cards).filter(c => c.side).map(c => c.name).join() === "Island" && Object.values(dk2.cards).filter(c => !c.side).length === 2, "MTGO style: the group after the blank line is the sideboard");
+  // Commander lists without headings: the 1-card group is the commander, first (Moxfield) or last (MTGO); the 99 stay in the main deck
+  const side_ = d => Object.values(d.cards).filter(c => c.side).reduce((a, c) => a + c.qty, 0), main_ = d => Object.values(d.cards).filter(c => !c.side).reduce((a, c) => a + c.qty, 0);
+  const NINETYNINE = "4 Lightning Bolt\n2 Counterspell\n1 Sol Ring\n92 Island";
+  for (const [label, text] of [["commander first", "1 Atraxa, Praetors' Voice\n\n" + NINETYNINE], ["commander last (MTGO)", NINETYNINE + "\n\n1 Atraxa, Praetors' Voice"]]) {
+    r = await run(text, "edh.txt", { kind: "deck", id: "__new" }); const d = Object.values(r.S.decks)[0];
+    ok(d && side_(d) === 0 && main_(d) === 100 && d.format === "commander" && d.cmdr.length === 1 && d.cards[d.cmdr[0]].name.startsWith("Atraxa"), `${label}: Commander list goes in the main deck with Atraxa as commander, nothing in the sideboard (${d ? side_(d) + " side, " + main_(d) + " main" : "no deck"})`);
+  }
+  r = await run("Commander\n1 Atraxa, Praetors' Voice\n\n" + NINETYNINE, "edh2.txt", { kind: "deck", id: "__new" });
+  const d3 = Object.values(r.S.decks)[0];
+  ok(d3 && side_(d3) === 0 && main_(d3) === 100 && d3.cmdr.length === 1, "a Commander heading with no Deck heading: the blank line ends the commander section, the rest is the main deck");
+  r = await run("20 Island\n4 Lightning Bolt\n\n30 Island\n2 Counterspell", "two-halves.txt", { kind: "deck", id: "__new" });
+  const d4 = Object.values(r.S.decks)[0];
+  ok(d4 && side_(d4) === 0 && main_(d4) === 56, "two big groups that aren't deck + sideboard: everything stays in the main deck rather than guessing");
   r = await run(`4 Lightning Bolt\n1 Sol Ring`, "deck.csv", { kind: "deck", id: "__new" });
   ok(/a text list/.test(r.preview) && Object.values(Object.values(r.S.decks)[0].cards).length === 2, "a list saved with the wrong extension is still recognised from its lines");
 })();
