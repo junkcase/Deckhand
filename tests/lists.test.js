@@ -47,7 +47,9 @@ async function run(opts, shot) {
   R.v1 = await view();
   R.coll0 = await p.evaluate(() => Object.keys(S.coll).length);
   R.paidBox = await p.$eval("#lPaid", e => e.value);
+  await p.evaluate(() => { window.__played = []; playSound = k => __played.push(k); });
   await p.click("#lInc"); await p.click("#lAdd"); await p.waitForTimeout(150);           // 5 Kira
+  R.sound = await p.evaluate(() => { const e = Object.values(S.coll).find(x => x.name.startsWith("Kira")); return [__played.slice(), e ? priceSound(priceOf(e, e.finish)) : null]; });
   R.v2 = await view(); R.toast = await p.$eval("#toastRoot", e => e.textContent);
   await p.click("#lSkip"); await p.waitForTimeout(100);                                    // skip Koth
   await p.click("#lPrev"); await p.waitForTimeout(100); R.prev = await view();
@@ -83,6 +85,7 @@ async function run(opts, shot) {
 (async () => {
   for (const [label, opts, shot] of [["desktop", { viewport: { width: 1280, height: 900 } }, null], ["phone", devices["Pixel 7"], "lists_phone.png"]]) {
     const R = await run(opts, shot);
+    ok(R.sound[0].length === 1 && R.sound[0][0] === R.sound[1], `[${label}] adding from a list plays the card's price sound ${JSON.stringify(R.sound)}`);
     ok(JSON.stringify(R.parsed) === JSON.stringify(["4|Kira Nerys, Firebrand|||nonfoil", "11|Koth, the Geomancer|||nonfoil", "9|Pia, Aether Ascetic|||nonfoil", "5|Pyre Rhymer // Molten Tide|||nonfoil", "8|Voracious Bibliophile|||nonfoil", "2|U.S.S. Enterprise-D, Galaxy-Class|||nonfoil", "1|Sol Ring|cmm|410|foil", "1|Lightnng Bolt|||nonfoil", "1|Zzzz Nothing Card|||nonfoil"]),
       `[${label}] reads Mana Pool's copied list: "4x", prices, headings and "39 CARDS" skipped, commas in names kept, *F* = foil ${JSON.stringify(R.parsed)}`);
     ok(R.seg.join("|") === "Search cards|Staples|Lists", `[${label}] Search has a Lists button ${JSON.stringify(R.seg)}`);

@@ -2993,7 +2993,7 @@ function drawList(v, L) {
     $("#lDec").onclick = () => { if (it.st === "added") return; it.qty = Math.max(1, it.qty - 1); redraw(); };
     const pd = $("#lPaid"); if (pd) pd.onchange = () => { const x = parseFloat(pd.value); if (pd.value === "") { delete it.price; } else if (isFinite(x) && x >= 0) { it.price = L.perLine ? x * (it.qty0 || it.qty) : x; } touchList(L); };
     const paidX = x => { const pp = listPaid(L, x); return pp != null ? { paid: pp } : {}; };
-    const ad = $("#lAdd"); if (ad) ad.onclick = () => { const b = $("#lBin").value; addToColl(it.card, it.finish, it.qty, b, true, paidX(it)); it.st = "added"; it.binder = b; it.at = Date.now();
+    const ad = $("#lAdd"); if (ad) ad.onclick = () => { const b = $("#lBin").value; addToColl(it.card, it.finish, it.qty, b, true, paidX(it)); if (!isWish(b)) cardSound(priceSound(priceOf(it.card, it.finish))); it.st = "added"; it.binder = b; it.at = Date.now();
       toast(`Added ${it.qty} ${it.card.name} to ${binderName(b)}${tagWords(it.card, it.finish) ? " · " + tagWords(it.card, it.finish) : ""}`); next(); redraw(); };
     const sk = $("#lSkip"); if (sk) sk.onclick = () => { it.st = "skipped"; next(); redraw(); };
     const un = $("#lUndo"); if (un) un.onclick = () => { addToColl(it.card, it.finish, -it.qty, it.binder || $("#lBin").value, true); it.st = "todo"; delete it.binder; toast("Taken back out"); redraw(); };
@@ -3260,7 +3260,7 @@ function openCard(card, finish, binder, ctx) {
         s = slim(picked); full = picked; fin = s.finishes.includes(fin) ? fin : s.finishes[0] || "nonfoil";      // show the printing just picked: picture, set, prices
         toast(`Changed ${c} to ${picked.set.toUpperCase()} #${picked.collector_number}`); draw(); }, $("#ePrintBox"));
     }
-    const bump = n => { addToColl(s, fin, n, bsel); draw(); toast(`${n > 0 ? "Added" : "Removed"} ${Math.abs(n)} ${s.name} ${n > 0 ? "to" : "from"} ${S.binders[bsel].name}${n > 0 && tagWords(full || s, fin) ? " · " + tagWords(full || s, fin) : ""}`); };
+    const bump = n => { addToColl(s, fin, n, bsel); if (n > 0 && !isWish(bsel)) cardSound(priceSound(priceOf(full || s, fin))); draw(); toast(`${n > 0 ? "Added" : "Removed"} ${Math.abs(n)} ${s.name} ${n > 0 ? "to" : "from"} ${S.binders[bsel].name}${n > 0 && tagWords(full || s, fin) ? " · " + tagWords(full || s, fin) : ""}`); };
     $("#cPlus").onclick = () => bump(addQty); $("#cMinus").onclick = () => bump(-1);
     $("#qInc").onclick = () => { addQty = Math.min(99, addQty + 1); draw(); }; $("#qDec").onclick = () => { addQty = Math.max(1, addQty - 1); draw(); };
     $("#cPickPr").onclick = () => showPrints(s, picked => { s = slim(picked); full = picked; fin = s.finishes.includes(fin) ? fin : s.finishes[0]; draw(); }, $("#cPickBox"));
@@ -3416,6 +3416,8 @@ function renderScan() {
         <option value="exact" ${sc.mode === "exact" ? "selected" : ""}>Bulk: add exact-printing matches, list the rest</option>
         <option value="any" ${sc.mode === "any" ? "selected" : ""}>Bulk: add every confident match, list the rest</option></select></label>
     <label class="small row" style="gap:8px;align-items:center"><input type="checkbox" id="scPhoto" ${S.meta.fullPhoto ? "checked" : ""}> Use full photos (sharper, a little slower)<span class="muted" id="scPhotoNote"></span></label>
+    <div class="box stack" style="gap:6px" id="scSnd"><label class="small row" style="gap:8px;align-items:center"><input type="checkbox" id="scSounds" ${soundsOn() ? "checked" : ""}> Card sounds: a different tune by price, so you can tell what a card's worth without looking</label>
+      <details><summary class="small" style="cursor:pointer">Hear them</summary><div class="row wrap" style="gap:6px;margin-top:6px">${[...SOUND_TIERS.map(t => [t[1], t[2]]), ["check", SOUND_NAMES.check], ["miss", SOUND_NAMES.miss]].map(([k, l]) => `<button class="btn sm" data-snd="${k}">▶ ${esc(l)}</button>`).join("")}</div></details></div>
     <div class="status" id="scStatus" aria-live="polite"></div>
     <div class="ac"><input type="search" id="scType" placeholder="Not recognized? Start typing the name" autocomplete="off" autocapitalize="off" spellcheck="false"><ul id="scAc" hidden></ul></div>
     <div id="scSession"></div>
@@ -3428,7 +3430,7 @@ function renderScan() {
       let best = null; for (const a of [0, ...TILTS]) { const r = straighten(vid, detectAt(vid, a)); if (r && (!best || r.score > best.score)) best = r; }
       if (best) { det.box = best; det.seen = performance.now(); }
     }
-    if (!await captureFrom("video")) await captureFrom("video", null, true);
+    if (!await captureFrom("video") && !await captureFrom("video", null, true)) cardSound("miss");
   };
   const pickPhotos = (camera, layout) => { const f = $("#fileIn"); f.accept = "image/*"; f.multiple = !camera; if (camera) f.setAttribute("capture", "environment"); else f.removeAttribute("capture"); f.value = "";
     f.onchange = () => { f.removeAttribute("capture"); f.multiple = false; const fs = [...f.files]; if (fs.length) scanPhotos(fs, layout()); }; f.click(); };
@@ -3444,6 +3446,8 @@ function renderScan() {
   wireScanRules();
   $("#scMode").onchange = e => { sc.mode = e.target.value; S.meta.scanMode = sc.mode; save(); };
   $("#scPhoto").onchange = e => { S.meta.fullPhoto = e.target.checked; save(); photoNote(); };
+  $("#scSounds").onchange = e => { S.meta.cardSounds = e.target.checked; save(); if (e.target.checked) playSound("cheap"); };
+  $("#scSnd").querySelectorAll("[data-snd]").forEach(b => b.onclick = () => playSound(b.dataset.snd));
   $("#autoBtn").onclick = () => {
     sc.auto = !sc.auto; S.meta.autoCap = sc.auto; save(); unlockBeep();
     const b = $("#autoBtn"); b.setAttribute("aria-pressed", sc.auto); b.textContent = "Auto " + (sc.auto ? "on" : "off");
@@ -3937,7 +3941,7 @@ const GRIDS = [["1x1", "1 card"], ["1x2", "2 cards side by side"], ["2x2", "4 ca
 async function scanPhotos(files, layout) {
   if (sc.gridBusy || !files.length) return;
   const [R, C] = (layout || "1x1").split("x").map(Number), st = t => { const e = $("#gStatus"); if (e) e.textContent = t; scStatus(t); };
-  sc.gridBusy = true; let found = 0, read = 0, check = 0, missing = 0, lowRes = null;
+  sc.gridBusy = true; sndBatch = []; let found = 0, read = 0, check = 0, missing = 0, lowRes = null;
   try {
     await getWorkers().catch(() => {});
     for (let fi = 0; fi < files.length; fi++) {
@@ -3963,7 +3967,7 @@ async function scanPhotos(files, layout) {
           // an empty spot (plain surface) is skipped quietly; something there but no card edges is listed
           const t = cell.getContext("2d", { willReadFrequently: true }); const d = stillCanvas(48, 64), g = d.getContext("2d", { willReadFrequently: true }); g.drawImage(cell, 0, 0, 48, 64);
           const a = g.getImageData(0, 0, 48, 64).data; let m = 0, v = 0; for (let i = 0; i < a.length; i += 4) m += a[i + 1]; m /= a.length / 4; for (let i = 0; i < a.length; i += 4) v += (a[i + 1] - m) ** 2;
-          if (Math.sqrt(v / (a.length / 4)) > 22) { missing++; sc.items.push({ id: uid(), state: "failed", read: `no card edges found (row ${r + 1}, spot ${c + 1})`, thumb: thumbOf(cell), finish: sc.finish, qty: 1, at: Date.now() }); saveSession(); drawSession(); scanHead(); }
+          if (Math.sqrt(v / (a.length / 4)) > 22) { missing++; cardSound("miss"); sc.items.push({ id: uid(), state: "failed", read: `no card edges found (row ${r + 1}, spot ${c + 1})`, thumb: thumbOf(cell), finish: sc.finish, qty: 1, at: Date.now() }); saveSession(); drawSession(); scanHead(); }
           cell.width = cell.height = 0; continue;
         }
         found++;
@@ -3977,15 +3981,15 @@ async function scanPhotos(files, layout) {
         }
         crop.width = crop.height = 0;
         if (ok) { read++; const it = sc.items.at(-1); if (it && (it.state === "pick" || it.conf === "medium")) check++; }
-        else { sc.items.push({ id: uid(), state: "failed", read: sc.lastRead, thumb: sc.lastThumb, finish: sc.finish, qty: 1, at: Date.now() }); saveSession(); drawSession(); scanHead(); }
+        else { sc.items.push({ id: uid(), state: "failed", read: sc.lastRead, thumb: sc.lastThumb, finish: sc.finish, qty: 1, at: Date.now() }); cardSound("miss"); saveSession(); drawSession(); scanHead(); }
       }
       P.width = P.height = 0;                                               // the photo is deleted
     }
     st(`Done: ${found} card${found === 1 ? "" : "s"} found, ${read} read${check ? `, ${check} to check` : ""}${found - read ? `, ${found - read} not read` : ""}${missing ? `, ${missing} spot${missing === 1 ? "" : "s"} where no card edges were found` : ""}. See the list below.` +
       (lowRes ? ` Note: the photo was only ${lowRes.W}×${lowRes.H}, so each card got about ${lowRes.cardPx} pixels, too few to read names reliably. Set your camera app to its highest resolution and use “Choose photos”, or put fewer cards in each photo (about ${Math.max(1, Math.floor(lowRes.n * (lowRes.cardPx / 700) ** 2))} at this size).` : ""));
-    if (read) { beep(); if (navigator.vibrate) navigator.vibrate(40); }
+    if (read && navigator.vibrate) navigator.vibrate(40);
   } finally {
-    sc.gridBusy = false;
+    sc.gridBusy = false; endSoundBatch();
     // the phone's camera app may have stopped the live preview: start it again
     if (tab === "scan" && (!stream || stream.getVideoTracks().every(t => t.readyState === "ended"))) { stream = null; startCamera(); }
   }
@@ -4061,24 +4065,57 @@ async function shootAndRead(s) {
   const ok = await captureFrom("snap", shot.c, ana.fails % 2 === 1);    // every other retry uses stronger settings
   shot.c.width = shot.c.height = 0;                                       // the snapshot is deleted once read
   if (!sc.auto) return;
-  if (ok) { ana.armed = false; ana.sig = s.L; ana.fails = 0; ana.failMsg = ""; ana.seenAt = 0; ana.pre = null; beep(); if (navigator.vibrate) navigator.vibrate(40); }
+  if (ok) { ana.armed = false; ana.sig = s.L; ana.fails = 0; ana.failMsg = ""; ana.seenAt = 0; ana.pre = null; if (navigator.vibrate) navigator.vibrate(40); }
   else {
     ana.fails++; ana.cool = performance.now() + 250;                      // quick automatic retry with a fresh snapshot
     if (ana.fails >= AUTO.tries) {
       ana.armed = false; ana.sig = s.L; ana.fails = 0; ana.failMsg = "Couldn't read that one. It's in the list below. Show the next card";
-      sc.items.push({ id: uid(), state: "failed", read: sc.lastRead, thumb: sc.lastThumb, finish: sc.finish, qty: 1, at: Date.now() }); saveSession(); drawSession(); scanHead();
+      sc.items.push({ id: uid(), state: "failed", read: sc.lastRead, thumb: sc.lastThumb, finish: sc.finish, qty: 1, at: Date.now() }); saveSession(); drawSession(); scanHead(); cardSound("miss");
     }
   }
   setFrameState("", 0);
 }
-function unlockBeep() { try { ana.ac = ana.ac || new (window.AudioContext || window.webkitAudioContext)(); if (ana.ac.state === "suspended") ana.ac.resume(); } catch (e) {} }
-function beep() {
+/* Card sounds (made for Deckhand): a tune by the card's price, and cues for "check this one" and "couldn't find it".
+   Notes are [start s, length s, MIDI note], played with a small piano-like tone so nothing extra is downloaded. */
+const SOUNDS = {
+  cheap: [[0.0,0.499,69],[0.066,0.432,73],[0.132,0.366,76],[0.2,0.299,81],[0.266,0.232,85]],
+  less: [[0.0,0.499,52],[0.066,0.432,68],[0.132,0.366,71],[0.2,0.299,74],[0.5,0.499,57],[0.566,0.432,69],[0.632,0.366,73],[0.7,0.299,76]],
+  moderate: [[0.0,0.499,62],[0.066,0.432,69],[0.132,0.366,74],[0.2,0.299,78],[0.5,0.499,52],[0.566,0.432,68],[0.632,0.366,71],[0.7,0.299,74],[1.0,0.499,57],[1.066,0.432,69],[1.132,0.366,73],[1.2,0.299,76]],
+  pricey: [[0.0,0.499,66],[0.066,0.432,70],[0.132,0.366,73],[0.2,0.299,78],[0.5,0.499,62],[0.566,0.432,69],[0.632,0.366,74],[0.7,0.299,78],[1.0,0.499,52],[1.066,0.432,68],[1.132,0.366,71],[1.2,0.299,74],[1.5,0.499,57],[1.566,0.432,69],[1.632,0.366,73],[1.7,0.299,76]],
+  jackpot: [[0.0,0.118,65],[0.125,0.118,69],[0.25,0.118,72],[0.375,0.118,77],[0.5,0.118,74],[0.625,0.118,70],[0.75,0.118,65],[0.875,0.118,58],[1.0,0.118,63],[1.125,0.118,67],[1.25,0.118,70],[1.375,0.118,75],[1.5,0.118,81],[1.625,0.118,75],[1.75,0.118,72],[1.875,0.118,68],[2.0,0.118,62],[2.125,0.118,65],[2.25,0.118,69],[2.375,0.118,74],[2.5,0.118,79],[2.625,0.118,74],[2.75,0.118,71],[2.875,0.118,67],[3.0,0.949,72]],
+  check: [[0.0,1.999,62],[0.066,1.932,69],[0.131,1.867,71],[0.2,1.799,78]],
+  miss: [[0.0,0.236,58],[0.0,0.236,59],[0.0,0.236,70],[0.0,0.236,71],[0.25,0.236,70],[0.25,0.236,71],[0.25,0.236,82],[0.25,0.236,83]]
+};
+const SOUND_TIERS = [[100, "jackpot", "$100 and up"], [20, "pricey", "$20–100"], [5, "moderate", "$5–20"], [1, "less", "$1–5"], [-Infinity, "cheap", "under $1, or no price"]];
+const SOUND_NAMES = { check: "Check this one (not sure which card)", miss: "Couldn't find it" };
+const priceSound = p => SOUND_TIERS.find(t => (p ?? 0) >= t[0])[1];
+const itemSound = it => !it ? null : it.state === "failed" ? "miss" : it.state === "pick" || it.conf === "medium" ? "check" : priceSound(priceOf(it.card, it.finish));
+// volume per sound, measured so each one peaks at about the same loudness (one-note-at-a-time tunes need more)
+const SOUND_LEVEL = { cheap: 1.2, less: 1.2, moderate: 1.15, pricey: 1.14, jackpot: 2.2, check: 1.12, miss: 0.9 };
+const soundsOn = () => S.meta.cardSounds !== false;
+let sndOut = null, sndBatch = null;
+function playSound(k) {
+  const notes = SOUNDS[k]; if (!notes) return;
   try {
     unlockBeep(); const a = ana.ac; if (!a) return;
-    const o = a.createOscillator(), g = a.createGain(); o.frequency.value = 1046; g.gain.setValueAtTime(0.05, a.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + 0.12);
-    o.connect(g); g.connect(a.destination); o.start(); o.stop(a.currentTime + 0.13);
+    if (sndOut) { const old = sndOut; old.gain.cancelScheduledValues(a.currentTime); old.gain.setTargetAtTime(0, a.currentTime, 0.02); setTimeout(() => { try { old.disconnect(); } catch (e) {} }, 300); }   // a new card cuts the last tune short
+    const out = sndOut = a.createGain(); out.gain.value = SOUND_LEVEL[k] || 1; out.connect(a.destination);
+    const t0 = a.currentTime + 0.03;
+    for (const [st, len, n] of notes) {
+      const f = 440 * 2 ** ((n - 69) / 12), t = t0 + st, end = t + len, g = a.createGain(), o1 = a.createOscillator(), o2 = a.createOscillator(), g2 = a.createGain();
+      o1.type = "triangle"; o1.frequency.value = f; o2.type = "sine"; o2.frequency.value = f * 2; g2.gain.value = 0.25;
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.16, t + 0.008); g.gain.exponentialRampToValueAtTime(0.055, t + Math.min(len, 0.4)); g.gain.setTargetAtTime(0, end, 0.07);
+      o1.connect(g); o2.connect(g2); g2.connect(g); g.connect(out); o1.start(t); o2.start(t); o1.stop(end + 0.5); o2.stop(end + 0.5);
+    }
   } catch (e) {}
 }
+// one card's sound; during a photo of several cards they're collected and only the best one plays at the end
+function cardSound(k) { if (!k || !soundsOn()) return; if (sndBatch) sndBatch.push(k); else playSound(k); }
+const SOUND_RANK = ["jackpot", "pricey", "moderate", "less", "cheap", "check", "miss"];
+function endSoundBatch() { const b = sndBatch || []; sndBatch = null; if (b.length) cardSound(SOUND_RANK.find(k => b.includes(k))); }
+function unlockBeep() { try { ana.ac = ana.ac || new (window.AudioContext || window.webkitAudioContext)(); if (ana.ac.state === "suspended") ana.ac.resume(); } catch (e) {} }
+// phones only allow sound after a tap: any tap unlocks it, so a card read later by the live scanner can still play
+for (const ev of ["pointerdown", "touchend", "keydown"]) document.addEventListener(ev, () => { if (!ana.ac || ana.ac.state !== "running") unlockBeep(); }, true);
 
 /* ---------- text reader: two workers so the name and set code are read at the same time ---------- */
 let workers = null, workersP = null;
@@ -4314,7 +4351,7 @@ async function identify(nameTxt, infoTxt, ocrConf) {
   if (picks.length) {
     cur.conf = "low"; cur.result = "choices: " + picks.slice(0, 3).join(", ");
     sc.items.push({ id: uid(), state: "pick", cands: picks.slice(0, 5), read: name, thumb: sc.lastThumb, finish: sc.finish, qty: 1, at: Date.now() });
-    sc.lastKind = "pick"; saveSession(); drawSession(); scanHead(); scStatus("Listed below: pick the right card when you're done scanning."); return true;
+    sc.lastKind = "pick"; cardSound("check"); saveSession(); drawSession(); scanHead(); scStatus("Listed below: pick the right card when you're done scanning."); return true;
   }
   cur.conf = "none"; cur.result = "not read";
   scStatus(name ? `Read “${name}” but couldn't match it. Hold steady with good light, or type the name below.` : "Couldn't read the name. Fill the frame, add light, and try again.");
@@ -4383,7 +4420,7 @@ function setMatch(card, exact, typed, conf = "high") {
   if (same) { same.qty++; same.at = Date.now(); sc.items = sc.items.filter(i => i !== same).concat(same); it = same; }
   else { it = { id: uid(), state: "review", card: s, exact, conf: typed ? "high" : conf, finish: fin, qty: 1, at: Date.now() }; sc.items.push(it); }
   if (auto) addItem(it, 1);
-  sc.lastKind = (auto ? "Added " : "Listed ") + s.name;
+  sc.lastKind = (auto ? "Added " : "Listed ") + s.name; cardSound(itemSound(it));
   if (navigator.vibrate) navigator.vibrate(30);
   saveSession(); drawSession(); scanHead();
   scStatus(`${auto ? "Added" : "Scanned"} ${s.name} (${s.set.toUpperCase()} #${s.num}). ${sc.auto ? "Show the next card." : "Ready for the next card."}`);
