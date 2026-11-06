@@ -35,8 +35,8 @@ async function run(csvText, fileName, target, pick) {
   if (pick) pick($, w);
   const preview = $("#impBody").textContent.replace(/\s+/g, " ");
   $("#impGo").click();
-  for (let i = 0; i < 60 && !$("#impDone") && !/stopped/.test($("#impProg").textContent); i++) await new Promise(r => setTimeout(r, 150));
-  return { S: w.__t.S(), preview, result: ($("#impRes").textContent || $("#impProg").textContent).replace(/\s+/g, " ").trim() };
+  for (let i = 0; i < 60 && !$("#impDone") && $("#impBody") && !/stopped/.test(($("#impProg") || {}).textContent || ""); i++) await new Promise(r => setTimeout(r, 150));
+  return { S: w.__t.S(), preview, result: (($("#impRes") || {}).textContent || ($("#impProg") || {}).textContent || ($("#toastRoot") || {}).textContent || "").replace(/\s+/g, " ").trim() };
 }
 const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exitCode = 1; };
 (async () => {

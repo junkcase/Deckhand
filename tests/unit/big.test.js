@@ -35,7 +35,7 @@ async function doImport(w, replace) {
   await w.T.csvImport({ name: "ManaBox_Collection.csv", text: async () => csv }, { kind: "coll" });
   if (replace) { const c = $("#impRepl"); c.checked = true; c.dispatchEvent(new w.Event("change")); }
   $("#impGo").click();
-  for (let i = 0; i < 1200 && !$("#impDone"); i++) await new Promise(r => setTimeout(r, 50));
+  for (let i = 0; i < 1200 && !$("#impDone") && $("#impBody"); i++) await new Promise(r => setTimeout(r, 50));
   await new Promise(r => setTimeout(r, 400));
   return $("#impRes").textContent.replace(/\s+/g, " ");
 }
