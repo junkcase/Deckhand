@@ -152,6 +152,10 @@ button.group-h .chev{display:inline-block;width:1em;transition:transform .15s} b
 .grid .pr{position:absolute;right:4px;bottom:4px;background:rgba(10,15,20,.78);color:#fff;font:600 11px var(--f-display);padding:1px 5px;border-radius:4px}
 .grid .tile{display:flex;flex-direction:column;gap:3px;min-width:0}
 .grid .cap{font-size:11px;color:var(--muted);text-align:center;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.grid .tile{position:relative}.grid .tile.owned > button[data-i]{box-shadow:0 0 0 3px var(--ok)}.grid .cap .sym{width:12px;height:12px;vertical-align:-2px}
+.grid .ownq{position:absolute;left:4px;bottom:23px;background:var(--ok);color:#fff;font:700 11px var(--f-display);padding:1px 6px;border-radius:9px;pointer-events:none}
+.grid .qadd{position:absolute;right:4px;top:4px;aspect-ratio:auto;width:32px;height:32px;border-radius:50%;background:rgba(10,15,20,.78);color:#fff;font:700 20px/1 var(--f-display);display:grid;place-items:center;box-shadow:0 1px 4px rgba(0,0,0,.4)}
+.grid .tile.owned .qadd{background:var(--ok)}.grid .qadd:active{transform:scale(.92)}
 .fgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .fgrid label{display:flex;flex-direction:column;gap:4px;min-width:0}
 .fgrid select{width:100%}
@@ -3319,18 +3323,35 @@ async function runSearch(q) {
   } catch (e) { if (sv.ran !== full) return; sv.err = e.status === 404 ? (fq ? "No cards match that search and these filters. Try loosening a filter." : `No cards match “${q}”.`) : e.message; }
   sv.busy = false; if (tab === "search") { setHead("Search", sv.total ? sv.total.toLocaleString() + " results" : ""); drawResults(); }
 }
+// what you own of each printing (wishlists aside): the copy to repeat on quick add is the most recently added one
+function ownedPrintings() {
+  const m = {};
+  for (const e of Object.values(S.coll)) { if (isWish(e.binder)) continue; const o = m[e.id] = m[e.id] || { qty: 0, last: null }; o.qty += e.qty; if (!o.last || (e.added || 0) > (o.last.added || 0)) o.last = e; }
+  return m;
+}
+// one tap: another copy just like the one you own (same finish, binder, condition), or one copy in your default binder
+function quickAdd(c) {
+  const own = ownedPrintings()[c.id], e = own && own.last, card = isSlim(c) ? c : slim(c);
+  const fin = e ? e.finish : (card.finishes || ["nonfoil"])[0], bin = e ? e.binder : defaultBinder(), cond = e && e.cond;
+  addToColl(card, fin, 1, bin, false, { cond }); cardSound(priceSound(priceOf(card, fin)));
+  toast(`Added 1 ${card.name} (${card.set.toUpperCase()} #${card.num}${fin !== "nonfoil" ? ", " + fin : ""}) to ${binderName(bin)}. You have ${ownedPrintings()[card.id].qty}.`, { label: "Undo", fn: () => { addToColl(card, fin, -1, bin, false, { cond }); drawResults(); } });
+  drawResults();
+}
 function drawResults() {
   const el = $("#sres"); if (!el) return;
   if (sv.busy && !sv.results.length) { el.innerHTML = `<p class="muted">Searching…</p>`; return; }
   if (sv.err) { el.innerHTML = `<p class="muted">${esc(sv.err)}</p>`; return; }
   if (!sv.results.length) { el.innerHTML = `<p class="small muted">Start typing and pick a name to see every printing, newest first. Or open Filters to browse by color, type, rarity, format, mana value, price or set. Scryfall syntax like <b>t:dragon o:flying</b> works too.</p>`; return; }
   const picked = sv.keepQ && sv.q === sv.keepQ ? sv.keepQ.replace(/^!"|"$/g, "") : "";
-  el.innerHTML = `${picked ? `<p class="small muted" style="margin:0 0 6px">Printings of <b>${esc(picked)}</b></p>` : ""}<div class="grid">${sv.results.map((c, i) => `<div class="tile"><button data-i="${i}" aria-label="${esc(c.name)}, ${esc(c.set_name)}">
+  const mine = ownedPrintings();
+  el.innerHTML = `${picked ? `<p class="small muted" style="margin:0 0 6px">Printings of <b>${esc(picked)}</b></p>` : ""}<div class="grid">${sv.results.map((c, i) => { const own = mine[c.id]; return `<div class="tile ${own ? "owned" : ""}"><button data-i="${i}" aria-label="${esc(c.name)}, ${esc(c.set_name)} #${esc(c.collector_number)}${own ? `, you own ${own.qty}` : ""}">
       ${imgOf(c) ? `<img loading="lazy" src="${esc(imgOf(c, "normal"))}" alt="">` : `<span class="fallback">${esc(c.name)}</span>`}
       ${priceOf(c) != null ? `<span class="pr num">${money(priceOf(c))}</span>` : ""}${(t => t ? `<span class="tg tg-${t.k}" title="${esc(t.tip)}">${esc(t.label)}</span>` : "")(cardTags(c)[0])}</button>
-      <span class="cap num">${esc(c.set.toUpperCase())} · ${esc((c.released_at || "").slice(0, 4))}</span></div>`).join("")}</div>
+      ${own ? `<span class="ownq num">×${own.qty}</span>` : ""}
+      <button class="qadd" data-qa="${i}" aria-label="Quick add one ${esc(c.name)} (${esc(c.set.toUpperCase())} #${esc(c.collector_number)})" title="${own ? "Add another copy like yours" : "Add one to your collection"}">+</button>
+      <span class="cap num">${setIcon(c.set, c.rarity)} ${esc(c.set.toUpperCase())} #${esc(c.collector_number)}</span></div>`; }).join("")}</div>
     ${sv.next ? `<p><button class="btn" id="smore" ${sv.busy ? "disabled" : ""}>${sv.busy ? "Loading…" : "Load more"}</button></p>` : ""}`;
-  el.querySelector(".grid").onclick = e => { const b = e.target.closest("button"); if (b) { if (sv.keepQ && sv.q === sv.keepQ) sv.refocus = true; const rs = [...el.querySelectorAll(".grid [data-i]")]; openFromList(rs, b, x => sv.results[+x.dataset.i], c => openCard(c)); } };
+  el.querySelector(".grid").onclick = e => { const qa = e.target.closest("[data-qa]"); if (qa) { quickAdd(sv.results[+qa.dataset.qa]); return; } const b = e.target.closest("button"); if (b) { if (sv.keepQ && sv.q === sv.keepQ) sv.refocus = true; const rs = [...el.querySelectorAll(".grid [data-i]")]; openFromList(rs, b, x => sv.results[+x.dataset.i], c => openCard(c)); } };
   const m = $("#smore"); if (m) m.onclick = async () => {
     sv.busy = true; drawResults();
     try { const r = await sf(sv.next); sv.results.push(...(r.data || [])); sv.next = r.has_more ? r.next_page : null; } catch (e) { toast(e.message); }
