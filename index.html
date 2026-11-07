@@ -248,6 +248,8 @@ details>summary{cursor:pointer}.seg.wide button{flex:1 1 auto;min-width:0;white-
 .bcard .bq{position:absolute;right:4px;bottom:4px;background:var(--accent);color:var(--accent-ink);font-weight:700;font-size:.75rem;padding:1px 6px;border-radius:9px}
 .bcard .bmiss{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.7);color:#fff;font-size:.7rem;padding:2px 7px;border-radius:9px;letter-spacing:.03em}
 .bcap{display:flex;justify-content:space-between;gap:4px}
+.own[data-ok] > .kv > .grow{cursor:pointer;border-radius:8px}.own[data-ok] > .kv > .grow:hover{background:var(--sunk)}.own.picked > .kv > .grow{box-shadow:inset 3px 0 0 var(--accent);padding-left:8px}
+.stepper.sm button{width:30px;height:30px}.stepper.sm .num{min-width:22px}
 .cbar{position:sticky;bottom:calc(-20px - env(safe-area-inset-bottom,0px));z-index:5;margin:12px -16px calc(-20px - env(safe-area-inset-bottom,0px));padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px));background:var(--surface);border-top:1px solid var(--line);box-shadow:0 -6px 16px rgba(0,0,0,.08)}
 .cbar .cbar-row{margin:0;flex-wrap:nowrap}.cbar #cPlus{min-height:40px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 details.menu{position:relative}details.menu>summary{list-style:none;cursor:pointer}details.menu>summary::-webkit-details-marker{display:none}
@@ -3356,7 +3358,7 @@ function backOf(s, full) {
 // a deck card switched to another printing: same quantity, sideboard and commander status
 function setDeckPrinting(d, k, picked) {
   const old = d.cards[k]; if (!old) return k;
-  const sl = slim(picked), nk = sl.id + "|" + (old.side ? 1 : 0); if (nk === k) return k;
+  const sl = picked.object === "card" ? slim(picked) : picked, nk = sl.id + "|" + (old.side ? 1 : 0); if (nk === k) return k;      // a Scryfall card, or one already stored (a copy you own)
   const c = { qty: old.qty, side: old.side }; DECK_FIELDS.forEach(f => c[f] = sl[f]);
   delete d.cards[k];
   if (d.cards[nk]) d.cards[nk].qty += c.qty; else d.cards[nk] = c;
@@ -3435,10 +3437,11 @@ function openCard(card, finish, binder, ctx) {
         ${(() => { const own = ownedByName(s.name), uses = deckUse()[s.name] || [], inDecks = uses.reduce((a, u) => a + u.qty, 0);
           return `<div class="row" style="justify-content:space-between"><span class="label">In your collection</span><span class="num">${own} owned${inDecks ? ` · ${inDecks} in decks · ${Math.max(0, own - inDecks)} free` : ""}</span></div>
           ${uses.length ? `<div class="chips">${uses.map(u => `<button class="chip deck" data-deck="${esc(u.id)}">In ${esc(u.name)}${u.qty > 1 ? " ×" + u.qty : ""} ›</button>`).join("")}</div>` : ""}`; })()}
-        ${owned.map(([k, e], i) => `<div class="own ${editing === k ? "open" : ""}">
+        ${owned.map(([k, e], i) => `<div class="own ${editing === k ? "open" : ""} ${e.id === s.id && e.finish === fin && e.binder === bsel ? "picked" : ""}" data-ok="${esc(k)}">
           <div class="kv"><span class="grow">${e.qty}× ${setIcon(e.set, e.rarity)} ${esc(e.set.toUpperCase())} #${esc(e.num)}${e.finish !== "nonfoil" ? ` <span class="chip foil">${esc(e.finish)}</span>` : ""} ${e.cond && e.cond !== "NM" ? `<span class="chip warn" title="${esc((CONDS.find(c => c[0] === e.cond) || [])[1] || "")}">${esc(e.cond)}</span>` : ""}${e.lang && e.lang !== "en" ? `<span class="chip">${esc(e.lang.toUpperCase())}</span>` : ""} <span class="chip">${esc(binderName(e.binder))}</span>
             ${e.paid != null ? (() => { const now = priceOf(e, e.finish), d = now != null ? now - e.paid : null; return `<span class="small" style="display:block">Paid ${money(e.paid)} each${d != null ? ` · now ${money(now)} <span class="${d >= 0 ? "up" : "down"}">${signed(d)}</span>` : ""}</span>`; })() : ""}
             ${e.scanned ? `<span class="small muted" style="display:block">Last scanned ${esc(scanWhen(e.scanned))}${e.firstScanned && !sameDay(new Date(e.firstScanned), new Date(e.scanned)) ? ` · first ${esc(dayLabel(e.firstScanned))}` : ""}${e.scans > 1 ? ` · ${e.scans} scans` : ""}</span>` : e.added ? `<span class="small muted" style="display:block">Added ${esc(scanWhen(e.added))}</span>` : ""}</span>
+            <span class="stepper sm"><button data-odec="${esc(k)}" aria-label="Remove one ${esc(e.set.toUpperCase())} #${esc(e.num)} from ${esc(binderName(e.binder))}">−</button><span class="num">${e.qty}</span><button data-oinc="${esc(k)}" aria-label="Add one more ${esc(e.set.toUpperCase())} #${esc(e.num)} to ${esc(binderName(e.binder))}">+</button></span>
             <button class="btn sm" data-edit="${esc(k)}">${editing === k ? "Done" : "Edit"}</button></div>
           ${editing === k ? `<div class="editbox">
             <div class="row wrap"><label class="small row" style="gap:6px">Copies <select id="eN">${Array.from({ length: e.qty }, (_, j) => `<option value="${e.qty - j}">${e.qty - j}${e.qty - j === e.qty ? " (all)" : ""}</option>`).join("")}</select></label></div>
@@ -3503,6 +3506,20 @@ function openCard(card, finish, binder, ctx) {
     $("#bSel").onchange = e => { bsel = e.target.value; S.meta.binder = bsel; save(); draw(); };
     const body = $("#sheetBody");
     body.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => { editing = editing === b.dataset.edit ? null : b.dataset.edit; draw(); });
+    // a copy you own: tap it to show that printing here (and, from a deck, use its art in the deck); − / + change how many of that copy you have
+    body.querySelectorAll(".own[data-ok] > .kv > .grow").forEach(g => {
+      const k = g.closest(".own").dataset.ok; g.setAttribute("role", "button"); g.tabIndex = 0; g.title = "Show this printing";
+      const pick = () => { const e = S.coll[k]; if (!e) return;
+        const { qty, binder, finish, cond, paid, added, newAt, scanned, firstScanned, scans, ...card } = e;        // the card itself, without this copy's own details
+        s = card; full = null; fin = e.finish; bsel = e.binder; useInDeck(card); draw(); };
+      g.onclick = pick; g.onkeydown = ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); pick(); } };
+    });
+    const ownStep = (k, n) => { const e = S.coll[k]; if (!e) return; const last = n < 0 && e.qty <= 1, snap = Object.assign({}, e);
+      // the same copy: its condition is part of which copy it is
+      addToColl(e, e.finish, n, e.binder, false, { cond: e.cond }); if (n > 0 && !isWish(e.binder)) cardSound(priceSound(priceOf(e, e.finish))); draw();
+      toast(`${n > 0 ? "Added" : "Removed"} 1 ${e.name} (${e.set.toUpperCase()} #${e.num}) ${n > 0 ? "to" : "from"} ${binderName(e.binder)}`, last ? { label: "Undo", fn: () => { addToColl(snap, snap.finish, 1, snap.binder, false, { cond: snap.cond, paid: snap.paid }); draw(); } } : undefined); };
+    body.querySelectorAll("[data-oinc]").forEach(b => b.onclick = ev => { ev.stopPropagation(); ownStep(b.dataset.oinc, 1); });
+    body.querySelectorAll("[data-odec]").forEach(b => b.onclick = ev => { ev.stopPropagation(); ownStep(b.dataset.odec, -1); });
     body.querySelectorAll("[data-deck]").forEach(b => b.onclick = () => { const id = b.dataset.deck; sheetOnClose = null; closeSheet(); go("decks", id); });
     if (editing && S.coll[editing]) {
       const k = editing, e = S.coll[k], n = () => +$("#eN").value;
@@ -3515,12 +3532,15 @@ function openCard(card, finish, binder, ctx) {
         s = slim(picked); full = picked; fin = s.finishes.includes(fin) ? fin : s.finishes[0] || "nonfoil";      // show the printing just picked: picture, set, prices
         toast(`Changed ${c} to ${picked.set.toUpperCase()} #${picked.collector_number}`); draw(); }, $("#ePrintBox"));
     }
-    const bump = n => { addToColl(s, fin, n, bsel); if (n > 0 && !isWish(bsel)) cardSound(priceSound(priceOf(full || s, fin))); draw(); toast(`${n > 0 ? "Added" : "Removed"} ${Math.abs(n)} ${s.name} ${n > 0 ? "to" : "from"} ${S.binders[bsel].name}${n > 0 && tagWords(full || s, fin) ? " · " + tagWords(full || s, fin) : ""}`); };
+    // from a deck: the printing you choose, or add to your collection, becomes the one the deck uses (its art in the deck list)
+    const useInDeck = (card, quiet) => { if (!(ctx && ctx.deck && ctx.deck.cards[ctx.key]) || ctx.deck.cards[ctx.key].id === card.id) return; ctx.key = setDeckPrinting(ctx.deck, ctx.key, card); if (!quiet) toast(`${ctx.deck.name} now uses ${(card.set || "").toUpperCase()} #${card.collector_number || card.num}`); };
+    const bump = n => { if (n > 0) useInDeck(full && full.id === s.id ? full : s, true); addToColl(s, fin, n, bsel); if (n > 0 && !isWish(bsel)) cardSound(priceSound(priceOf(full || s, fin))); draw(); toast(`${n > 0 ? "Added" : "Removed"} ${Math.abs(n)} ${s.name} ${n > 0 ? "to" : "from"} ${S.binders[bsel].name}${n > 0 && tagWords(full || s, fin) ? " · " + tagWords(full || s, fin) : ""}`); };
     // the add controls live in a bar fixed to the bottom of the card screen, in reach while scrolling or swiping
-    const ar = $("#cAddRow"); if (ar && myBody) { const bar = document.createElement("div"); bar.className = "cbar"; bar.id = "cBar"; bar.appendChild(ar); myBody.appendChild(bar); }
+    // (opened from a deck, they stay in place, under the printing you're choosing)
+    const ar = $("#cAddRow"); if (ar && myBody && !(ctx && ctx.deck)) { const bar = document.createElement("div"); bar.className = "cbar"; bar.id = "cBar"; bar.appendChild(ar); myBody.appendChild(bar); }
     $("#cPlus").onclick = () => bump(addQty); $("#cMinus").onclick = () => bump(-1);
     $("#qInc").onclick = () => { addQty = Math.min(99, addQty + 1); draw(); }; $("#qDec").onclick = () => { addQty = Math.max(1, addQty - 1); draw(); };
-    $("#cPickPr").onclick = () => showPrints(s, picked => { s = slim(picked); full = picked; fin = s.finishes.includes(fin) ? fin : s.finishes[0]; draw(); }, $("#cPickBox"));
+    $("#cPickPr").onclick = () => showPrints(s, picked => { s = slim(picked); full = picked; fin = s.finishes.includes(fin) ? fin : s.finishes[0]; useInDeck(picked); draw(); }, $("#cPickBox"));
     wireRuleForm();
     $("#aSave").onclick = () => {
       const x = readRule(); if (x.err) return toast(x.err);
