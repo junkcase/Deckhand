@@ -30,13 +30,13 @@ const newest = n => ALL.filter(c => c.name === n)[0];
   await p.click("#cPlus"); await p.waitForTimeout(300);
   ok(await coll() === "1× CMM #410 | 3× LTC #284", "Add puts 3 of that printing in the collection, the CMM copy untouched: " + await coll());
   await p.click("#sheetClose"); await p.waitForTimeout(200);
-  // in a deck: add another printing of the same card
-  await p.evaluate(() => { go("decks", "d"); }); await p.waitForTimeout(200);
+  // in a deck with several copies: add another printing alongside (with one copy, choosing a printing switches the deck's: see deckcard.test.js)
+  await p.evaluate(() => { Object.values(S.decks.d.cards)[0].qty = 2; go("decks", "d"); }); await p.waitForTimeout(200);
   await p.evaluate(() => document.querySelector("#dl [data-open]").click()); await p.waitForTimeout(400);
   await p.click("#cPickPr"); await p.waitForTimeout(500);
   await p.evaluate(() => [...document.querySelectorAll("#cPickBox .prints button[data-i]")].find(t => /LTC/i.test(t.textContent)).click()); await p.waitForTimeout(300);
   ok(/Add LTC #284 to this deck/.test(await sheet()), "from a deck: choose a printing, then “Add LTC #284 to this deck”");
   await p.click("#cDeckAddPr"); await p.waitForTimeout(300);
-  ok(await p.evaluate(() => Object.values(S.decks.d.cards).map(c => c.qty + "× " + c.set.toUpperCase()).sort().join(", ")) === "1× CMM, 1× LTC", "the deck now has both printings");
+  ok(await p.evaluate(() => Object.values(S.decks.d.cards).map(c => c.qty + "× " + c.set.toUpperCase()).sort().join(", ")) === "1× LTC, 2× CMM", "the deck now has both printings");
   await b.close(); srv.kill();
 })();

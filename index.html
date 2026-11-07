@@ -3533,7 +3533,8 @@ function openCard(card, finish, binder, ctx) {
         toast(`Changed ${c} to ${picked.set.toUpperCase()} #${picked.collector_number}`); draw(); }, $("#ePrintBox"));
     }
     // from a deck: the printing you choose, or add to your collection, becomes the one the deck uses (its art in the deck list)
-    const useInDeck = (card, quiet) => { if (!(ctx && ctx.deck && ctx.deck.cards[ctx.key]) || ctx.deck.cards[ctx.key].id === card.id) return; ctx.key = setDeckPrinting(ctx.deck, ctx.key, card); if (!quiet) toast(`${ctx.deck.name} now uses ${(card.set || "").toUpperCase()} #${card.collector_number || card.num}`); };
+    // (one copy in the deck only: with several, e.g. basic lands in different arts, the deck box below offers "Add … to this deck" or "Change printing")
+    const useInDeck = (card, quiet) => { if (!(ctx && ctx.deck && ctx.deck.cards[ctx.key]) || ctx.deck.cards[ctx.key].id === card.id || ctx.deck.cards[ctx.key].qty > 1) return; ctx.key = setDeckPrinting(ctx.deck, ctx.key, card); if (!quiet) toast(`${ctx.deck.name} now uses ${(card.set || "").toUpperCase()} #${card.collector_number || card.num}`); };
     const bump = n => { if (n > 0) useInDeck(full && full.id === s.id ? full : s, true); addToColl(s, fin, n, bsel); if (n > 0 && !isWish(bsel)) cardSound(priceSound(priceOf(full || s, fin))); draw(); toast(`${n > 0 ? "Added" : "Removed"} ${Math.abs(n)} ${s.name} ${n > 0 ? "to" : "from"} ${S.binders[bsel].name}${n > 0 && tagWords(full || s, fin) ? " · " + tagWords(full || s, fin) : ""}`); };
     // the add controls live in a bar fixed to the bottom of the card screen, in reach while scrolling or swiping
     // (opened from a deck, they stay in place, under the printing you're choosing)
