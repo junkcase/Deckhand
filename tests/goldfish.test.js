@@ -25,7 +25,7 @@ async function run(opts, shot) {
       speed: (() => { const t0 = performance.now(); goldfish(base, { games: 2000, seed: 1 }); return performance.now() - t0; })() };
   });
   // the UI
-  await p.evaluate(() => go("decks", "a")); await p.waitForTimeout(300);
+  await p.evaluate(() => { S.meta.deckStatsOpen = true; go("decks", "a"); });      // "Mana curve & test draws" open await p.waitForTimeout(300);
   await p.selectOption('[data-gk="0"]', "Key Card"); await p.click("#gfRun"); await p.waitForSelector("#gf .summary", { timeout: 10000 });
   R.ui = await p.$eval("#gf", e => e.textContent.replace(/\s+/g, " "));
   await p.click("#gfLog summary"); await p.click("#gfOne"); await p.waitForTimeout(200); R.uiLog = await p.$$eval("#gfLog li", a => a.map(x => x.textContent));

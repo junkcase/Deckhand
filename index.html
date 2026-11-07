@@ -5672,22 +5672,26 @@ function renderDeck_(d) {
     <div id="dPane" class="stack" ${dt === "cards" ? "hidden" : ""}></div>`; })()}
     <div id="dCards" class="stack" ${(deckTab[d.id] || "cards") !== "cards" ? "hidden" : ""}>
     ${cmd && !d.cmdr.length ? `<div class="box stack" id="dPick" style="gap:8px"></div>` : cmd && d.cmdr.length === 1 && (d.cards[d.cmdr[0]] || {}).partner && !d.noPartner ? `<div class="box stack" id="dPick2" style="gap:8px"></div>` : ""}
-    <div class="box ${ck.checked && !ck.pending && ck.issues.length ? "bad" : ""}">
-      <div class="row"><span class="label grow">Format</span><select id="dFmt" aria-label="Format">${Object.entries(FORMATS).map(([k, v]) => `<option value="${k}" ${d.format === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+    <div class="ac"><input type="search" id="dAdd" placeholder="Add a card: name, 4 Forest, or Sol Ring CMM 410" autocomplete="off" autocapitalize="off" spellcheck="false"><ul id="dAc" hidden></ul></div>
+    <div class="box ${ck.checked && !ck.pending && ck.issues.length && S.meta.deckIssuesOpen ? "bad" : ""}" id="dFmtBox">
+      <div class="row wrap" style="gap:8px;align-items:center"><span class="label">Format</span><select id="dFmt" aria-label="Format">${Object.entries(FORMATS).map(([k, v]) => `<option value="${k}" ${d.format === k ? "selected" : ""}>${v}</option>`).join("")}</select>
+        ${!ck.checked ? "" : ck.pending ? `<span class="small muted">Checking…</span>`
+          : ck.issues.length ? `<button class="chip warn" id="dIssues" aria-expanded="${!!S.meta.deckIssuesOpen}" aria-controls="dIssueList">${ck.issues.length} problem${ck.issues.length > 1 ? "s" : ""} ${S.meta.deckIssuesOpen ? "▴" : "▾"}</button>`
+          : `<span class="chip ok">Legal ✓</span>`}</div>
       ${cmd ? `<div class="row wrap">${cmdSel(0)}${d.cmdr[0] ? cmdSel(1) : ""}</div>${cmdCards.length ? `<div class="kv small"><span class="muted">Color identity</span><span>${ciPips(cmdrCI(d))}</span></div>` : ""}
         ${!choices.length ? `<span class="small muted">Add a legendary creature to the deck, then choose it here.</span>` : ""}` : ""}
-      ${!ck.checked ? `<span class="small muted">Pick a format to check card legality, copy limits and deck size.</span>`
-        : ck.pending ? `<span class="small muted">Checking card legality…</span>`
-        : ck.issues.length ? `<ul class="issues">${ck.issues.map(i => `<li>${esc(i)}</li>`).join("")}</ul>` : `<span class="chip ok" style="align-self:flex-start">Legal in ${FORMATS[d.format]}</span>`}
+      ${!ck.checked ? `<span class="small muted">Pick a format to check card legality, copy limits and deck size.</span>` : ""}
+      ${ck.checked && !ck.pending && ck.issues.length ? `<ul class="issues" id="dIssueList" ${S.meta.deckIssuesOpen ? "" : "hidden"}>${ck.issues.map(i => `<li>${esc(i)}</li>`).join("")}</ul>` : ""}
     </div>
-    <div class="ac"><input type="search" id="dAdd" placeholder="Add a card: name, 4 Forest, or Sol Ring CMM 410" autocomplete="off" autocapitalize="off" spellcheck="false"><ul id="dAc" hidden></ul></div>
-    ${st.mainN ? `<div class="box"><div class="row" style="justify-content:space-between"><span class="label">Mana curve (spells)</span>
+    ${st.mainN ? `<details class="box" id="dStats" ${S.meta.deckStatsOpen ? "open" : ""}><summary class="row" style="justify-content:space-between;cursor:pointer"><span class="label">Mana curve &amp; test draws</span>
+        <span class="small muted num">${(() => { const n = st.curve.reduce((a, v) => a + v, 0); return n ? `${n} spell${n === 1 ? "" : "s"} · average ${(st.curve.reduce((a, v, i) => a + v * i, 0) / n).toFixed(1)}` : ""; })()}</span></summary>
+      <div style="margin-top:8px"><div class="row" style="justify-content:space-between"><span class="label">Mana curve (spells)</span>
         <span>${"WUBRG".split("").filter(c => st.colors[c]).map(c => `<i class="pip p${c}">${c}</i><span class="small num" style="margin-right:6px">${st.colors[c]}</span>`).join("")}</span></div>
       <div class="curve">${st.curve.map(v => `<div class="bar" style="height:${v / max * 100}%"><span class="num">${v || ""}</span></div>`).join("")}</div>
       <div class="curve-x"><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7+</span></div>
       ${curveVerdict(d, st)}</div>
-      ${playtestHTML(d)}${goldfishHTML(d)}` : ""}
-    ${Object.keys(d.cards).length > 1 ? `<div class="row" style="justify-content:flex-end;gap:12px;margin-bottom:-4px;align-items:center"><label class="small muted row" style="gap:6px;align-items:center;margin-right:auto">Sort by <select id="dSort" aria-label="Sort cards by" style="width:auto;min-height:0;padding:4px 8px">${Object.entries(DECK_SORTS).map(([k, v]) => `<option value="${k}"${deckSortKey() === k ? " selected" : ""}>${v[0]}</option>`).join("")}</select></label><button class="linkbtn small" id="dFoldAll">Collapse all</button><button class="linkbtn small" id="dOpenAll">Expand all</button></div>` : ""}
+      ${playtestHTML(d)}${goldfishHTML(d)}</details>` : ""}
+    ${Object.keys(d.cards).length > 1 ? `<div class="row" style="justify-content:flex-end;gap:12px;margin-bottom:-4px;align-items:center"><label class="small muted row" style="gap:6px;align-items:center;margin-right:auto;white-space:nowrap">Sort <select id="dSort" aria-label="Sort cards by" style="width:auto;min-height:0;padding:4px 8px">${Object.entries(DECK_SORTS).map(([k, v]) => `<option value="${k}"${deckSortKey() === k ? " selected" : ""}>${v[0]}</option>`).join("")}</select></label><button class="linkbtn small" id="dFoldAll" style="white-space:nowrap">Collapse all</button><button class="linkbtn small" id="dOpenAll" style="white-space:nowrap">Expand all</button></div>` : ""}
     <div class="list" id="dl">${cmdCards.length ? foldHead("Commander", "Commander", cmdCards.length) + (folded.has("Commander") ? "" : cmdCards.map(row).join("")) : ""}
       ${group(mainRest, "") || (cmdCards.length ? "" : `<div class="empty" style="border:0"><p>No cards yet. Type above, or use Deck options → Paste a deck list.</p></div>`)}${st.side.length ? `<div class="row" style="justify-content:flex-end;margin:6px 0"><button class="btn sm" id="dSideMain">Move all ${st.side.reduce((a, c) => a + c.qty, 0)} sideboard cards to the main deck</button></div>` : ""}${group(st.side, "Side")}</div></div></div>`;
   $("#back").onclick = () => go("decks");
@@ -5739,6 +5743,8 @@ function renderDeck_(d) {
     for (const [k, c] of Object.entries(d.cards)) if (c.side) { const m = k.replace(/\|1$/, "|0"); if (d.cards[m]) d.cards[m].qty += c.qty; else d.cards[m] = Object.assign({}, c, { side: false }); n += c.qty; delete d.cards[k]; }
     d.updated = Date.now(); staleIndex(); save(); renderDeck(d); toast(`Moved ${n} card${n === 1 ? "" : "s"} to the main deck`);
   };
+  const di = $("#dIssues"); if (di) di.onclick = () => { S.meta.deckIssuesOpen = !S.meta.deckIssuesOpen; save(); renderDeck(d); };
+  const dst = $("#dStats"); if (dst) dst.ontoggle = () => { if (!!S.meta.deckStatsOpen !== dst.open) { S.meta.deckStatsOpen = dst.open; save(); } };
   const ds = $("#dSort"); if (ds) ds.onchange = () => { S.meta.deckSort = ds.value; save(); renderDeck(d); };
   const fa = $("#dFoldAll"); if (fa) fa.onclick = () => setFold(new Set([...$("#dl").querySelectorAll("[data-fold]")].map(b => b.dataset.fold)));
   const oa = $("#dOpenAll"); if (oa) oa.onclick = () => setFold(new Set());

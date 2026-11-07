@@ -22,7 +22,7 @@ async function run(opts, shot) {
     addToDeck(d, mk("sb", "Side Card", "Instant"), 3, true);
     const e = S.decks.m = { id: "m", name: "Modern", format: "modern", cmdr: [], cards: {}, created: 1, updated: 1 };
     addToDeck(e, mk("mnt", "Mountain", "Basic Land — Mountain"), 20, false); addToDeck(e, mk("bolt", "Lightning Bolt", "Instant"), 40, false);
-    save(); go("decks", "c");
+    S.meta.deckStatsOpen = true; save(); go("decks", "c");      // "Mana curve & test draws" open
   });
   await p.waitForTimeout(300);
   const R = {}, st = () => p.evaluate(() => ({ hand: hand.cards.length, lib: hand.lib.length, turn: hand.turn, bottom: hand.bottom, cmdInLib: hand.lib.some(c => /Kiora/.test(c.name)) || hand.cards.some(c => /Kiora/.test(c.name)), side: hand.lib.concat(hand.cards).some(c => c.side) }));
