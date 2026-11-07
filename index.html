@@ -248,6 +248,8 @@ details>summary{cursor:pointer}.seg.wide button{flex:1 1 auto;min-width:0;white-
 .bcard .bq{position:absolute;right:4px;bottom:4px;background:var(--accent);color:var(--accent-ink);font-weight:700;font-size:.75rem;padding:1px 6px;border-radius:9px}
 .bcard .bmiss{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.7);color:#fff;font-size:.7rem;padding:2px 7px;border-radius:9px;letter-spacing:.03em}
 .bcap{display:flex;justify-content:space-between;gap:4px}
+.cbar{position:sticky;bottom:calc(-20px - env(safe-area-inset-bottom,0px));z-index:5;margin:12px -16px calc(-20px - env(safe-area-inset-bottom,0px));padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px));background:var(--surface);border-top:1px solid var(--line);box-shadow:0 -6px 16px rgba(0,0,0,.08)}
+.cbar .cbar-row{margin:0;flex-wrap:nowrap}.cbar #cPlus{min-height:40px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 details.menu{position:relative}details.menu>summary{list-style:none;cursor:pointer}details.menu>summary::-webkit-details-marker{display:none}
 .menu-list{position:absolute;left:0;top:calc(100% + 4px);z-index:30;min-width:200px;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:4px}
 .mi{display:block;width:100%;text-align:left;padding:11px 14px;border:0;background:none;color:inherit;font:inherit;border-radius:8px;cursor:pointer}.mi:hover,.mi:focus-visible{background:var(--sunk)}.mi:disabled{opacity:.55}
@@ -3424,7 +3426,7 @@ function openCard(card, finish, binder, ctx) {
         <div class="row wrap">
           ${s.finishes.length > 1 ? `<span class="seg" id="finSeg">${s.finishes.map(f => `<button data-f="${esc(f)}" aria-pressed="${f === fin}">${f === "nonfoil" ? "Normal" : esc(f[0].toUpperCase() + f.slice(1))}</button>`).join("")}</span>` : `<span class="chip">${s.finishes[0] === "nonfoil" ? "Normal only" : s.finishes[0] + " only"}</span>`}
           <select id="bSel" aria-label="Binder">${binderOptions(bsel)}</select></div>
-        <div class="row wrap"><span class="grow"></span>
+        <div class="row wrap cbar-row" id="cAddRow"><span class="grow"></span>
           <button class="btn sm" id="cMinus" ${S.coll[ckey(s.id, fin, bsel)] ? "" : "disabled"}>−1</button>
           <span class="stepper"><button id="qDec" aria-label="Fewer">−</button><span class="num" id="qN">${addQty}</span><button id="qInc" aria-label="More">+</button></span>
           <button class="btn sm primary" id="cPlus">Add ${addQty} · ${esc(s.set.toUpperCase())} #${esc(s.num)}${fin !== "nonfoil" ? " " + fin : ""}</button></div>
@@ -3486,6 +3488,8 @@ function openCard(card, finish, binder, ctx) {
         toast(`Changed ${c} to ${picked.set.toUpperCase()} #${picked.collector_number}`); draw(); }, $("#ePrintBox"));
     }
     const bump = n => { addToColl(s, fin, n, bsel); if (n > 0 && !isWish(bsel)) cardSound(priceSound(priceOf(full || s, fin))); draw(); toast(`${n > 0 ? "Added" : "Removed"} ${Math.abs(n)} ${s.name} ${n > 0 ? "to" : "from"} ${S.binders[bsel].name}${n > 0 && tagWords(full || s, fin) ? " · " + tagWords(full || s, fin) : ""}`); };
+    // the add controls live in a bar fixed to the bottom of the card screen, in reach while scrolling or swiping
+    const ar = $("#cAddRow"); if (ar && myBody) { const bar = document.createElement("div"); bar.className = "cbar"; bar.id = "cBar"; bar.appendChild(ar); myBody.appendChild(bar); }
     $("#cPlus").onclick = () => bump(addQty); $("#cMinus").onclick = () => bump(-1);
     $("#qInc").onclick = () => { addQty = Math.min(99, addQty + 1); draw(); }; $("#qDec").onclick = () => { addQty = Math.max(1, addQty - 1); draw(); };
     $("#cPickPr").onclick = () => showPrints(s, picked => { s = slim(picked); full = picked; fin = s.finishes.includes(fin) ? fin : s.finishes[0]; draw(); }, $("#cPickBox"));
