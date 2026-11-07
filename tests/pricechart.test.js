@@ -15,13 +15,19 @@ async function run(opts, shot) {
   p.on("pageerror", e => errs.push(e.message)); p.on("console", m => { if (m.type() === "error" && !/Failed to load resource|fetching the script/.test(m.text())) errs.push(m.text()); });
   await p.route("https://raw.githubusercontent.com/junkcase/Deckhand/data/**", r => { const k = r.request().url().split("/data/")[1]; asked.push(k); r.fulfill({ status: DATA[k] ? 200 : 404, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: DATA[k] ? JSON.stringify(DATA[k]) : "404" }); });
   await p.route("https://cards.scryfall.io/**", r => r.fulfill({ status: 200, contentType: "image/png", body: PNG }));
-  await p.route("https://api.scryfall.com/**", r => r.fulfill({ status: 404, headers: { "Access-Control-Allow-Origin": "*" }, body: "{}" }));
+  // set list: major releases are marked on the timeline; the rest aren't
+  const day = n => new Date((END + 18262 - n) * 864e5).toISOString().slice(0, 10), Z = (code, name, ago, type, extra = {}) => Object.assign({ code, name, released_at: day(ago), card_count: 280, set_type: type, icon_svg_uri: `https://svgs.scryfall.io/sets/${code}.svg` }, extra);
+  const SETLIST = [Z("big", "Big Expansion", 100, "expansion"), Z("bgc", "Big Expansion Commander", 100, "commander", { parent_set_code: "big" }), Z("prm", "Some Promos", 50, "promo"),
+    Z("dmx", "Digital Masters", 60, "masters", { digital: true }), Z("mas", "Masters Thing", 20, "masters"), Z("cmx", "Commander Thing", 18, "commander"), Z("old", "Old Core", 500, "core"), Z("tny", "Tiny Expansion", 30, "expansion", { card_count: 12 })];
+  await p.route("https://svgs.scryfall.io/**", r => r.fulfill({ status: 200, contentType: "image/svg+xml", body: "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><circle cx='5' cy='5' r='5'/></svg>" }));
+  await p.route("https://api.scryfall.com/**", r => { if (/\/sets(\?|$)/.test(r.request().url())) return r.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify({ data: SETLIST }) });
+    r.fulfill({ status: 404, headers: { "Access-Control-Allow-Origin": "*" }, body: "{}" }); });
   await p.goto("http://127.0.0.1:8795/app_real.html"); await p.waitForTimeout(500);
   const mk = (id, name) => ({ id, oid: "o" + id, name, set: "2xm", setName: "Double Masters", num: "270", rarity: "mythic", type: "Artifact", mana: "{0}", cmc: 0, colors: [], ci: [], img: "", prices: { usd: "150", usd_foil: "310" }, finishes: ["nonfoil", "foil"], leg: {}, layout: "normal" });
   await p.evaluate(c => { window.__c = c; openCard(c, "nonfoil"); }, mk("a1b-crypt", "Mana Crypt")); await p.waitForTimeout(600);
   const R = {};
   const look = () => p.evaluate(() => { const bx = document.querySelector("#phBox"); return bx && { shown: bx.style.display !== "none", head: bx.querySelector("#phRange") ? bx.querySelector("#phRange").textContent.replace(/\s+/g, " ").trim() : "", mv: bx.querySelector("#phMv") ? bx.querySelector("#phMv").textContent.replace(/\s+/g, " ").trim() : "",
-    lines: [...bx.querySelectorAll("path.ln")].map(x => x.dataset.k).sort().join(","), range: (bx.querySelector("#phR [aria-pressed=true]") || {}).textContent, axis: bx.querySelector(".phc + .kv") ? bx.querySelector(".phc + .kv").textContent.replace(/\s+/g, " ").trim() : "",
+    lines: [...bx.querySelectorAll("path.ln")].map(x => x.dataset.k).sort().join(","), range: (bx.querySelector("#phR [aria-pressed=true]") || {}).textContent, axis: bx.querySelector(".phc ~ .kv") ? bx.querySelector(".phc ~ .kv").textContent.replace(/\s+/g, " ").trim() : "",
     keys: [...bx.querySelectorAll("#phK button")].map(x => x.textContent.trim() + (x.getAttribute("aria-pressed") === "false" ? " (off)" : "")), local: !!document.querySelector(".spark") }; });
   R.first = await look();
   await p.click('#phR [data-r="1Y"]'); await p.waitForTimeout(150); R.year = await look();
@@ -35,6 +41,13 @@ async function run(opts, shot) {
   await p.mouse.move(bb[0] + 2, bb[1] + bb[3] / 2); await p.waitForTimeout(100); R.tipStart = await p.$eval("#phTip", e => e.textContent.replace(/\s+/g, " ").trim());
   await p.click('#finSeg [data-f="foil"]'); await p.waitForTimeout(200); R.foil = await look();
   R.savedRange = await p.evaluate(() => S.meta.phRange);
+  // release markers
+  await p.click('#phR [data-r="1Y"]'); await p.waitForTimeout(400);
+  const marks = () => p.evaluate(() => [...document.querySelectorAll("#phSets [data-rel]")].map(b => b.dataset.rel + "@" + Math.round(parseFloat(b.style.top))));
+  R.marks1y = await marks(); R.rl1y = await p.$$eval("#phC line.rl", a => a.length);
+  if (shot) await (await p.$("#phBox")).screenshot({ path: __dirname + "/" + shot.replace(".png", "_sets.png") });
+  await p.click('#phSets [data-rel="mas"]'); await p.waitForTimeout(100); R.relTip = await p.$eval("#phTip", e => e.textContent.replace(/\s+/g, " ").trim());
+  await p.click('#phR [data-r="1M"]'); await p.waitForTimeout(200); R.marks1m = await marks();
   // a card the history doesn't have: no chart, the device's own history still shows
   await p.evaluate(c => { closeSheet(); const k = pkey("ffe-none", "nonfoil"); S.ph[k] = [[today() - 3, 1], [today(), 2]]; openCard(c, "nonfoil"); }, mk("ffe-none", "Other Card")); await p.waitForTimeout(600);
   R.none = await look();
@@ -45,6 +58,9 @@ async function run(opts, shot) {
 (async () => {
   for (const [label, opts, shot] of [["desktop", { viewport: { width: 1280, height: 900 } }, null], ["phone", devices["Pixel 7"], "pricechart_phone.png"]]) {
     const R = await run(opts, shot);
+    ok(JSON.stringify(R.marks1y) === '["big@0","mas@0","cmx@20"]' && R.rl1y === 3, `[${label}] major releases on the 1-year timeline (not Commander decks of an expansion, promos, online-only or tiny sets); two in the same week stack ${JSON.stringify(R.marks1y)} ${R.rl1y} lines`);
+    ok(/^Masters Thing MAS released \w{3} \d+, 2026$/.test(R.relTip), `[${label}] tapping a set symbol tells the set and its release date (${R.relTip})`);
+    ok(JSON.stringify(R.marks1m) === '["mas@0","cmx@20"]', `[${label}] a shorter range shows only the releases inside it ${JSON.stringify(R.marks1m)}`);
     ok(R.first.shown && R.first.range === "3M" && R.first.lines === "kb,m,t", `[${label}] chart shows on the card, 3 months, three stores ${JSON.stringify(R.first)}`);
     ok(/TCGplayer market over 3M: \+\$50\.00 \(\+50\.0%\) now \$150\.00/.test(R.first.head) && /High \$150\.00 · Low \$100\.00/.test(R.first.head), `[${label}] now, change over 3 months (price on the first day carried in), high and low (${R.first.head})`);
     ok(/TCGplayer market \$150\.00 was \$120\.00 until Oct 15/.test(R.first.mv) && /1 day ?\$0\.00 \(\+0\.0%\)/.test(R.first.mv) && /7 days ?\$0\.00/.test(R.first.mv) && /30 days ?\+\$30\.00 \(\+25\.0%\)/.test(R.first.mv) && /Source: TCGplayer market price, through MTGJSON/.test(R.first.mv) && /Last updated Nov 4/.test(R.first.mv), `[${label}] current, previous recorded price, 1/7/30-day changes, source and last update (${R.first.mv})`);

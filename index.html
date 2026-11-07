@@ -324,6 +324,9 @@ table.odds th:first-child,table.odds td:first-child{text-align:left}
 .spark .gd{stroke:var(--line);stroke-width:1;vector-effect:non-scaling-stroke}
 .phc{position:relative;touch-action:pan-y}
 .phc svg{display:block;width:100%;height:150px}
+.phc .rl{stroke:var(--muted);stroke-width:1;vector-effect:non-scaling-stroke;stroke-dasharray:2 4;opacity:.55}
+.phsets{position:relative;margin-top:2px}.phset{position:absolute;transform:translateX(-50%);width:22px;height:20px;padding:0;border:0;background:none;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center}
+.phset .sym{width:16px;height:16px}.phset:hover,.phset:focus-visible{color:var(--text)}
 .phc .ln{fill:none;stroke-width:2;vector-effect:non-scaling-stroke;stroke-linejoin:round}
 .phc .gd{stroke:var(--line);stroke-width:1;vector-effect:non-scaling-stroke}
 .phc .cur{stroke:var(--muted);stroke-width:1;vector-effect:non-scaling-stroke;stroke-dasharray:3 3}
@@ -3525,11 +3528,11 @@ function loadSets() {
   setsP = (async () => {
     let c = null; try { c = idb.ok ? await idbGet("sets") : null; } catch (e) {}
     if (c && c.map) SETS = c.map;
-    const counted = c && c.map && Object.values(c.map).some(x => x.count != null && x.rel != null);      // older copies lack release dates: fetch again
+    const counted = c && c.map && Object.values(c.map).some(x => x.count != null && x.rel != null && x.digital != null);      // older copies lack release dates: fetch again
     if (!c || !counted || Date.now() - c.at > 7 * 864e5) {
       try {
         const r = await sf("/sets"), map = {};
-        for (const z of r.data || []) map[z.code] = { icon: z.icon_svg_uri || "", name: z.name, year: (z.released_at || "").slice(0, 4), rel: z.released_at || "", parent: z.parent_set_code || "", count: z.card_count || 0, printed: z.printed_size || 0, type: z.set_type || "" };
+        for (const z of r.data || []) map[z.code] = { icon: z.icon_svg_uri || "", name: z.name, year: (z.released_at || "").slice(0, 4), rel: z.released_at || "", parent: z.parent_set_code || "", count: z.card_count || 0, printed: z.printed_size || 0, type: z.set_type || "", digital: !!z.digital };
         SETS = map; if (idb.ok) idbSet("sets", { at: Date.now(), map }).catch(() => {});
       } catch (e) { if (!SETS) { setsP = null; throw e; } }
     }
@@ -6325,6 +6328,22 @@ function phMovesHTML(H, fin) {
     <div class="phmv small num">${M.ch.map(x => `<div><span class="muted">${x.l}</span>${cell(x)}</div>`).join("")}</div>
     <span class="small muted">Source: TCGplayer market price, through MTGJSON's daily price files. Last updated ${dayStr(M.end)}.</span></div>`;
 }
+// big releases for the price chart's timeline: main expansions, core sets, Masters, Modern Horizons-style sets and stand-alone Commander sets (not online-only ones, nor the Commander decks that come with an expansion)
+const MAJOR_SET = new Set(["expansion", "core", "masters", "draft_innovation", "commander"]);
+function majorReleases(from, to) {
+  if (!SETS) return [];
+  return Object.entries(SETS).filter(([, z]) => z.rel && MAJOR_SET.has(z.type) && !z.parent && !z.digital && z.count >= 50)
+    .map(([code, z]) => ({ code, z, day: Math.round(Date.parse(z.rel + "T00:00:00Z") / 864e5) }))       // days since 1970, like the chart
+    .filter(r => r.day >= from && r.day <= to).sort((a, b) => a.day - b.day);
+}
+function phSetMarks(from, to, X, Hh) {
+  const rel = majorReleases(from, to), W = 600, lanes = [];
+  // symbols closer than 7% of the width (about a symbol on a phone) go on a second or third row instead of covering each other
+  const marks = rel.map(r => { const x = X(r.day) / W * 100; let lane = 0; while (lanes[lane] != null && x - lanes[lane] < 7) lane++; lanes[lane] = x; return Object.assign(r, { x, lane }); });
+  return { lines: marks.map(m => `<line class="rl" x1="${X(m.day).toFixed(1)}" x2="${X(m.day).toFixed(1)}" y1="0" y2="${Hh}"/>`).join(""),
+    strip: marks.length ? `<div class="phsets" id="phSets" style="height:${(Math.min(3, Math.max(...marks.map(m => m.lane)) + 1)) * 20 + 2}px">${marks.filter(m => m.lane < 3).map(m =>
+      `<button class="phset" data-rel="${esc(m.code)}" style="left:${m.x.toFixed(2)}%;top:${m.lane * 20}px" title="${esc(m.z.name)} (${esc(m.code.toUpperCase())}), released ${esc(relDate(m.z))}" aria-label="${esc(m.z.name)}, released ${esc(relDate(m.z))}">${setIcon(m.code, "common") || `<span class="small num">${esc(m.code.toUpperCase())}</span>`}</button>`).join("")}</div>` : "" };
+}
 function phChartHTML(H, fin, range, off) {
   if (!H || !H.row) return null;
   const n = (PH_RANGES.find(r => r[0] === range) || PH_RANGES[2])[1], to = H.end, from = to - n + 1;
@@ -6335,14 +6354,14 @@ function phChartHTML(H, fin, range, off) {
   const path = seg => seg.map((p, i) => i ? `H${X(p[0]).toFixed(1)}V${Y(p[1]).toFixed(1)}` : `M${X(p[0]).toFixed(1)} ${Y(p[1]).toFixed(1)}`).join("");
   const main = shown[0] && all[shown[0]], first = main ? main[0][1] : null, last = main ? main.at(-1)[1] : null, mv = main ? main.map(p => p[1]) : [];
   const firstDay = Math.min(...keys.map(k => all[k][0][0])), started = (H.row.t || H.row.tf || H.row.m || H.row.kb || [[0]])[0][0] + PH_EPOCH;
-  const pct = first ? (last - first) / first * 100 : 0, label = Object.fromEntries(PH_SERIES);
+  const pct = first ? (last - first) / first * 100 : 0, label = Object.fromEntries(PH_SERIES), rm = phSetMarks(from, to, X, Hh);
   return `${phMovesHTML(H, fin)}<div class="kv"><span class="label">Price history${fin !== "nonfoil" ? " (foil)" : ""}</span><span class="seg" id="phR">${PH_RANGES.map(([r]) => `<button data-r="${r}" aria-pressed="${r === range}">${r}</button>`).join("")}</span></div>
     ${main ? `<div class="kv small num" id="phRange"><span>${esc(label[shown[0]])} over ${esc(range)}: <span class="${last >= first ? "up" : "down"}">${signed(last - first)} (${pct >= 0 ? "+" : "−"}${Math.abs(pct).toFixed(1)}%)</span> <span class="muted">now ${money(last)}</span></span><span class="muted" style="white-space:nowrap">High ${money(Math.max(...mv))} · Low ${money(Math.min(...mv))}</span></div>` : ""}
     <div class="phc" id="phC"><svg viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="none" role="img" aria-label="Price chart, ${esc(range)}">
       <line class="gd" x1="0" x2="${W}" y1="${Y(hi).toFixed(1)}" y2="${Y(hi).toFixed(1)}"/><line class="gd" x1="0" x2="${W}" y1="${Y(lo).toFixed(1)}" y2="${Y(lo).toFixed(1)}"/>
-      ${shown.slice().reverse().map(k => `<path class="ln s-${k}" data-k="${k}" d="${path(all[k])}"/>`).join("")}<line class="cur" id="phCur" x1="0" x2="0" y1="0" y2="${Hh}" style="display:none"/></svg>
+      ${rm.lines}${shown.slice().reverse().map(k => `<path class="ln s-${k}" data-k="${k}" d="${path(all[k])}"/>`).join("")}<line class="cur" id="phCur" x1="0" x2="0" y1="0" y2="${Hh}" style="display:none"/></svg>
       <span class="yl" style="top:${(Y(hi) / Hh * 100).toFixed(1)}%">${money(hi)}</span>${hi !== lo ? `<span class="yl" style="top:${(Y(lo) / Hh * 100).toFixed(1)}%">${money(lo)}</span>` : ""}</div>
-    <div class="kv small muted num"><span>${dayStr(from)}</span><span>${dayStr(to)}</span></div>
+    ${rm.strip}<div class="kv small muted num"><span>${dayStr(from)}</span><span>${dayStr(to)}</span></div>
     <div class="small num phtip" id="phTip">${started > firstDay - 1 && started > from ? `<span class="muted">History starts ${dayStr(started)}; it grows every day.</span>` : `<span class="muted">Tap or hover the chart for a day's prices.</span>`}</div>
     <div class="phk" id="phK">${keys.map(k => `<button class="s-${k}" data-k="${k}" aria-pressed="${!off[k]}"><i></i><span>${esc(label[k])}</span></button>`).join("")}</div>
     <span class="small muted">Daily prices for this printing, updated once a day.</span>`;
@@ -6356,6 +6375,12 @@ function wirePhChart(box, H, fin, range, off, redraw) {
     const cur = box.querySelector("#phCur"), x = (day - from) / Math.max(1, to - from) * 600; cur.setAttribute("x1", x); cur.setAttribute("x2", x); cur.style.display = "";
     box.querySelector("#phTip").innerHTML = `<b>${dayStr(day)}</b> · ` + Object.keys(all).filter(k => !off[k]).map(k => { const v = phAt(all[k], day); return `<span class="s-${k}" style="color:inherit">${esc(label[k])} ${money(v)}</span>`; }).join(" · "); };
   c.onpointermove = show; c.onpointerdown = show;
+  // set symbols on the timeline: tap or hover for the set and its release date
+  box.querySelectorAll("[data-rel]").forEach(b => { const tell = () => { const z = SETS && SETS[b.dataset.rel]; if (!z) return; const x = parseFloat(b.style.left) / 100 * 600, cur = box.querySelector("#phCur");
+      cur.setAttribute("x1", x); cur.setAttribute("x2", x); cur.style.display = "";
+      box.querySelector("#phTip").innerHTML = `<b>${esc(z.name)}</b> <span class="muted">${esc(b.dataset.rel.toUpperCase())}</span> released ${esc(relDate(z))}`; };
+    b.onpointerenter = tell; b.onclick = tell; b.onfocus = tell; });
+  if (!SETS) loadSets().then(() => { if (box.isConnected && SETS) redraw(range, off); }, () => {});      // the set list arrives after the chart: draw the symbols then
 }
 function deckShortfall(d, side) {
   const need = {};
