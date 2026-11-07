@@ -2195,13 +2195,26 @@ function combineBase(L, R) {
   for (const k in L.coll) if (R.coll[k]) B.coll[k] = Object.assign({}, L.coll[k], { qty: Math.min(L.coll[k].qty, R.coll[k].qty) });
   return B;
 }
+// Take in synced data, updating decks, lists, binders and the like in place rather than swapping in copies: an open
+// screen (a deck, a card, a list) keeps the one it was drawn with, and an edit made there before it redraws must land in what gets saved.
+function adoptSynced(st) {
+  for (const k of ["decks", "lists", "binders", "alerts", "spec"]) {
+    const cur = S[k], nxt = st[k]; if (!cur || !nxt || typeof cur !== "object" || typeof nxt !== "object") continue;
+    for (const id of Object.keys(nxt)) {
+      const o = cur[id], n = nxt[id];
+      if (o && n && typeof o === "object" && typeof n === "object" && !Array.isArray(o) && o !== n) { for (const f of Object.keys(o)) if (!(f in n)) delete o[f]; Object.assign(o, n); nxt[id] = o; }
+    }
+  }
+  for (const k of SYNC_KEYS) S[k] = st[k];
+}
 function applySynced(st, from) {
+  st = JSON.parse(JSON.stringify(st));      // our own copy: the sync goes on to upload and record its version, and edits made meanwhile mustn't change that version
   SYNC.undo = pickSync(JSON.parse(JSON.stringify(S)));
   for (const d of Object.values(S.decks || {})) if (!(st.decks || {})[d.id]) trashDeck(d, "removed by a sync" + (from ? " from your " + from : ""));
   // cards a sync takes off this device are listed for 30 days so they can be put back
   const gone = []; for (const [k, e] of Object.entries(S.coll || {})) { const n = st.coll && st.coll[k] ? st.coll[k].qty : 0; if (n < e.qty) gone.push(Object.assign({}, e, { k, qty: e.qty - n })); }
   if (gone.length) S.meta.syncRemoved = [{ id: uid(), at: Date.now(), from: from || "", cards: gone.slice(0, 8000) }, ...(S.meta.syncRemoved || [])].filter(x => Date.now() - x.at < 30 * 864e5).slice(0, 20);
-  for (const k of SYNC_KEYS) S[k] = st[k];
+  adoptSynced(st);
   migrate(); save();
   try { if (!$("#sheetRoot").innerHTML) whenNotTyping(() => { if (!$("#sheetRoot").innerHTML) render(); }); else if ($("#syBody")) drawSync(); } catch (e) { console.error(e); }     // a display problem mustn't stop the sync
 }
@@ -2251,7 +2264,7 @@ async function syncNow(manual) {
     if (manual) toast("Sync failed: " + SYNC.err);
   } finally { SYNC.busy = false; if ($("#syBody")) drawSync(); syncBadge(); }
 }
-function undoSync() { if (!SYNC.undo) return; for (const k of SYNC_KEYS) S[k] = SYNC.undo[k]; SYNC.undo = null; migrate(); save(); render(); toast("Put back how it was before the last sync"); }
+function undoSync() { if (!SYNC.undo) return; adoptSynced(SYNC.undo); SYNC.undo = null; migrate(); save(); render(); toast("Put back how it was before the last sync"); }
 function scheduleSync(ms = 2000) { if (!syncCfg()) return; clearTimeout(SYNC.t); SYNC.t = setTimeout(() => syncNow(), ms); }
 function startSyncLoop() {
   if (!syncCfg()) return;
