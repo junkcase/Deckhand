@@ -55,6 +55,12 @@ const EDH = { "commanders/ghalta-primal-hunger": { panels: { taglinks: [{ value:
   ok(m && +m[2] <= 10 && Math.abs(+m[2] + +m[3] - 10) < 0.01, `budget $10: ${m ? m[0] : "?"}`);
   // replace with confirmation; other deck untouched
   const btnIdx = async (re, attr) => p.evaluate(([re, attr]) => { const sw = [...document.querySelectorAll(".swap")].find(s => new RegExp(re).test([...s.querySelectorAll(".sc b")].map(b => b.textContent).join(" → "))); return sw ? sw.querySelector(`[${attr}]`).getAttribute(attr) : null; }, [re, attr]);
+  // Compare on a swap shows the card out next to the card in (it used to open the deck-vs-deck comparison instead)
+  const ci = await btnIdx("Mind Stone → Nature's Lore", "data-scmp");
+  await p.click(`[data-scmp="${ci}"]`); await p.waitForTimeout(300);
+  const cmp = await p.evaluate(() => ({ cols: [...document.querySelectorAll("#sheetRoot .cmpcol b")].map(b => b.textContent), text: document.querySelector("#sheetRoot").textContent }));
+  ok(cmp.cols[0] === "Mind Stone" && cmp.cols.includes("Nature's Lore") && !/Compare decks/.test(cmp.text), "Compare on a swap shows the two cards side by side: " + cmp.cols.join(" | "));
+  await p.evaluate(() => closeSheet()); await p.waitForTimeout(150);
   const idx = await btnIdx("Mind Stone → Nature's Lore", "data-srep");
   await p.click(`[data-srep="${idx}"]`); await p.waitForTimeout(150);
   ok(/Take out Mind Stone and put in Nature's Lore\?/.test(await pane()), "Replace asks first");

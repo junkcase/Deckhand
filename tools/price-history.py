@@ -113,7 +113,7 @@ def rising(hist, sets, today_day, days=30, per_set=60, overall=250, falling=Fals
 
 def main(out, prices_path, ids_path, today=None, cards_path=None):
     import ijson
-    today_day = (today or (datetime.datetime.utcnow().date() - EPOCH).days)
+    today_day = (today or (datetime.datetime.now(datetime.timezone.utc).date() - EPOCH).days)
     uuid2sf = {}
     with open(ids_path, newline="") as fh:
         for row in csv.DictReader(fh):

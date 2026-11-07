@@ -54,11 +54,16 @@ async function run(opts, shot) {
   R.sync = await p.evaluate(() => { const base = pickSync(S), L = JSON.parse(JSON.stringify(base)), Rm = JSON.parse(JSON.stringify(base)); L.spec.a = { id: "a", updated: 1 }; Rm.spec.b = { id: "b", updated: 2 }; const m = mergeSync(base, L, Rm); return SYNC_V >= 4 && SYNC_KEYS.includes("spec") && !!m.spec.a && !!m.spec.b; });
   R.record2 = await p.evaluate(() => { const x = Object.values(S.spec).find(x => x.card.id === "zzz-none" && x.status === "active"); x.card.prices.usd = "5.5"; specRecord(x); return x.track.length; });
   R.overflow = await p.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
+  // buy/sell targets only count from the day the prediction was made, not from earlier days the card was watched
+  R.hits = await p.evaluate(() => { const d = today(), x = { created: (d - 20) * 864e5, finish: "nonfoil", card: { prices: { usd: "70" } }, track: [[d - 20, 50], [d - 15, 110], [d - 10, 70], [d - 5, 54], [d - 1, 70]],
+      pred: { dir: "up", days: 30, entry: 55, exit: 100, start: 70, at: (d - 10) * 864e5 } };
+    const r = specResult(x, null); return [r.hitEntry && r.hitEntry[0] - d, r.hitExit, r.hi, r.lo]; });
   R.errs = errs; await b.close(); srv.kill(); return R;
 }
 (async () => {
   for (const [label, opts, shot] of [["desktop", { viewport: { width: 1280, height: 900 } }, null], ["phone", devices["Pixel 7"], "market_phone.png"]]) {
     const R = await run(opts, shot);
+    ok(JSON.stringify(R.hits) === "[-5,null,110,50]", `[${label}] a buy/sell price reached before the prediction was made doesn't count (high/low still cover the whole time watched) ${JSON.stringify(R.hits)}`);
     ok(R.tabs.join("|") === "Collection|Scan|Search|Decks|Trade|Market", `[${label}] a Market tab ${JSON.stringify(R.tabs)}`);
     ok(/which way/.test(R.err1) && /time frame/.test(R.err2) && /why/.test(R.err3), `[${label}] direction, time frame and reason are required (${R.err1} / ${R.err2} / ${R.err3})`);
     ok(R.saved.tab === "market" && R.saved.dir === "up" && R.saved.days === 30 && R.saved.start === 10 && R.saved.entry === 9 && R.saved.exit === 12 && R.saved.notes === 1 && R.saved.track === 1 && R.saved.at, `[${label}] saved with today's price and date ${JSON.stringify(R.saved)}`);

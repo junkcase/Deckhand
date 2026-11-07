@@ -380,9 +380,10 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const MONEY_FMT = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });      // made once: toLocaleString with options rebuilds it on every call
 const money = n => (n == null || isNaN(n)) ? "—" : "$" + MONEY_FMT.format(Number(n));
-const signed = n => (n > 0 ? "+" : n < 0 ? "−" : "") + money(Math.abs(n));
+const signed = n => (n == null || isNaN(n)) ? "—" : (n > 0 ? "+" : n < 0 ? "−" : "") + money(Math.abs(n));      // a missing change isn't a $0.00 change
 const uid = () => Math.random().toString(36).slice(2, 10);
 const today = () => Math.floor(Date.now() / 864e5);
+const localDate = () => { const n = new Date(); return new Date(n - n.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };      // today's date where you are (UTC is already tomorrow in a US evening)
 const dayStr = d => new Date(d * 864e5 + 12 * 36e5).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 const clock = t => new Date(t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
@@ -441,7 +442,7 @@ migrate();
 /* Saving: the phone's IndexedDB database (room for very large collections). Browser localStorage
    holds only ~5 MB, which a collection of several thousand cards can outgrow, so it is now only
    read once to move older data over. */
-const idb = { p: null, ok: typeof indexedDB !== "undefined" };
+const idb = { p: null, ok: (() => { try { return typeof indexedDB !== "undefined" && !!indexedDB; } catch (e) { return false; } })() };      // blocked storage throws even on a look
 function idbOpen() {
   if (!idb.p) idb.p = new Promise((res, rej) => {
     const r = indexedDB.open("deckhand", 1);
@@ -1372,7 +1373,7 @@ function renderSetsTab(el) {
     const arr = Object.values(st.sets).map(x => Object.assign({}, x, { pr: own[x.code] ? setProgress(x.code, own[x.code].nums, setOpt.all) : null }));
     const by = { n: (a, b) => b.n - a.n || a.name.localeCompare(b.name), done: (a, b) => ((b.pr && b.pr.p) || 0) - ((a.pr && a.pr.p) || 0) || b.n - a.n, name: (a, b) => a.name.localeCompare(b.name) };
     arr.sort(by[setOpt.sort] || by.n);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDate();
     const latest = SETS ? Object.entries(SETS).filter(([, z]) => z.rel && z.rel <= today && z.count >= 20 && !z.parent && !/token|memorabilia|alchemy|promo|minigame/.test(z.type)).sort((a, b) => b[1].rel.localeCompare(a[1].rel)).slice(0, 6) : [];
     const setLine = (c, z, extra) => `<button class="tap setrow" data-open="${esc(c)}"><span class="nm">${setIcon(c, "common")} ${esc(z.name)} <span class="small muted">${esc(c.toUpperCase())}</span></span>
         <span class="small muted">${esc(relDate(z))}${z.type ? " · " + esc(SET_TYPE_NAME[z.type] || z.type) : ""} · ${(z.printed || z.count).toLocaleString()} cards</span>${extra || ""}</button>`;
@@ -2405,7 +2406,7 @@ function download(name, text, type) {
 // or when you clear it). After two weeks without a backup, the collection screen offers one.
 function backupNow() {
   S.meta.backupAt = Date.now(); save();
-  download(`deckhand-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(S), "application/json");
+  download(`deckhand-backup-${localDate()}.json`, JSON.stringify(S), "application/json");
   toast("Backup saved to your downloads. Keep it somewhere safe (Drive, email to yourself…)");
 }
 /* ---------- Google Drive backup ----------
@@ -2573,7 +2574,7 @@ function ioSheet() {
     <div id="gdBox">${gdSection()}</div>`);
   const drawGd = () => { const b = $("#gdBox"); if (b) { b.innerHTML = gdSection(); wireGdSection(drawGd); } }; wireGdSection(drawGd);
   loadGis().catch(() => {});          // ready before the tap, so Google's window isn't blocked
-  const stamp = new Date().toISOString().slice(0, 10);
+  const stamp = localDate();
   $("#ioBack").onclick = () => backupNow();
   $("#ioRest").onclick = () => pickFile(".json,.gz,application/json,application/gzip", async f => {
     try { await restoreBackup(JSON.parse(await ungzip(await f.arrayBuffer()))); closeSheet(); render(); toast("Backup restored"); }
@@ -4735,7 +4736,7 @@ function wireSell() {
   const cv_ = $("#sCsv"); if (cv_) cv_.onclick = () => {
     const q = v => `"${String(v ?? "").replace(/"/g, '""')}"`, f = v => v == null ? "" : v.toFixed(2);
     const lines = sellRows().map(x => { const r = sellQuote(x); return [q(r.e.name), q(r.e.set.toUpperCase()), q(r.e.num), r.e.finish, r.e.cond || "NM", x.qty, f(r.tcg), f(r.mp), r.want > 0 ? f(r.ck) : "", r.want].join(","); });
-    download(`deckhand-sell-list-${new Date().toISOString().slice(0, 10)}.csv`, ["Name,Set,Number,Finish,Condition,Quantity,TCGplayer market,Mana Pool lowest,Card Kingdom buys,Card Kingdom wants", ...lines].join("\n"), "text/csv");
+    download(`deckhand-sell-list-${localDate()}.csv`, ["Name,Set,Number,Finish,Condition,Quantity,TCGplayer market,Mana Pool lowest,Card Kingdom buys,Card Kingdom wants", ...lines].join("\n"), "text/csv");
   };
   const sc = $("#sClear"); if (sc) sc.onclick = () => { const back = S.trade.sell; S.trade.sell = []; save(); renderTrade(); toast("Sell list cleared", { label: "Undo", fn: () => { S.trade.sell = back; save(); renderTrade(); } }); };
   const ss = $("#sSold"); if (ss) { ss.onclick = () => { $("#sSoldC").hidden = false; }; $("#sSoldN").onclick = () => { $("#sSoldC").hidden = true; };
@@ -5419,7 +5420,7 @@ async function drawUpgrade(d) {
   $("#uBudC").onchange = e => { const v = parseFloat(e.target.value); d.upg.budget = isNaN(v) ? null : v; save(); drawUpgrade(d); };
   el.querySelectorAll("[data-srep]").forEach(b => b.onclick = () => upgConfirm(d, S_(b.dataset.srep), +b.dataset.srep, "replace"));
   el.querySelectorAll("[data-sadd]").forEach(b => b.onclick = () => { applyUpgrade(d, S_(b.dataset.sadd), "add"); drawUpgrade(d); });
-  el.querySelectorAll("[data-scmp]").forEach(b => b.onclick = () => compareSheet(d, S_(b.dataset.scmp), U));
+  el.querySelectorAll("[data-scmp]").forEach(b => b.onclick = () => swapCompareSheet(d, S_(b.dataset.scmp), U));
   el.querySelectorAll("[data-sinfo]").forEach(b => b.onclick = () => { const [i, w] = b.dataset.sinfo.split("|"); openCard(w === "c" ? S_(i).cut.card : S_(i).best.card); });
   el.querySelectorAll("[data-slater]").forEach(b => b.onclick = () => { const s = S_(b.dataset.slater); (d.upg.later = d.upg.later || []).push({ cut: s.cut.card.name, add: s.best.card.name, at: Date.now() }); upgLog(d, { text: `Saved for later: ${s.cut.card.name} → ${s.best.card.name}` }); save(); drawUpgrade(d); });
   el.querySelectorAll("[data-sno]").forEach(b => b.onclick = () => { const s = S_(b.dataset.sno); (d.upg.rejected = d.upg.rejected || []).push(s.cut.card.name + "→" + s.best.card.name); upgLog(d, { text: `Skipped: ${s.cut.card.name} → ${s.best.card.name}`, skip: true }); save(); drawUpgrade(d); });
@@ -5547,7 +5548,7 @@ function upgReport(d, U, A) {
     ${acc.length ? `<div class="small" style="margin-top:4px"><b>Changes:</b><br>${acc.map(h => esc(h.text) + (h.price ? ` (${money(h.price)})` : "")).join("<br>")}</div>` : ""}
     ${rej.length ? `<div class="small" style="margin-top:4px"><b>Skipped:</b><br>${rej.map(h => esc(h.text.replace(/^Skipped: /, ""))).join("<br>")}</div>` : ""}`;
 }
-function compareSheet(d, s, U) {
+function swapCompareSheet(d, s, U) {      // a suggested swap: the card out next to the card in (not the deck-vs-deck compareSheet below)
   const all = [s.best, ...s.alts], c = s.cut;
   const col = (x, isCut) => { const st = x.st, incl = st && st.pot ? st.num / st.pot : null, al = isCut ? null : allocFor(x.card.name, d.id);
     return `<div class="cmpcol"><img src="${esc(x.card.imgN || x.card.img)}" alt=""><b>${esc(x.card.name)}</b>
@@ -6069,7 +6070,8 @@ function specSeries(x, H) {
 }
 function specResult(x, H) {
   const ser = specSeries(x, H), start = x.pred.start, d0 = Math.floor(x.pred.at / 864e5), due = d0 + x.pred.days, now = specPrice(x);
-  const after = ser.filter(([d]) => d > d0), hitEntry = x.pred.entry != null ? (ser.find(([, p]) => p <= x.pred.entry) || null) : null, hitExit = x.pred.exit != null ? (ser.find(([, p]) => p >= x.pred.exit) || null) : null;
+  // buy / sell prices only count once the prediction was made (the history can start earlier, when the card was first watched)
+  const after = ser.filter(([d]) => d >= d0), hitEntry = x.pred.entry != null ? (after.find(([, p]) => p <= x.pred.entry) || null) : null, hitExit = x.pred.exit != null ? (after.find(([, p]) => p >= x.pred.exit) || null) : null;
   const hi = ser.length ? Math.max(...ser.map(s => s[1])) : null, lo = ser.length ? Math.min(...ser.map(s => s[1])) : null;
   const r = { start, now, d0, due, left: due - today(), hitEntry, hitExit, hi, lo, n: ser.length, change: now != null && start ? (now - start) / start : null, verdict: null, end: null };
   if (today() >= due && start) {
@@ -6529,7 +6531,8 @@ function deckMenu(d) {
 /* ---------- start ---------- */
 // the Deckhand banner while the installed app opens (about a second; a tap skips it)
 function splash() {
-  if (!isStandalone() || sessionStorage.getItem("dh-splash")) return () => {};
+  let seen = true; try { seen = !!sessionStorage.getItem("dh-splash"); } catch (e) {}      // storage can be blocked (cookies off): then just skip the splash
+  if (!isStandalone() || seen) return () => {};
   try { sessionStorage.setItem("dh-splash", "1"); } catch (e) {}
   const el = document.createElement("div"); el.id = "splash"; el.setAttribute("aria-hidden", "true");
   el.innerHTML = `<img src="images/welcome-800.jpg" srcset="images/welcome-800.jpg 800w, images/welcome-1600.jpg 1600w" sizes="100vw" alt="">`; document.body.appendChild(el);
