@@ -251,7 +251,7 @@ details>summary{cursor:pointer}.seg.wide button{flex:1 1 auto;min-width:0;white-
 .bcard.own .bimg{outline:2px solid var(--accent);outline-offset:-2px}.bcard .bimg img{border-radius:inherit}.bcard.miss img{filter:grayscale(1);opacity:.35}
 .bcard .bq{position:absolute;right:4px;bottom:4px;background:var(--accent);color:var(--accent-ink);font-weight:700;font-size:.75rem;padding:1px 6px;border-radius:9px}
 .bcard .bmiss{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.7);color:#fff;font-size:.7rem;padding:2px 7px;border-radius:9px;letter-spacing:.03em}
-.bcap{display:flex;justify-content:space-between;gap:4px}
+.bcap{display:flex;justify-content:space-between;gap:4px}.bcap .muted{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.settok{display:block}
 .own[data-ok] > .kv > .grow{cursor:pointer;border-radius:8px}.own[data-ok] > .kv > .grow:hover{background:var(--sunk)}.own.picked > .kv > .grow{box-shadow:inset 3px 0 0 var(--accent);padding-left:8px}
 .stepper.sm button{width:30px;height:30px}.stepper.sm .num{min-width:22px}
 .cbar{position:sticky;bottom:calc(-20px - env(safe-area-inset-bottom,0px));z-index:5;margin:12px -16px calc(-20px - env(safe-area-inset-bottom,0px));padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px));background:var(--surface);border-top:1px solid var(--line);box-shadow:0 -6px 16px rgba(0,0,0,.08)}
@@ -789,6 +789,18 @@ function ownBinder() {
   const b = Object.values(S.binders).find(x => !x.wish) || Object.values(S.binders)[0];
   if (b) return b.id;
   const id = S.binders.main ? uid() : "main"; S.binders[id] = { id, name: "Collection" }; return id;
+}
+/* Tokens: Scryfall keeps each set's tokens (and emblems) as a small set of their own, linked to the main set. They go in
+   their own "Tokens" binder and count toward the collection's value like everything else. */
+const TOKENS_BIN = "tokens";
+const isTokenCard = c => !!c && (/\b(Token|Emblem)\b/.test(c.type || c.type_line || "") || /token|emblem/.test(c.layout || "") || !!(SETS && SETS[c.set] && SETS[c.set].type === "token"));
+function tokensBinder() { if (!S.binders[TOKENS_BIN]) { S.binders[TOKENS_BIN] = { id: TOKENS_BIN, name: "Tokens" }; save(); } return TOKENS_BIN; }
+// a set's token sets: its own, and those of the Commander decks that came with it
+const tokenSetsOf = code => !SETS ? [] : Object.keys(SETS).filter(c => SETS[c].type === "token" && (SETS[c].parent === code || (SETS[SETS[c].parent] && SETS[SETS[c].parent].parent === code)));
+const isTokenSet = code => !!(SETS && SETS[code] && SETS[code].type === "token");
+function tokenProgress(code, own) {
+  const ts = tokenSetsOf(code); if (!ts.length) return null;
+  return { sets: ts, total: ts.reduce((a, t) => a + (SETS[t].count || 0), 0), have: ts.reduce((a, t) => a + (own[t] ? own[t].nums.size : 0), 0) };
 }
 function defaultBinder() { return S.meta.binder && S.binders[S.meta.binder] ? S.meta.binder : ownBinder(); }
 const binderName = id => (S.binders[id] || { name: "Collection" }).name;
@@ -1381,7 +1393,11 @@ function renderSetsTab(el) {
   const draw = () => {
     if (!el.isConnected) return;
     const st = collStats("all"), own = setOwned();
-    const arr = Object.values(st.sets).map(x => Object.assign({}, x, { pr: own[x.code] ? setProgress(x.code, own[x.code].nums, setOpt.all) : null }));
+    // tokens show under their main set (a set's Commander-deck tokens under the set too), even if you have none of the set's cards yet
+    const topOf = c => { let x = c; for (let i = 0; i < 2 && SETS && SETS[x] && SETS[x].parent && SETS[SETS[x].parent]; i++) x = SETS[x].parent; return x; };
+    const rowsBy = Object.assign({}, st.sets);
+    for (const c of Object.keys(st.sets)) if (isTokenSet(c)) { const t = topOf(c); if (t !== c && !rowsBy[t]) rowsBy[t] = { code: t, name: SETS[t].name, n: 0, val: 0 }; }
+    const arr = Object.values(rowsBy).filter(x => !(isTokenSet(x.code) && topOf(x.code) !== x.code)).map(x => Object.assign({}, x, { pr: own[x.code] ? setProgress(x.code, own[x.code].nums, setOpt.all) : null, tok: tokenProgress(x.code, own) }));
     const by = { n: (a, b) => b.n - a.n || a.name.localeCompare(b.name), done: (a, b) => ((b.pr && b.pr.p) || 0) - ((a.pr && a.pr.p) || 0) || b.n - a.n, name: (a, b) => a.name.localeCompare(b.name) };
     arr.sort(by[setOpt.sort] || by.n);
     const today = localDate();
@@ -1397,7 +1413,8 @@ function renderSetsTab(el) {
         <span class="seg" id="setAll"><button data-a="0" aria-pressed="${!setOpt.all}">Main set</button><button data-a="1" aria-pressed="${setOpt.all}">Everything</button></span></div>
       <div class="stack" style="gap:0;margin-top:8px" id="setsBody">${arr.length ? arr.map(x => `<button class="tap setrow" data-set="${esc(x.code)}"><span class="nm">${setIcon(x.code, "common")} ${esc(x.name)} <span class="small muted">${esc(x.code.toUpperCase())}</span></span>
         <span class="num small muted">${x.n.toLocaleString()} card${x.n === 1 ? "" : "s"} · ${money(x.val)}</span>
-        ${x.pr ? `<span class="setbar"><span class="meter"><span style="width:${(x.pr.p * 100).toFixed(1)}%"></span></span><span class="num small">${x.pr.have}/${x.pr.total}${x.pr.p >= 1 ? " ✓" : ""}</span></span>` : `<span class="small muted">no set size</span>`}</button>`).join("")
+        ${x.pr ? `<span class="setbar"><span class="meter"><span style="width:${(x.pr.p * 100).toFixed(1)}%"></span></span><span class="num small">${x.pr.have}/${x.pr.total}${x.pr.p >= 1 ? " ✓" : ""}</span></span>` : `<span class="small muted">no set size</span>`}
+        ${x.tok && x.tok.have ? `<span class="small muted num settok">Tokens ${x.tok.have}/${x.tok.total}${x.tok.have >= x.tok.total ? " ✓" : ""}</span>` : ""}</button>`).join("")
         : `<p class="small muted">No cards yet. Find a set above to see everything in it.</p>`}</div>`;
     const open = c => { sv.setCode = c; sv.setState = null; setOpt.q = ""; renderSearch(); };
     $("#setSort").onclick = e => { const b = e.target.closest("button"); if (b) { setOpt.sort = b.dataset.s; draw(); } };
@@ -1541,6 +1558,17 @@ function setDetail(code, back, keep, host) {
       for (const [id, k] of [["#bFrom", "from"], ["#bTo", "to"]]) $(id).oninput = e => { o.b[k] = e.target.value.trim(); drawGrid(); };     // the grid only, so typing isn't interrupted
       drawGrid();
     };
+    // the set's tokens (and emblems): owned ones in color with how many, the rest greyed out
+    const tokP = tokenProgress(code, setOwned());
+    const tokensTab = () => {
+      if (!o.tokList) return `<p class="small ${o.tokErr ? "down" : "muted"}" style="margin-top:10px" id="sdTokLoad">${o.tokErr ? esc(o.tokErr) : "Loading this set's tokens…"}</p>`;
+      const have = {}; for (const e of Object.values(S.coll)) if (!isWish(e.binder)) have[e.id] = (have[e.id] || 0) + e.qty;
+      const n = o.tokList.filter(c => have[c.id]).length;
+      return `<div class="setbar" style="margin:10px 0 6px"><span class="meter"><span style="width:${o.tokList.length ? (n / o.tokList.length * 100).toFixed(1) : 0}%"></span></span><span class="num small" id="tokCount"><b>${n}</b> of ${o.tokList.length} tokens</span></div>
+        <p class="small muted" style="margin:0 0 8px">Tokens you add go in your Tokens binder and count toward your collection's value.</p>
+        <div class="bgrid" id="sdTok">${o.tokList.map(c => { const q = have[c.id]; return `<button class="bcard ${q ? "own" : "miss"}" data-tk="${esc(c.id)}" title="${esc(c.name)} #${esc(c.num)}${q ? "" : " (missing)"}"><span class="bimg"><img loading="lazy" src="${esc(c.img)}" alt="${esc(c.name)}">${q ? `<span class="bq">×${q}</span>` : `<span class="bmiss">Missing</span>`}</span>
+          <span class="bcap small"><span class="muted">${esc(c.name.replace(/ Token$/, ""))}</span> <span class="${q ? "" : "muted"}">${c.usd != null ? money(c.usd) : "—"}</span></span></button>`; }).join("") || `<p class="small muted">Scryfall lists no tokens for this set.</p>`}</div>`;
+    };
     const ownedTab = `<div class="summary" style="margin-top:8px"><div><span class="label">Different cards</span><b class="num">${rows.length}</b></div><div><span class="label">Copies</span><b class="num">${totalQty}</b></div><div><span class="label">Value</span><b class="num gold">${money(ownVal)}</b></div></div>
       ${rows.length ? `<div class="list" id="sdOwned" style="margin-top:6px">${rows.map(r => `<div class="item"><img loading="lazy" src="${esc(r.img || "")}" alt=""><button class="tap" data-own="${esc(r.key)}"><div class="name">${esc(r.name)}</div>
         <div class="meta small"><span class="muted">#${esc(r.num)}${tr[r.num] && tr[r.num] !== "main" ? " · " + esc(treatName(tr[r.num])) : ""} · ${Object.entries(r.fin).map(([f, n]) => n + " " + (FIN_NAME[f] || f)).join(", ")}</span></div></button>
@@ -1551,8 +1579,8 @@ function setDetail(code, back, keep, host) {
       ${extras && prMain && prAll ? `<p class="small muted" id="sdBoth" style="margin:0 0 6px">Main set <b class="num">${prMain.have}/${prMain.total}</b> (${Math.floor(prMain.p * 100)}%) · Every printing <b class="num">${prAll.have}/${prAll.total}</b> (${Math.floor(prAll.p * 100)}%). The main set is the ${z.printed} numbered cards; every printing adds the borderless, showcase and other versions. Copies and foils don't count twice.</p>` : ""}
       <div class="row wrap" style="gap:6px 12px">${extras ? `<span class="seg" id="sdAll"><button data-a="0" aria-pressed="${!o.all}">Main set (${z.printed})</button><button data-a="1" aria-pressed="${o.all}">Everything (${z.count})</button></span>` : ""}
         <button class="btn sm" id="sdMine" ${own ? "" : "disabled"}>Show my cards from this set</button><button class="btn sm" id="sdBest">Best cards in this set</button></div>
-      <span class="seg" id="sdTab" style="margin-top:10px"><button data-t="bind" aria-pressed="${o.tab === "bind"}">Binder</button><button data-t="miss" aria-pressed="${o.tab === "miss"}">Missing</button><button data-t="own" aria-pressed="${o.tab === "own"}">Owned (${rows.length})</button></span>
-      ${o.tab === "bind" ? binderTab() : o.tab === "own" ? ownedTab : !o.list ? `<div class="row" style="margin-top:10px"><button class="btn primary" id="sdLoad">Show missing cards</button><span class="small muted grow">${o.err ? `<span class="down">${esc(o.err)}</span>` : `loads the set list from Scryfall, a second or two`}</span></div>`
+      <span class="seg" id="sdTab" style="margin-top:10px"><button data-t="bind" aria-pressed="${o.tab === "bind"}">Binder</button><button data-t="miss" aria-pressed="${o.tab === "miss"}">Missing</button><button data-t="own" aria-pressed="${o.tab === "own"}">Owned (${rows.length})</button>${tokP ? `<button data-t="tok" aria-pressed="${o.tab === "tok"}">Tokens ${tokP.have}/${tokP.total}</button>` : ""}</span>
+      ${o.tab === "tok" ? tokensTab() : o.tab === "bind" ? binderTab() : o.tab === "own" ? ownedTab : !o.list ? `<div class="row" style="margin-top:10px"><button class="btn primary" id="sdLoad">Show missing cards</button><span class="small muted grow">${o.err ? `<span class="down">${esc(o.err)}</span>` : `loads the set list from Scryfall, a second or two`}</span></div>`
       : `${extras && kindOrder.length > 1 ? (o.all ? `<div class="chips scrollx" id="sdTr" style="margin-top:10px"><button data-tr="" aria-pressed="${!o.tr}">All printings</button>${kindOrder.map(k => `<button data-tr="${k}" aria-pressed="${o.tr === k}">${esc(treatName(k))} <span class="num">${kinds[k].have}/${kinds[k].total}</span></button>`).join("")}</div>`
           : `<p class="small muted" id="sdKinds" style="margin:10px 0 0">Other printings: ${kindOrder.filter(k => k !== "main").map(k => `${esc(treatName(k))} ${kinds[k].have}/${kinds[k].total}`).join(" · ")}. Choose Everything to see them.</p>`) : ""}
         <div class="row wrap" style="margin-top:10px;gap:6px"><span class="chips" id="sdRar">${[["", "All"], ["mythic", "Mythic"], ["rare", "Rare"], ["uncommon", "Uncommon"], ["common", "Common"]].map(([k, l]) => `<button data-r="${k}" aria-pressed="${o.rar === k}">${l}</button>`).join("")}</span></div>
@@ -1577,6 +1605,11 @@ function setDetail(code, back, keep, host) {
     const scs = [...el.querySelectorAll("[data-sc]")];
     scs.forEach(b => b.onclick = () => openFromList(scs, b, x => o.list.find(y => y.id === x.dataset.sc), c => openHere(c.card)));
     if (o.tab === "bind") wireBinder(openHere);
+    if (o.tab === "tok") {
+      if (!o.tokList && !o.tokLoading) { o.tokLoading = true; Promise.all(tokenSetsOf(code).map(setCards)).then(ls => { o.tokList = ls.flat(); }, e => { o.tokErr = "Couldn't load the tokens: " + e.message; }).then(() => { o.tokLoading = false; draw(); }); }
+      const tks = [...el.querySelectorAll("[data-tk]")];
+      tks.forEach(b => b.onclick = () => openFromList(tks, b, x => o.tokList.find(y => y.id === x.dataset.tk), c => openHere(c.card)));
+    }
     if (o.scroll) { scroller().scrollTop = o.scroll; o.scroll = 0; }
     const ows = [...el.querySelectorAll("[data-own]")];
     ows.forEach(b => b.onclick = () => openFromList(ows, b, x => S.coll[x.dataset.own], e => { o.scroll = scroller().scrollTop; openCard(e, e.finish, e.binder, { back: () => { if (tab === "search" && sv.mode === "sets" && sv.setCode === code) draw(); else render(); } }); }));
@@ -2818,6 +2851,7 @@ async function csvImport(file, target) {
         for (const [c, w] of found) {
           let b = st.dest;
           if (b === "__file") { const before = Object.keys(S.binders).length; b = w.binder ? binderByName(w.binder) : defaultBinder(); if (Object.keys(S.binders).length > before) newBinders.add(S.binders[b].name); }
+          if ((isTokenCard(c) || /token/.test(w.board || "")) && !(st.dest === "__file" && w.binder)) b = tokensBinder();
           addToColl(slim(c), w.finish, w.qty, b, true, { cond: w.cond, paid: w.paid, imported: true }); cards += w.qty; if (w.guessed) guessed++;      // a file import doesn't mark cards "New"
         }
         where = st.dest === "__file" ? (newBinders.size ? `New binders: ${[...newBinders].join(", ")}.` : "") : `Added to ${S.binders[st.dest].name}.`;
@@ -3332,7 +3366,7 @@ function ownedPrintings() {
 // one tap: another copy just like the one you own (same finish, binder, condition), or one copy in your default binder
 function quickAdd(c) {
   const own = ownedPrintings()[c.id], e = own && own.last, card = isSlim(c) ? c : slim(c);
-  const fin = e ? e.finish : (card.finishes || ["nonfoil"])[0], bin = e ? e.binder : defaultBinder(), cond = e && e.cond;
+  const fin = e ? e.finish : (card.finishes || ["nonfoil"])[0], bin = e ? e.binder : isTokenCard(card) ? tokensBinder() : defaultBinder(), cond = e && e.cond;
   addToColl(card, fin, 1, bin, false, { cond }); cardSound(priceSound(priceOf(card, fin)));
   toast(`Added 1 ${card.name} (${card.set.toUpperCase()} #${card.num}${fin !== "nonfoil" ? ", " + fin : ""}) to ${binderName(bin)}. You have ${ownedPrintings()[card.id].qty}.`, { label: "Undo", fn: () => { addToColl(card, fin, -1, bin, false, { cond }); drawResults(); } });
   drawResults();
@@ -3428,7 +3462,7 @@ function openCard(card, finish, binder, ctx) {
   let phH = null, phRange = S.meta.phRange || "3M", phOff = {}, phWant = null, rrHtml = null, rrFor = null, rrWant = null;
   let full = card.oracle_text !== undefined || card.card_faces ? card : null;
   let fin = finish && s.finishes.includes(finish) ? finish : s.finishes[0] || "nonfoil";
-  let bsel = binder && S.binders[binder] ? binder : (cv.binder !== "all" && S.binders[cv.binder] ? cv.binder : defaultBinder());
+  let bsel = binder && S.binders[binder] ? binder : isTokenCard(card) ? tokensBinder() : (cv.binder !== "all" && S.binders[cv.binder] ? cv.binder : defaultBinder());
   const draw = () => {
     const owned = Object.entries(S.coll).filter(([, e]) => e.name === s.name);
     const decks = Object.values(S.decks);
@@ -3524,7 +3558,7 @@ function openCard(card, finish, binder, ctx) {
     else if (rrb) rrb.innerHTML = `<span class="small muted">Checking printing history…</span>`;
 
     const fs = $("#finSeg"); if (fs) fs.onclick = e => { const b = e.target.closest("button"); if (b) { fin = b.dataset.f; draw(); } };
-    $("#bSel").onchange = e => { bsel = e.target.value; S.meta.binder = bsel; save(); draw(); };
+    $("#bSel").onchange = e => { bsel = e.target.value; if (!isTokenCard(s)) S.meta.binder = bsel; save(); draw(); };
     const body = $("#sheetBody");
     body.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => { editing = editing === b.dataset.edit ? null : b.dataset.edit; draw(); });
     // a copy you own: tap it to show that printing here (and, from a deck, use its art in the deck); − / + change how many of that copy you have
@@ -5132,6 +5166,43 @@ function autoCommander(d) {
   const cand = cmdrCandidates(d); if (cand.length !== 1) return null;
   d.format = "commander"; d.cmdr = [cand[0][0]]; return cand[0][1].name;
 }
+/* Tokens a deck makes: Scryfall links each card to the tokens (and emblems) it creates. Looked up when the section is
+   opened, kept for the session; a token counts as owned if you have any printing of it (same token, any set). */
+const DECKTOK = {};
+const deckTokSig = d => Object.values(d.cards).filter(c => !c.side).map(c => c.id).sort().join(",");
+function deckTokSummary(d) { const t = DECKTOK[d.id]; if (!t || t.sig !== deckTokSig(d) || !t.list) return ""; const own = t.list.filter(x => tokenOwned(x) > 0).length; return t.list.length ? `${t.list.length} · you have ${own}` : "none"; }
+function tokenOwned(t) { let n = 0; for (const e of Object.values(S.coll)) if (!isWish(e.binder) && (e.id === t.id || (t.oid && e.oid === t.oid))) n += e.qty; return n; }
+async function deckTokens(d) {
+  const sig = deckTokSig(d), c0 = DECKTOK[d.id];
+  if (c0 && c0.sig === sig && (c0.list || c0.p)) return c0.list || c0.p;
+  const job = (async () => {
+    const ids = sig ? sig.split(",") : [], from = {}, tokIds = new Set();
+    for (let i = 0; i < ids.length; i += 75) {
+      const r = await sf("/cards/collection", { identifiers: ids.slice(i, i + 75).map(id => ({ id })) });
+      for (const c of r.data || []) for (const pt of c.all_parts || []) if (pt.component === "token" && pt.id !== c.id) { tokIds.add(pt.id); (from[pt.id] = from[pt.id] || []).push(c.name); }
+    }
+    const list = [], ti = [...tokIds];
+    for (let i = 0; i < ti.length; i += 75) { const r = await sf("/cards/collection", { identifiers: ti.slice(i, i + 75).map(id => ({ id })) }); for (const c of r.data || []) list.push(Object.assign(slim(c), { from: [...new Set(from[c.id] || [])] })); }
+    // the same token made by several cards (different printings of a Treasure, say) shows once
+    const seen = new Map(); for (const t of list) { const k = t.oid || t.name; if (seen.has(k)) seen.get(k).from.push(...t.from); else seen.set(k, t); }
+    return [...seen.values()].map(t => Object.assign(t, { from: [...new Set(t.from)] })).sort((a, b) => a.name.localeCompare(b.name));
+  })();
+  DECKTOK[d.id] = { sig, p: job };
+  try { const list = await job; DECKTOK[d.id] = { sig, list }; return list; } catch (e) { DECKTOK[d.id] = null; throw e; }
+}
+async function drawDeckTokens(d) {
+  const box = $("#dTokBody"); if (!box) return;
+  const t = DECKTOK[d.id]; if (!(t && t.list && t.sig === deckTokSig(d))) box.innerHTML = `<p class="small muted" style="margin:8px 0 0">Looking up the tokens your cards make…</p>`;
+  let list; try { list = await deckTokens(d); } catch (e) { if ($("#dTokBody") === box) box.innerHTML = `<p class="small down" style="margin:8px 0 0">Couldn't look up tokens: ${esc(e.message)}</p>`; return; }
+  if ($("#dTokBody") !== box) return;
+  const sum = $("#dTokSum"); if (sum) sum.textContent = deckTokSummary(d);
+  box.innerHTML = !list.length ? `<p class="small muted" style="margin:8px 0 0">None of this deck's cards make tokens or emblems.</p>`
+    : `<p class="small muted" style="margin:8px 0">Any printing of a token counts as having it. Tap one to add it to your Tokens binder.</p>
+      <div class="bgrid" id="dTokGrid">${list.map((x, i) => { const q = tokenOwned(x); return `<button class="bcard ${q ? "own" : "miss"}" data-dt="${i}" title="${esc(x.name)}: made by ${esc(x.from.join(", "))}"><span class="bimg"><img loading="lazy" src="${esc(x.img)}" alt="${esc(x.name)}">${q ? `<span class="bq">×${q}</span>` : `<span class="bmiss">Missing</span>`}</span>
+        <span class="small" style="display:block;line-height:1.25"><b>${esc(x.name.replace(/ Token$/, ""))}</b><span class="muted" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">from ${esc(x.from.slice(0, 2).join(", "))}${x.from.length > 2 ? ` +${x.from.length - 2}` : ""}</span></span></button>`; }).join("")}</div>`;
+  const bs = [...box.querySelectorAll("[data-dt]")];
+  bs.forEach(b => b.onclick = () => openFromList(bs, b, x => list[+x.dataset.dt], ({ from, ...c }) => openCard(c, null, tokensBinder(), { back: () => { if (deckOpen === d.id) renderDeck(d); else render(); } })));
+}
 async function drawCmdrPicker(d, box, partner) {
   const st = box._st || (box._st = { q: "", res: [], more: null, busy: false });
   // the search box is drawn once; results update underneath it, so typing (and the phone keyboard) is never interrupted
@@ -5773,6 +5844,7 @@ function renderDeck_(d) {
       <div class="curve-x"><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7+</span></div>
       ${curveVerdict(d, st)}</div>
       ${playtestHTML(d)}${goldfishHTML(d)}</details>` : ""}
+    ${st.mainN ? `<details class="box" id="dTokens" ${S.meta.deckTokOpen ? "open" : ""}><summary class="row" style="justify-content:space-between;cursor:pointer"><span class="label">Tokens this deck makes</span><span class="small muted num" id="dTokSum">${deckTokSummary(d)}</span></summary><div id="dTokBody"></div></details>` : ""}
     ${Object.keys(d.cards).length > 1 ? `<div class="row" style="justify-content:flex-end;gap:12px;margin-bottom:-4px;align-items:center"><label class="small muted row" style="gap:6px;align-items:center;margin-right:auto;white-space:nowrap">Sort <select id="dSort" aria-label="Sort cards by" style="width:auto;min-height:0;padding:4px 8px">${Object.entries(DECK_SORTS).map(([k, v]) => `<option value="${k}"${deckSortKey() === k ? " selected" : ""}>${v[0]}</option>`).join("")}</select></label><button class="linkbtn small" id="dFoldAll" style="white-space:nowrap">Collapse all</button><button class="linkbtn small" id="dOpenAll" style="white-space:nowrap">Expand all</button></div>` : ""}
     <div class="list" id="dl">${cmdCards.length ? foldHead("Commander", "Commander", cmdCards.length) + (folded.has("Commander") ? "" : cmdCards.map(row).join("")) : ""}
       ${group(mainRest, "") || (cmdCards.length ? "" : `<div class="empty" style="border:0"><p>No cards yet. Type above, or use Deck options → Paste a deck list.</p></div>`)}${st.side.length ? `<div class="row" style="justify-content:flex-end;margin:6px 0"><button class="btn sm" id="dSideMain">Move all ${st.side.reduce((a, c) => a + c.qty, 0)} sideboard cards to the main deck</button></div>` : ""}${group(st.side, "Side")}</div></div></div>`;
@@ -5826,6 +5898,7 @@ function renderDeck_(d) {
     d.updated = Date.now(); staleIndex(); save(); renderDeck(d); toast(`Moved ${n} card${n === 1 ? "" : "s"} to the main deck`);
   };
   const di = $("#dIssues"); if (di) di.onclick = () => { S.meta.deckIssuesOpen = !S.meta.deckIssuesOpen; save(); renderDeck(d); };
+  const dtk = $("#dTokens"); if (dtk) { dtk.ontoggle = () => { if (!!S.meta.deckTokOpen !== dtk.open) { S.meta.deckTokOpen = dtk.open; save(); } if (dtk.open) drawDeckTokens(d); }; if (dtk.open) drawDeckTokens(d); }
   const dst = $("#dStats"); if (dst) dst.ontoggle = () => { if (!!S.meta.deckStatsOpen !== dst.open) { S.meta.deckStatsOpen = dst.open; save(); } };
   const ds = $("#dSort"); if (ds) ds.onchange = () => { S.meta.deckSort = ds.value; save(); renderDeck(d); };
   const fa = $("#dFoldAll"); if (fa) fa.onclick = () => setFold(new Set([...$("#dl").querySelectorAll("[data-fold]")].map(b => b.dataset.fold)));
