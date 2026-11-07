@@ -40,7 +40,7 @@ async function run(opts, shot) {
   R.sold = await p.evaluate(() => [Object.values(S.coll).map(e => e.name + "×" + e.qty).sort().join(", "), S.trade.sell.length]);
   await p.click("#toastAct"); await p.waitForTimeout(150); R.undo = await p.evaluate(() => [Object.values(S.coll).reduce((a, e) => a + e.qty, 0), S.trade.sell.length]);
   // from Duplicates
-  await p.evaluate(() => { S.trade.sell = []; save(); go("coll"); }); await p.click("#cDup"); await p.waitForTimeout(200); await p.click("#dupSell"); await p.waitForTimeout(150);
+  await p.evaluate(() => { S.trade.sell = []; save(); go("coll"); }); await p.click("#cMoreMenu > summary").then(() => p.click("#cDup")); await p.waitForTimeout(200); await p.click("#dupSell"); await p.waitForTimeout(150);
   R.fromDup = await p.evaluate(() => S.trade.sell.map(x => S.coll[x.key].name + "×" + x.qty).sort().join(", "));
   R.overflow = await p.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
   R.errs = errs; await b.close(); srv.kill(); return R;

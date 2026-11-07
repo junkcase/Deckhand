@@ -39,7 +39,7 @@ async function run(opts, shot) {
     addToColl(c, "nonfoil", 3, "main"); S.decks.k = { id: "k", name: "Kiora", format: "commander", cmdr: [], cards: {}, created: 1, updated: 1 }; save(); go("coll"); });
   const R = {};
   R.noNudge = !(await p.$("#gdNudge"));
-  await p.click("#cMore"); await p.waitForTimeout(300);
+  await p.click("#cMoreMenu > summary").then(() => p.click("#cMore")); await p.waitForTimeout(300);
   R.offText = await p.$eval("#gdBox", e => e.textContent.includes("Connect Google Drive"));
   await p.click("#gdOn"); await p.waitForFunction(() => /Last backup/.test((document.querySelector("#gdBox") || {}).textContent || ""), null, { timeout: 8000 }).catch(() => {});
   R.onText = await p.$eval("#gdBox", e => e.textContent.replace(/\s+/g, " "));
@@ -74,7 +74,7 @@ async function run(opts, shot) {
   R.xss = await p.evaluate(() => { window.__x = 0; gdRestoreSheet([{ id: "\"><img src=x onerror=__x=1>", createdTime: new Date().toISOString(), appProperties: { device: "<img src=x onerror=__x=1>", cards: "5", decks: "<b>" } }]); return 1; });
   await p.waitForTimeout(200); R.xssFired = await p.evaluate(() => window.__x); await p.evaluate(() => closeSheet());
   // stop
-  await p.click("#cMore"); await p.waitForTimeout(200); await p.click("#gdOff"); await p.waitForTimeout(100);
+  await p.click("#cMoreMenu > summary").then(() => p.click("#cMore")); await p.waitForTimeout(200); await p.click("#gdOff"); await p.waitForTimeout(100);
   R.off = await p.evaluate(() => [gdCfg(), !!document.querySelector("#gdOn")]);
   R.overflow = await p.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
   R.errs = errs; await b.close(); srv.kill(); return R;

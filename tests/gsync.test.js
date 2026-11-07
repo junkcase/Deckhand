@@ -49,7 +49,7 @@ const card = (id, name) => ({ id, oid: "o" + id, name, set: "cmm", setName: "CMM
   const settle = async (...ps) => { for (const p of ps) await p.evaluate(async () => { for (let i = 0; i < 100 && SYNC.busy; i++) await new Promise(r => setTimeout(r, 30)); await syncNow(true); }); };
   await A.evaluate(c => { S.binders = { main: { id: "main", name: "Collection" } }; addToColl(c[0], "nonfoil", 3, "main"); S.decks.k = { id: "k", name: "Kiora", format: "commander", cmdr: [], cards: {}, created: 1, updated: 1 }; save(); go("coll"); }, [card("sol", "Sol Ring")]);
   // A: Sync → Sign in with Google
-  await A.click("#cSync"); await A.waitForSelector("#syGoogle"); const setupText = await A.$eval("#syBody", e => e.textContent.replace(/\s+/g, " "));
+  await A.click("#cMoreMenu > summary"); await A.click("#cSync"); await A.waitForSelector("#syGoogle"); const setupText = await A.$eval("#syBody", e => e.textContent.replace(/\s+/g, " "));
   await A.screenshot({ path: __dirname + "/gsync_setup.png" });
   await A.click("#syGoogle"); await A.waitForFunction(() => syncOn() && !SYNC.busy && SYNC.at, null, { timeout: 8000 });
   const aCfg = await A.evaluate(() => [syncCfg().kind, syncCfg().email, gdCfg() && gdCfg().on]);

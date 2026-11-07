@@ -24,7 +24,7 @@ async function run(opts, shot) {
   await p.waitForTimeout(300);
   const R = {};
   const rows = () => p.$$eval("#dupBody .list .item", a => a.map(x => x.querySelector(".name").textContent.trim() + " | " + x.querySelector(".meta").textContent.trim() + " | " + x.querySelector(".price").textContent.trim()));
-  await p.click("#cDup"); await p.waitForTimeout(200);
+  await p.click("#cMoreMenu > summary").then(() => p.click("#cDup")); await p.waitForTimeout(200);
   R.def = await rows(); R.sum = await p.$$eval("#dupBody .summary b", a => a.map(x => x.textContent));
   await p.click('#dupKeep [data-k="0"]'); await p.waitForTimeout(100); R.keep0 = await rows();
   await p.click('#dupKeep [data-k="1"]'); await p.click("#dupBas"); await p.waitForTimeout(100); R.basics = await rows(); await p.click("#dupBas"); await p.waitForTimeout(100);
@@ -39,7 +39,7 @@ async function run(opts, shot) {
   await p.click("#toastAct"); await p.waitForTimeout(200);
   R.undone = await p.evaluate(() => Object.values(S.coll).filter(e => e.name === "Sol Ring" && e.binder === "trade").length);
   // one copy per deck: the 2 deck copies add up
-  await p.evaluate(() => { S.settings.shareCopies = false; closeSheet(); }); await p.click("#cDup"); await p.waitForTimeout(150); R.noShare = await rows();
+  await p.evaluate(() => { S.settings.shareCopies = false; closeSheet(); }); await p.click("#cMoreMenu > summary").then(() => p.click("#cDup")); await p.waitForTimeout(150); R.noShare = await rows();
   await p.evaluate(() => { S.settings.shareCopies = true; closeSheet(); });
   R.overflow = await p.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
   R.errs = errs; await b.close(); srv.kill(); return R;

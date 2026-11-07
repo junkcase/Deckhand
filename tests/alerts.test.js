@@ -40,9 +40,9 @@ async function run(ctxOpts, shot) {
   // ---- end to end: Update prices with the real refresh path
   await p.evaluate(() => { const e = Object.values(S.coll).find(x => x.id === "b"); const a = alertRecord("b|nonfoil", e); a.rules.push(bindRule({ id: uid(), kind: "above", v: 3, on: true }, 2)); save(); go("coll"); });
   PRICE.b = 3.5; PRICE.a = 7.9;
-  await p.click("#cRefresh"); await p.waitForFunction(() => !refreshing, null, { timeout: 15000 }); await p.waitForTimeout(300);
+  await p.click("#cMoreMenu > summary").then(() => p.click("#cRefresh")); await p.waitForFunction(() => !refreshing, null, { timeout: 15000 }); await p.waitForTimeout(300);
   R.e2e = await p.evaluate(() => ({ log: S.alerts["b|nonfoil"].log.map(l => l.price), banner: [...document.querySelectorAll(".box.alert .kv")].map(x => x.textContent.replace(/\s+/g, " ").trim()).filter(t => t.includes("Beta")) }));
-  PRICE.b = 3.5; await p.click("#cRefresh"); await p.waitForFunction(() => !refreshing, null, { timeout: 15000 });
+  PRICE.b = 3.5; await p.click("#cMoreMenu > summary").then(() => p.click("#cRefresh")); await p.waitForFunction(() => !refreshing, null, { timeout: 15000 });
   R.e2eAgain = await p.evaluate(() => S.alerts["b|nonfoil"].log.length);
   // OK on the banner marks it seen
   const okBtn = await p.$('.box.alert [data-seen="b|nonfoil"]'); if (okBtn) await okBtn.click(); await p.waitForTimeout(150);
@@ -72,7 +72,7 @@ async function run(ctxOpts, shot) {
   R.deleted = await p.evaluate(id => !S.alerts["b|nonfoil"].rules.some(x => x.id === id), rid);
   await p.evaluate(() => closeSheet());
   // ---- all-alerts sheet
-  await p.evaluate(() => go("coll")); await p.click("#cAlerts"); await p.waitForTimeout(200);
+  await p.evaluate(() => go("coll")); await p.click("#cMoreMenu > summary").then(() => p.click("#cAlerts")); await p.waitForTimeout(200);
   R.sheet = await p.$eval("#alSheet", s => ({ active: s.querySelectorAll(".box").length, text: s.textContent.includes("Nothing is sent outside the app"), tab: s.querySelector('#alTabs [data-v="active"]').textContent }));
   if (shot) await p.screenshot({ path: __dirname + "/" + shot.replace(".png", "_active.png"), fullPage: false });
   await p.click('#alTabs [data-v="hist"]'); await p.waitForTimeout(100);
