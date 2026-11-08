@@ -80,7 +80,10 @@ const card = (id, name) => ({ id, oid: "o" + id, name, set: "cmm", setName: "CMM
   await A.evaluate(() => { const k = Object.keys(S.coll).find(k => S.coll[k].name === "Sol Ring"); S.coll[k].qty = 1; save(); }); await settle(A); await settle(B);
   ok(await cards(B) === "Lightning Bolt×2, Sol Ring×1", `computer → phone (${await cards(B)})`);
   // nothing changed: only a small check, no download
-  for (const x of [B, C, D]) await x.evaluate(() => clearInterval(SYNC.poll));      // only this device checks now (the others' 15-second checks would download, rightly, and muddy the count)
+  // only this device checks now (the others' 15-second checks would download, rightly, and muddy the count); a check
+  // already under way on another device is let finish, and this device catches up with it first
+  for (const x of [B, C, D]) await x.evaluate(async () => { clearInterval(SYNC.poll); for (let i = 0; i < 200 && SYNC.busy; i++) await new Promise(r => setTimeout(r, 30)); });
+  await settle(A);
   const m0 = G.media; await settle(A); await settle(A);
   ok(G.media === m0, "when nothing changed, a check doesn't download the file again");
   // Google's hour runs out on the phone: changes wait, the corner says Tap to sync, a tap signs in and sends them
