@@ -156,6 +156,11 @@ button.group-h .chev{display:inline-block;width:1em;transition:transform .15s} b
 .grid .ownq{position:absolute;left:4px;bottom:23px;background:var(--ok);color:#fff;font:700 11px var(--f-display);padding:1px 6px;border-radius:9px;pointer-events:none}
 .grid .qadd{position:absolute;right:4px;top:4px;aspect-ratio:auto;width:32px;height:32px;border-radius:50%;background:rgba(10,15,20,.78);color:#fff;font:700 20px/1 var(--f-display);display:grid;place-items:center;box-shadow:0 1px 4px rgba(0,0,0,.4)}
 .grid .tile.owned .qadd{background:var(--ok)}.grid .qadd:active{transform:scale(.92)}
+/* search results: bigger cards, captions and badges */
+.grid.sres-big{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}@media(min-width:900px){.grid.sres-big{grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}}
+.grid.sres-big .cap{font-size:14px;font-weight:600;color:var(--ink,inherit)}.grid.sres-big .cap .sym{width:18px;height:18px;vertical-align:-4px}
+.grid.sres-big .pr{font-size:14px;padding:2px 7px;right:6px;bottom:6px}.grid.sres-big .tg{font-size:12px;padding:2px 6px;left:6px;top:6px}
+.grid.sres-big .ownq{font-size:14px;padding:2px 8px;left:6px;bottom:32px}.grid.sres-big .qadd{width:42px;height:42px;font-size:26px;right:6px;top:6px}
 .fgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .fgrid label{display:flex;flex-direction:column;gap:4px;min-width:0}
 .fgrid select{width:100%}
@@ -260,8 +265,6 @@ details>summary{cursor:pointer}.seg.wide button{flex:1 1 auto;min-width:0;white-
 .bcap{display:flex;justify-content:space-between;gap:4px}.bcap .muted{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.settok{display:block}
 .own[data-ok] > .kv > .grow{cursor:pointer;border-radius:8px}.own[data-ok] > .kv > .grow:hover{background:var(--sunk)}.own.picked > .kv > .grow{box-shadow:inset 3px 0 0 var(--accent);padding-left:8px}
 .stepper.sm button{width:30px;height:30px}.stepper.sm .num{min-width:22px}
-.cbar{position:sticky;bottom:calc(-20px - env(safe-area-inset-bottom,0px));z-index:5;margin:12px -16px calc(-20px - env(safe-area-inset-bottom,0px));padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px));background:var(--surface);border-top:1px solid var(--line);box-shadow:0 -6px 16px rgba(0,0,0,.08)}
-.cbar .cbar-row{margin:0;flex-wrap:nowrap}.cbar #cPlus{min-height:40px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 details.menu{position:relative}details.menu>summary{list-style:none;cursor:pointer}details.menu>summary::-webkit-details-marker{display:none}
 .menu-list{position:absolute;left:0;top:calc(100% + 4px);z-index:30;min-width:200px;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:4px}
 .menu.up .menu-list{top:auto;bottom:calc(100% + 4px)}
@@ -3615,7 +3618,7 @@ function drawResults() {
   if (!sv.results.length) { el.innerHTML = `<p class="small muted">Start typing and pick a name to see every printing, newest first. Or open Filters to browse by color, type, rarity, format, mana value, price or set. Scryfall syntax like <b>t:dragon o:flying</b> works too.</p>`; return; }
   const picked = sv.keepQ && sv.q === sv.keepQ ? sv.keepQ.replace(/^!"|"$/g, "") : "";
   const mine = ownedPrintings();
-  el.innerHTML = `${picked ? `<p class="small muted" style="margin:0 0 6px">Printings of <b>${esc(picked)}</b></p>` : ""}<div class="grid">${sv.results.map((c, i) => { const own = mine[c.id]; return `<div class="tile ${own ? "owned" : ""}"><button data-i="${i}" aria-label="${esc(c.name)}, ${esc(c.set_name)} #${esc(c.collector_number)}${own ? `, you own ${own.qty}` : ""}">
+  el.innerHTML = `${picked ? `<p class="small muted" style="margin:0 0 6px">Printings of <b>${esc(picked)}</b></p>` : ""}<div class="grid sres-big">${sv.results.map((c, i) => { const own = mine[c.id]; return `<div class="tile ${own ? "owned" : ""}"><button data-i="${i}" aria-label="${esc(c.name)}, ${esc(c.set_name)} #${esc(c.collector_number)}${own ? `, you own ${own.qty}` : ""}">
       ${imgOf(c) ? `<img loading="lazy" src="${esc(imgOf(c, "normal"))}" alt="">` : `<span class="fallback">${esc(c.name)}</span>`}
       ${priceOf(c) != null ? `<span class="pr num">${money(priceOf(c))}</span>` : ""}${(t => t ? `<span class="tg tg-${t.k}" title="${esc(t.tip)}">${esc(t.label)}</span>` : "")(cardTags(c)[0])}</button>
       ${own ? `<span class="ownq num">×${own.qty}</span>` : ""}
@@ -3828,9 +3831,7 @@ function openCard(card, finish, binder, ctx) {
     // (one copy in the deck only: with several, e.g. basic lands in different arts, the deck box below offers "Add … to this deck" or "Change printing")
     const useInDeck = (card, quiet) => { if (!(ctx && ctx.deck && ctx.deck.cards[ctx.key]) || ctx.deck.cards[ctx.key].id === card.id || ctx.deck.cards[ctx.key].qty > 1) return; ctx.key = setDeckPrinting(ctx.deck, ctx.key, card); rememberPrinting(card); if (!quiet) toast(`${ctx.deck.name} now uses ${(card.set || "").toUpperCase()} #${card.collector_number || card.num}`); };
     const bump = n => { if (n > 0) useInDeck(full && full.id === s.id ? full : s, true); addToColl(s, fin, n, bsel); if (n > 0 && !isWish(bsel)) cardSound(priceSound(priceOf(full || s, fin))); draw(); toast(`${n > 0 ? "Added" : "Removed"} ${Math.abs(n)} ${s.name} ${n > 0 ? "to" : "from"} ${S.binders[bsel].name}${n > 0 && tagWords(full || s, fin) ? " · " + tagWords(full || s, fin) : ""}`); };
-    // the add controls live in a bar fixed to the bottom of the card screen, in reach while scrolling or swiping
-    // (opened from a deck, they stay in place, under the printing you're choosing)
-    const ar = $("#cAddRow"); if (ar && myBody && !(ctx && ctx.deck)) { const bar = document.createElement("div"); bar.className = "cbar"; bar.id = "cBar"; bar.appendChild(ar); myBody.appendChild(bar); }
+    // the add controls stay where they are, under the printing you're choosing (you asked for them not to move)
     $("#cPlus").onclick = () => bump(addQty); $("#cMinus").onclick = () => bump(-1);
     $("#qInc").onclick = () => { addQty = Math.min(99, addQty + 1); draw(); }; $("#qDec").onclick = () => { addQty = Math.max(1, addQty - 1); draw(); };
     $("#cPickPr").onclick = () => showPrints(s, picked => { s = slim(picked); full = picked; fin = s.finishes.includes(fin) ? fin : s.finishes[0]; useInDeck(picked); draw(); }, $("#cPickBox"));

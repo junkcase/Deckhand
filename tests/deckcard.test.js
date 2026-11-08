@@ -43,8 +43,8 @@ async function run(opts) {
   await p.evaluate(() => { const c = Object.values(S.decks.d.cards)[0]; c.qty = 3; go("decks", "d"); }); await p.waitForTimeout(200);
   await p.click('#dl [data-open]'); await p.waitForSelector("#cPickPr"); await p.click("#cPickPr"); await p.waitForSelector("#cPickBox [data-i]"); await p.click('#cPickBox [data-i="2"]'); await p.waitForTimeout(250);
   R.multi = [await deckPr(), !!(await p.$("#cDeckAddPr"))]; await p.click("#sheetClose"); await p.waitForTimeout(150);
-  // opened outside a deck, the add bar is still at the bottom
-  await p.evaluate(() => { go("coll"); const e = Object.values(S.coll)[0]; openCard(e, e.finish, e.binder); }); await p.waitForTimeout(300); R.collBar = !!(await p.$("#cBar #cPlus"));
+  // opened outside a deck, the add controls are in place too
+  await p.evaluate(() => { go("coll"); const e = Object.values(S.coll)[0]; openCard(e, e.finish, e.binder); }); await p.waitForTimeout(300); R.collBar = await p.evaluate(() => !document.querySelector("#cBar") && !!document.querySelector("#cAddRow #cPlus").closest(".box"));
   R.errs = errs; await b.close(); srv.kill(); return R;
 }
 (async () => {
@@ -60,7 +60,7 @@ async function run(opts) {
     ok(R.add[0] === "cmm#410×1" && /cmm#410\/(nonfoil|foil)\/trade×1/.test(R.add[1]), `${label}: adding a printing to the collection makes the deck use it ${J(R.add)}`);
     ok(R.deckArt === "sol-cmm|0", `${label}: back in the deck list, the card shows that printing (${R.deckArt})`);
     ok(R.multi[0] === "cmm#410×3" && R.multi[1], `${label}: with 3 copies in the deck, choosing a printing leaves them and offers to add it alongside ${JSON.stringify(R.multi)}`);
-    ok(R.collBar, `${label}: opened outside a deck, the add bar is still at the bottom`);
+    ok(R.collBar, `${label}: opened outside a deck, the add controls are in place too`);
     ok(!R.errs.length, `${label}: no errors ${J(R.errs)}`);
   }
 })();
