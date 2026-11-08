@@ -1,5 +1,5 @@
 name: Store prices
-# Once a day: copy Mana Pool's and Card Kingdom's public price lists to the "data" branch, which Deckhand reads
+# Once a day: copy Mana Pool's and Card Kingdom's public price lists (cards and sealed products) to the "data" branch, which Deckhand reads
 # (neither can be read straight from a website), add today's prices to the price history behind the card charts, and
 # copy Commander Spellbook's combo list (its API only answers its own website) for the Combos tab.
 # The branch keeps only the latest copy; if one download fails, yesterday's copy of that part stays.
@@ -31,6 +31,8 @@ jobs:
         run: node tools/manapool-mirror.js "$RUNNER_TEMP/out" || echo "::warning::Mana Pool download failed; keeping yesterday's copy"
       - name: Card Kingdom
         run: node tools/cardkingdom-mirror.js "$RUNNER_TEMP/out" || echo "::warning::Card Kingdom download failed; keeping yesterday's copy"
+      - name: Sealed products (Mana Pool and Card Kingdom sealed price lists)
+        run: node tools/sealed-mirror.js "$RUNNER_TEMP/out" || echo "::warning::Sealed prices not updated today; keeping yesterday's copy"
       - name: Price history (TCGplayer and Card Kingdom from MTGJSON, plus today's Mana Pool)
         run: |
           pip install -q ijson
