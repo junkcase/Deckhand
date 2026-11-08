@@ -82,7 +82,7 @@ const card = (id, name) => ({ id, oid: "o" + id, name, set: "cmm", setName: "CMM
   // nothing changed: only a small check, no download
   // only this device checks now (the others' 15-second checks would download, rightly, and muddy the count); a check
   // already under way on another device is let finish, and this device catches up with it first
-  for (const x of [B, C, D]) await x.evaluate(async () => { clearInterval(SYNC.poll); for (let i = 0; i < 200 && SYNC.busy; i++) await new Promise(r => setTimeout(r, 30)); });
+  for (const x of [B, C, D]) await x.evaluate(async () => { clearInterval(SYNC.poll); clearTimeout(SYNC.t); SYNC.poll = null; for (let i = 0; i < 200 && SYNC.busy; i++) await new Promise(r => setTimeout(r, 30)); });
   await settle(A);
   const m0 = G.media; await settle(A); await settle(A);
   ok(G.media === m0, "when nothing changed, a check doesn't download the file again");
