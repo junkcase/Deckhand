@@ -31,7 +31,7 @@ jobs:
         run: node tools/manapool-mirror.js "$RUNNER_TEMP/out" || echo "::warning::Mana Pool download failed; keeping yesterday's copy"
       - name: Card Kingdom
         run: node tools/cardkingdom-mirror.js "$RUNNER_TEMP/out" || echo "::warning::Card Kingdom download failed; keeping yesterday's copy"
-      - name: Sealed products (Mana Pool and Card Kingdom sealed price lists)
+      - name: Sealed products (TCGplayer through TCGCSV, Mana Pool and Card Kingdom sealed prices)
         run: node tools/sealed-mirror.js "$RUNNER_TEMP/out" || echo "::warning::Sealed prices not updated today; keeping yesterday's copy"
       - name: Price history (TCGplayer and Card Kingdom from MTGJSON, plus today's Mana Pool)
         run: |
