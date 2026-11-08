@@ -12,11 +12,12 @@ const ck = { meta: { created_at: "2026-11-07 19:10:11" }, data: [
   { id: 1, url: "mtg-sealed/bloomburrow-play-booster-box", name: "Bloomburrow Play Booster Box", edition: "Bloomburrow", price_retail: "249.99", qty_retail: 2, price_buy: "150.00", qty_buying: 3 },
   { id: 2, url: "mtg-sealed/x", name: "Duskmourn Commander Deck: Endless Punishment", edition: "Duskmourn: House of Horror Commander", price_retail: "54.99", qty_retail: 1, price_buy: "0.00", qty_buying: 0 },
   { id: 3, url: "mtg-sealed/y", name: "Foundations Starter Collection", edition: "Foundations", price_retail: "69.99", qty_retail: 5, price_buy: "40.00", qty_buying: 2 },
+  { id: 5, url: "mtg-sealed/w", name: "Modern Horizons 3 Collector's Edition Commander Deck - Eldrazi Incursion", edition: "MH3 Commander", price_retail: "199.99", qty_retail: 1, price_buy: "0", qty_buying: 0 },
   { id: 4, url: "mtg-sealed/z", name: "Nothing Priced", edition: "Foundations", price_retail: "0.00", qty_retail: 0, price_buy: "0.00", qty_buying: 0 },
 ] };
-const sets = { data: [{ code: "blb", name: "Bloomburrow" }, { code: "fdn", name: "Foundations" }, { code: "dsc", name: "Duskmourn: House of Horror Commander" }] };
+const sets = { data: [{ code: "blb", name: "Bloomburrow" }, { code: "fdn", name: "Foundations" }, { code: "dsc", name: "Duskmourn: House of Horror Commander" }, { code: "mh3", name: "Modern Horizons 3" }, { code: "m3c", name: "Modern Horizons 3 Commander" }, { code: "pmh3", name: "Modern Horizons 3 Promos", digital: true }] };
 const P = combine(mp, ck, sets), by = Object.fromEntries(P.map(p => [p.name, p]));
-ok(P.length === 4, `4 products: English only, unpriced left out (${P.map(p => p.name).join(" | ")})`);
+ok(P.length === 5, `5 products: English only, unpriced left out (${P.map(p => p.name).join(" | ")})`);
 const box = by["Bloomburrow Play Booster Box"];
 ok(box && box.set === "blb" && JSON.stringify(box.mp) === '[20621,20241,9,"https://manapool.com/sealed/blb/play-booster-box"]' && JSON.stringify(box.ck) === '[24999,15000,3,"https://www.cardkingdom.com/mtg-sealed/bloomburrow-play-booster-box"]' && box.tcg === 541154, "the same box at both stores is one product with both prices, in cents " + JSON.stringify(box));
 const deck = by["Duskmourn Commander Deck - Endless Punishment"];
@@ -25,6 +26,8 @@ const fdn = by["Foundations Starter Collection"];
 ok(fdn && fdn.set === "fdn" && !fdn.mp, `a Card Kingdom-only product gets its set code from the set's name (${fdn && fdn.set})`);
 ok(mainPrice(box) === 20241 && mainPrice(by["Bloomburrow Tin Mouse"]) === 9999 && mainPrice(fdn) === 6999, "main price: Mana Pool market, else Mana Pool lowest, else Card Kingdom retail");
 ok(norm("Magic: The Gathering — Foundations Jumpstart Booster (Box)") === "magic the gathering foundations jumpstart booster box", `names are compared in one spelling (${norm("Magic: The Gathering — Foundations Jumpstart Booster (Box)")})`);
+const mhc = by["Modern Horizons 3 Collector's Edition Commander Deck - Eldrazi Incursion"];
+ok(mhc && mhc.set === "mh3", `an edition name Scryfall doesn't use: the longest set name the product starts with (${mhc && mhc.set})`);
 // history
 const h = {}, d0 = 20400;
 addHistory(h, [box], d0); addHistory(h, [Object.assign({}, box, { mp: [20000, 20250, 1, ""] })], d0 + 1);

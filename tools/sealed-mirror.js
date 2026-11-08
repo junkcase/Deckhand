@@ -15,7 +15,12 @@ const mainPrice = p => (p.mp && (p.mp[1] || p.mp[0])) || (p.ck && p.ck[0]) || nu
 
 function combine(mp, ck, sets) {
   const byName = {}, setOf = {};
-  for (const s of (sets && sets.data) || []) setOf[norm(s.name)] = s.code;
+  const names = [];
+  for (const s of (sets && sets.data) || []) { if (s.digital) continue; const n = norm(s.name); setOf[n] = setOf[n] || s.code; names.push(n); }
+  names.sort((a, b) => b.length - a.length);
+  // Card Kingdom's edition name isn't always Scryfall's: then the longest set name the product's name starts with
+  // ("Modern Horizons 3 Collector's Edition Commander Deck" → Modern Horizons 3)
+  const setFor = (edition, name) => { const e = setOf[norm(edition)]; if (e) return e; const n = norm(name) + " "; const hit = names.find(x => x.length >= 4 && n.startsWith(x + " ")); return hit ? setOf[hit] : ""; };
   for (const r of (mp && mp.data) || []) {
     if (r.language_id && r.language_id !== "EN") continue;
     const k = norm(r.name); if (!k) continue;
@@ -26,7 +31,7 @@ function combine(mp, ck, sets) {
     const k = norm(r.name); if (!k) continue;
     const row = [cents(r.price_retail), cents(r.price_buy), parseInt(r.qty_buying) || 0, r.url ? "https://www.cardkingdom.com/" + String(r.url).replace(/^\//, "") : ""];
     if (row[0] == null && row[1] == null) continue;
-    const p = byName[k] || (byName[k] = { k, set: setOf[norm(r.edition)] || "", name: r.name, tcg: null, mp: null, ck: null });
+    const p = byName[k] || (byName[k] = { k, set: setFor(r.edition, r.name), name: r.name, tcg: null, mp: null, ck: null });
     p.ck = row;
   }
   return Object.values(byName).filter(p => mainPrice(p) || (p.ck && p.ck[1])).sort((a, b) => a.set.localeCompare(b.set) || a.name.localeCompare(b.name));
