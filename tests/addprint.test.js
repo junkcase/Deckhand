@@ -37,6 +37,14 @@ async function run(opts, shot) {
   if (shot) await p.screenshot({ path: __dirname + "/" + shot });
   await p.click('#addPrBox .prints button[data-i="2"]'); await p.waitForTimeout(300);
   R.picked = await deck(); R.sheetClosed = !(await p.$("#addPrBox"));
+  // the printing picked is now the default: tapping the name adds Alpha (not your C21 copy), and Printings starts on it
+  await p.evaluate(() => { S.decks.e = { id: "e", name: "Second deck", format: "casual", cmdr: [], cards: {}, created: 2, updated: 2 }; save(); go("decks", "e"); }); await p.waitForTimeout(300);
+  const b2 = reqs.length; await type("sol r"); await p.click('#dAc [data-i="0"]'); await p.waitForTimeout(300);
+  R.remembered = [await p.evaluate(() => Object.values(S.decks.e.cards).map(c => `${c.qty}×${c.name}/${c.set}`).join()), reqs.slice(b2).filter(u => /named\?exact=Sol/.test(u)).length, await p.evaluate(() => !!S.settings["pp:sol ring"])];
+  await type("sol r"); await p.click('#dAc [data-pr="0"]'); await p.waitForSelector("#addPrBox .prints button"); R.prePick = await p.$eval('#addPrBox .prints button[aria-pressed="true"] .pl1', e => e.textContent.replace(/\s+/g, " ").trim());
+  await p.click('#addPrBox .prints button[data-i="0"]'); await p.waitForTimeout(300);
+  await type("sol r"); await p.click('#dAc [data-i="0"]'); await p.waitForTimeout(300); R.changed = await p.evaluate(() => Object.values(S.decks.e.cards).map(c => `${c.qty}×${c.set}`).sort().join());
+  await p.evaluate(() => go("decks", "d")); await p.waitForTimeout(200);
   // keyboard still works: arrow down + Enter picks the second suggestion
   await type("sol"); await p.keyboard.press("ArrowDown"); await p.keyboard.press("ArrowDown"); R.hl = await p.$eval("#dAc .hl", e => e.textContent.trim()).catch(() => null);
   R.overflow = await p.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
@@ -50,6 +58,9 @@ async function run(opts, shot) {
     ok(R.notOwned === "1×Arcane Signet/cmm, 1×Sol Ring/c21", `${label}: a card you don't own is looked up as before`);
     ok(JSON.stringify(R.tiles.map(t => t[1])) === '["","you own 2",""]' && R.pressed === 1, `${label}: Printings shows every printing, yours marked (wishlist copies aren't “owned”) ${JSON.stringify(R.tiles)}`);
     ok(R.picked === "1×Arcane Signet/cmm, 1×Sol Ring/c21, 2×Sol Ring/lea" && R.sheetClosed, `${label}: tapping a printing adds that one, with the quantity typed (${R.picked})`);
+    ok(R.remembered[0] === "1×Sol Ring/lea" && R.remembered[1] === 0 && R.remembered[2], `${label}: the printing you picked is used next time you add that card, in any deck (no lookup) ${JSON.stringify(R.remembered)}`);
+    ok(/LEA/.test(R.prePick), `${label}: the Printings list starts on the one you picked (${R.prePick})`);
+    ok(R.changed === "1×lea,2×cmm", `${label}: picking another printing changes the default (${R.changed})`);
     ok(R.hl && /Sol Talisman/.test(R.hl), `${label}: arrow keys still move through the names (${R.hl})`);
     ok(!R.overflow, `${label}: no sideways scrolling`);
     ok(!R.errs.length, `${label}: no console errors ${JSON.stringify(R.errs)}`);

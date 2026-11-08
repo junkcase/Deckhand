@@ -34,7 +34,7 @@ async function run(opts) {
   await p.click('[data-odec*="sol-ltc"]'); await p.waitForTimeout(200); R.gone = [await own(), await p.$eval("#toastRoot", e => e.textContent)];
   await p.click("#toastRoot button"); await p.waitForTimeout(150); R.undo = await own();
   // choose a printing: the deck uses it
-  await p.click("#cPickPr"); await p.waitForSelector("#cPickBox [data-i]"); await p.click('#cPickBox [data-i="1"]'); await p.waitForTimeout(250); R.choose = await deckPr();
+  await p.click("#cPickPr"); await p.waitForSelector("#cPickBox [data-i]"); await p.click('#cPickBox [data-i="1"]'); await p.waitForTimeout(250); R.choose = await deckPr(); R.pref = await p.evaluate(() => (S.settings["pp:sol ring"] || {}).id);
   // add a different printing to the collection: the deck uses it too
   await p.click("#cPickPr"); await p.waitForSelector("#cPickBox [data-i]"); await p.click('#cPickBox [data-i="0"]'); await p.waitForTimeout(200);
   await p.click("#cPlus"); await p.waitForTimeout(200); R.add = [await deckPr(), await own()];
@@ -55,6 +55,7 @@ async function run(opts) {
     ok(R.tapCopy[0] === "ltc#284×1" && /LTC #284/.test(R.tapCopy[1]) && R.tapCopy[2] === "trade" && /sol-ltc/.test(R.tapCopy[3]), `${label}: tapping a copy shows that printing and the deck uses its art ${J(R.tapCopy)}`);
     ok(R.inc === "c21#263/foil/main×2,ltc#284/nonfoil/trade×2" && R.dec === "c21#263/foil/main×2,ltc#284/nonfoil/trade×1", `${label}: + / − on a copy change exactly that copy ${J([R.inc, R.dec])}`);
     ok(R.gone[0] === "c21#263/foil/main×2" && /Removed 1 Sol Ring/.test(R.gone[1]) && R.undo === R.dec, `${label}: removing the last one can be undone ${J([R.gone, R.undo])}`);
+    ok(R.pref === "sol-c21", `${label}: and it's remembered as the printing to use next time (${R.pref})`);
     ok(R.choose === "c21#263×1", `${label}: choosing a printing makes the deck use it (${R.choose})`);
     ok(R.add[0] === "cmm#410×1" && /cmm#410\/(nonfoil|foil)\/trade×1/.test(R.add[1]), `${label}: adding a printing to the collection makes the deck use it ${J(R.add)}`);
     ok(R.deckArt === "sol-cmm|0", `${label}: back in the deck list, the card shows that printing (${R.deckArt})`);

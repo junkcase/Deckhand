@@ -3589,7 +3589,7 @@ function openCard(card, finish, binder, ctx) {
     }
     // from a deck: the printing you choose, or add to your collection, becomes the one the deck uses (its art in the deck list)
     // (one copy in the deck only: with several, e.g. basic lands in different arts, the deck box below offers "Add … to this deck" or "Change printing")
-    const useInDeck = (card, quiet) => { if (!(ctx && ctx.deck && ctx.deck.cards[ctx.key]) || ctx.deck.cards[ctx.key].id === card.id || ctx.deck.cards[ctx.key].qty > 1) return; ctx.key = setDeckPrinting(ctx.deck, ctx.key, card); if (!quiet) toast(`${ctx.deck.name} now uses ${(card.set || "").toUpperCase()} #${card.collector_number || card.num}`); };
+    const useInDeck = (card, quiet) => { if (!(ctx && ctx.deck && ctx.deck.cards[ctx.key]) || ctx.deck.cards[ctx.key].id === card.id || ctx.deck.cards[ctx.key].qty > 1) return; ctx.key = setDeckPrinting(ctx.deck, ctx.key, card); rememberPrinting(card); if (!quiet) toast(`${ctx.deck.name} now uses ${(card.set || "").toUpperCase()} #${card.collector_number || card.num}`); };
     const bump = n => { if (n > 0) useInDeck(full && full.id === s.id ? full : s, true); addToColl(s, fin, n, bsel); if (n > 0 && !isWish(bsel)) cardSound(priceSound(priceOf(full || s, fin))); draw(); toast(`${n > 0 ? "Added" : "Removed"} ${Math.abs(n)} ${s.name} ${n > 0 ? "to" : "from"} ${S.binders[bsel].name}${n > 0 && tagWords(full || s, fin) ? " · " + tagWords(full || s, fin) : ""}`); };
     // the add controls live in a bar fixed to the bottom of the card screen, in reach while scrolling or swiping
     // (opened from a deck, they stay in place, under the printing you're choosing)
@@ -3628,13 +3628,13 @@ function openCard(card, finish, binder, ctx) {
       const D = ctx.deck, dc = () => D.cards[ctx.key];
       const inc = $("#cDeckInc"); if (inc) inc.onclick = () => { dc().qty++; D.updated = Date.now(); save(); draw(); };
       const dec = $("#cDeckDec"); if (dec) dec.onclick = () => { if (dc().qty > 1) { dc().qty--; D.updated = Date.now(); save(); draw(); } else $("#cDeckDel").click(); };
-      const ap = $("#cDeckAddPr"); if (ap) ap.onclick = () => { addToDeck(D, s, 1, !!(dc() && dc().side)); toast(`Added ${s.name} (${s.set.toUpperCase()} #${s.num}) to ${D.name}`); draw(); };
+      const ap = $("#cDeckAddPr"); if (ap) ap.onclick = () => { rememberPrinting(full && full.id === s.id ? full : s); addToDeck(D, s, 1, !!(dc() && dc().side)); toast(`Added ${s.name} (${s.set.toUpperCase()} #${s.num}) to ${D.name}`); draw(); };
       const sd = $("#cDeckSide"); if (sd) sd.onclick = () => { const c = dc(), nk = c.id + "|" + (c.side ? 0 : 1); delete D.cards[ctx.key]; c.side = !c.side; if (D.cards[nk]) D.cards[nk].qty += c.qty; else D.cards[nk] = c; ctx.key = nk; D.updated = Date.now(); save(); draw(); };
       const del = $("#cDeckDel"); if (del) del.onclick = () => { ctx.removed = Object.assign({}, dc()); ctx.wasCmdr = D.cmdr.includes(ctx.key); delete D.cards[ctx.key]; D.cmdr = D.cmdr.filter(x => x !== ctx.key); D.updated = Date.now(); save(); draw(); };
       const back = $("#cDeckBack"); if (back) back.onclick = () => { D.cards[ctx.key] = ctx.removed; if (ctx.wasCmdr) D.cmdr.push(ctx.key); D.updated = Date.now(); save(); draw(); };
     }
     const dp = $("#cDeckPrint"); if (dp) dp.onclick = () => showPrints(s, picked => {
-      ctx.key = setDeckPrinting(ctx.deck, ctx.key, picked); s = slim(picked); full = picked;
+      ctx.key = setDeckPrinting(ctx.deck, ctx.key, picked); rememberPrinting(picked); s = slim(picked); full = picked;
       toast(`${ctx.deck.name} now uses ${picked.set.toUpperCase()} #${picked.collector_number}`); draw();
     }, $("#cDeckPrintBox"));
     $("#cPrints").onclick = () => showPrints(s, picked => { s = slim(picked); full = picked; fin = s.finishes.includes(fin) ? fin : s.finishes[0]; draw(); });
@@ -5739,6 +5739,15 @@ const deckTab = {};
 const THEMES = ["Aristocrats", "Artifacts", "Blink", "Burn", "Cascade", "Control", "Counters (+1/+1)", "Dragons", "Elves", "Enchantments", "Equipment", "Goblins", "Graveyard", "Group Hug", "Infect", "Landfall", "Lifegain", "Mill", "Proliferate", "Reanimator", "Sacrifice", "Spellslinger", "Stax", "Superfriends", "Tokens", "Treasure", "Tribal", "Vampires", "Voltron", "Wheels", "Wizards", "Zombies"];
 // after adding a card from the deck's add box, open its card screen for this deck (Deck options can turn this off)
 // the printing of a card you own that a deck should use: the one you have most copies of (wishlists don't count)
+// The printing you picked for a card (from a printing list, or a card's screen in a deck) is the one used the next time
+// you add that card to a deck by name. One setting per card, so it syncs, and picks made on two devices both stay.
+const prefKey = name => "pp:" + String(name).toLowerCase();
+const prefPrinting = name => { const v = S.settings && S.settings[prefKey(name)]; return v && v.id ? v : null; };
+function rememberPrinting(c) {
+  if (!c) return; const sl = isSlim(c) ? c : slim(c); if (!sl.id || !sl.name) return;
+  const keep = {}; DECK_FIELDS.forEach(f => { if (sl[f] !== undefined) keep[f] = sl[f]; }); keep.id = sl.id; keep.img = sl.img; keep.oid = sl.oid;
+  S.settings[prefKey(sl.name)] = keep; save();
+}
 function ownedPrinting(name) {
   const by = {}; for (const e of Object.values(S.coll)) if (e.name === name && !isWish(e.binder)) (by[e.id] = by[e.id] || { e, n: 0 }).n += e.qty;
   const best = Object.values(by).sort((a, b) => b.n - a.n || (b.e.added || 0) - (a.e.added || 0))[0];
@@ -5875,14 +5884,15 @@ function renderDeck_(d) {
   const addedMsg = (name, qty, c) => { const al = allocFor(name, d.id); toast(`Added ${qty > 1 ? qty + "× " : ""}${name} (${(c.set || "").toUpperCase()} #${c.num || c.collector_number || ""}) · ${al.own ? `you own ${al.own}${al.other ? `, ${al.other} in other decks` : ""}` : "not in your collection"}`); };
   attachAutocomplete($("#dAdd"), $("#dAc"), async name => {
     const qty = parseAddLine($("#dAdd").value).qty; $("#dAdd").value = ""; deckRefocus = true;
-    const mine = ownedPrinting(name);
-    if (mine) { addToDeck(d, mine, qty, false); renderDeck(d); openAfterAdd(d, mine); addedMsg(name, qty, mine); return; }       // a printing you own, no lookup needed
+    // the printing you chose for this card before, else one you own (no lookup needed either way), else Scryfall's
+    const mine = prefPrinting(name) || ownedPrinting(name);
+    if (mine) { addToDeck(d, mine, qty, false); renderDeck(d); openAfterAdd(d, mine); addedMsg(name, qty, mine); return; }
     try { const c_ = await sf("/cards/named?exact=" + encodeURIComponent(name), null, { now: true }); addToDeck(d, c_, qty, false); renderDeck(d); openAfterAdd(d, c_); addedMsg(name, qty, slim(c_)); } catch (e) { toast(`Couldn't add “${name}”: ${e.message}`); }
   }, { qty: true, onPrints: name => {
     const qty = parseAddLine($("#dAdd").value).qty; $("#dAdd").value = ""; deckRefocus = true;
-    const mine = ownedPrinting(name);
+    const mine = ownedPrinting(name), pref = prefPrinting(name);
     openSheet(`<h2>${esc(name)}</h2><p class="small muted" style="margin:4px 0 0">Tap a printing to add ${qty > 1 ? qty + " of it" : "it"} to “${esc(d.name)}”.${mine ? " Printings you own are marked." : ""}</p><div id="addPrBox"></div>`, () => render());
-    showPrints({ name, id: mine ? mine.id : "" }, picked => { addToDeck(d, picked, qty, false); closeSheet(); renderDeck(d); addedMsg(name, qty, slim(picked)); }, $("#addPrBox"));
+    showPrints({ name, id: pref ? pref.id : mine ? mine.id : "" }, picked => { rememberPrinting(picked); addToDeck(d, picked, qty, false); closeSheet(); renderDeck(d); addedMsg(name, qty, slim(picked)); }, $("#addPrBox"));
   } });
   $("#dTabs").onclick = e => { const b = e.target.closest("button"); if (!b) return; deckTab[d.id] = b.dataset.t; renderDeck(d); };
   if (deckRefocus && !$("#sheetRoot").children.length) { deckRefocus = false; $("#dAdd").focus(); }      // card added: the box is empty and ready for the next one
