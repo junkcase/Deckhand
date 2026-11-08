@@ -1593,8 +1593,8 @@ function setDetail(code, back, keep, host) {
     // the set's sealed products (and its Commander decks'), with prices
     const sealTab = () => { if (!SEALED.list) return `<p class="small ${SEALED.err ? "down" : "muted"}" style="margin-top:10px" id="sdSealLoad">${SEALED.err ? esc(SEALED.err) : "Loading sealed products…"}</p>`;
       const l = sealedOfSet(code).sort(sealedSort);
-      return l.length ? `<p class="small muted" style="margin:10px 0 8px">Mana Pool market price, else its lowest listing, else Card Kingdom. Tap one for both stores, its price history and to add it.</p><div id="sdSeal">${sealedGrid(l)}</div>`
-        : `<p class="small muted" style="margin-top:10px">Mana Pool and Card Kingdom don't list sealed products for this set. Search → Sealed finds products by name.</p>`; };
+      return l.length ? `<p class="small muted" style="margin:10px 0 8px">TCGplayer market price, else Mana Pool, else Card Kingdom. Tap one for each store's price, its price history and to add it.</p><div id="sdSeal">${sealedGrid(l)}</div>`
+        : `<p class="small muted" style="margin-top:10px">TCGplayer, Mana Pool and Card Kingdom don't list sealed products for this set. Search → Sealed finds products by name.</p>`; };
     const ownedTab = `<div class="summary" style="margin-top:8px"><div><span class="label">Different cards</span><b class="num">${rows.length}</b></div><div><span class="label">Copies</span><b class="num">${totalQty}</b></div><div><span class="label">Value</span><b class="num gold">${money(ownVal)}</b></div></div>
       ${rows.length ? `<div class="list" id="sdOwned" style="margin-top:6px">${rows.map(r => `<div class="item"><img loading="lazy" src="${esc(r.img || "")}" alt=""><button class="tap" data-own="${esc(r.key)}"><div class="name">${esc(r.name)}</div>
         <div class="meta small"><span class="muted">#${esc(r.num)}${tr[r.num] && tr[r.num] !== "main" ? " · " + esc(treatName(tr[r.num])) : ""} · ${Object.entries(r.fin).map(([f, n]) => n + " " + (FIN_NAME[f] || f)).join(", ")}</span></div></button>
@@ -2022,9 +2022,9 @@ function binderSheet() {
 }
 
 /* ---------- sealed products: booster boxes, bundles, Commander decks, Secret Lairs…
-   Prices come from the daily job's copy of Mana Pool's and Card Kingdom's sealed price lists (data/sealed/all.json),
-   with a price history (data/sealed/hist.json). The price shown first is Mana Pool's market price, else its lowest
-   listing, else Card Kingdom's price. What you own is S.sealed: one entry per purchase { id, k, name, set, tcg, qty,
+   Prices come from the daily job's copy of TCGplayer's (through TCGCSV), Mana Pool's and Card Kingdom's sealed prices
+   (data/sealed/all.json), with a price history (data/sealed/hist.json). The price shown first is TCGplayer's market price,
+   else Mana Pool's market price, else its lowest listing, else Card Kingdom's price, else TCGplayer's lowest listing. What you own is S.sealed: one entry per purchase { id, k, name, set, tcg, qty,
    opened, paid (each, $), date, at, updated }. It syncs like decks; opened ones stop counting toward the value. */
 const SEALED = { base: "https://raw.githubusercontent.com/junkcase/Deckhand/data/sealed/", list: null, by: null, hist: null, err: "", at: 0, p: null, hp: null };
 function loadSealed(force) {
@@ -2052,13 +2052,15 @@ function loadSealedHist() {
   return SEALED.hp;
 }
 const cents$ = c => typeof c === "number" && isFinite(c) && c > 0 ? c / 100 : null;
-const sealedUrl = u => typeof u === "string" && /^https:\/\/(www\.)?(manapool\.com|cardkingdom\.com)\//.test(u) ? u : "";
+const sealedUrl = u => typeof u === "string" && /^https:\/\/(www\.)?(manapool\.com|cardkingdom\.com|tcgplayer\.com)\//.test(u) ? u : "";
 // the price shown first and where it's from
 function sealedMain(p) {
-  const mp = Array.isArray(p.mp) ? p.mp : null, ck = Array.isArray(p.ck) ? p.ck : null;
+  const tp = Array.isArray(p.tp) ? p.tp : null, mp = Array.isArray(p.mp) ? p.mp : null, ck = Array.isArray(p.ck) ? p.ck : null;
+  if (tp && cents$(tp[0])) return { usd: cents$(tp[0]), from: "TCGplayer market" };
   if (mp && cents$(mp[1])) return { usd: cents$(mp[1]), from: "Mana Pool market" };
   if (mp && cents$(mp[0])) return { usd: cents$(mp[0]), from: "Mana Pool lowest" };
   if (ck && cents$(ck[0])) return { usd: cents$(ck[0]), from: "Card Kingdom" };
+  if (tp && cents$(tp[1])) return { usd: cents$(tp[1]), from: "TCGplayer lowest" };
   return null;
 }
 const sealedImg = (tcg, big) => /^\d+$/.test(String(tcg || "")) ? `https://tcgplayer-cdn.tcgplayer.com/product/${tcg}_${big ? "in_400x400" : "200w"}.jpg` : "";
@@ -2123,7 +2125,7 @@ function openSealed(k, onClose) {
     const el = $("#sealedBody"); if (!el) return;
     const p = (SEALED.by && SEALED.by[k]) || (sealedOwnedOf(k)[0] && Object.assign({ k }, sealedOwnedOf(k)[0], { mp: null, ck: null }));
     if (!p) { el.innerHTML = `<h2>Sealed product</h2><p class="small ${SEALED.err ? "down" : "muted"}">${SEALED.err ? esc(SEALED.err) : "Loading…"}</p>`; return; }
-    const m = sealedMain(p), mp = Array.isArray(p.mp) ? p.mp : null, ck = Array.isArray(p.ck) ? p.ck : null, z = SETS && SETS[p.set], mine = sealedOwnedOf(k);
+    const m = sealedMain(p), tp = Array.isArray(p.tp) ? p.tp : null, mp = Array.isArray(p.mp) ? p.mp : null, ck = Array.isArray(p.ck) ? p.ck : null, z = SETS && SETS[p.set], mine = sealedOwnedOf(k);
     const hist = SEALED.hist && Array.isArray(SEALED.hist[k]) ? SEALED.hist[k].filter(x => Array.isArray(x) && x.length === 2) : null;
     const link = (u, t) => sealedUrl(u) ? `<a class="linkbtn small" href="${esc(sealedUrl(u))}" target="_blank" rel="noopener">${t}</a>` : "";
     el.innerHTML = `<div class="sprod"><span class="simg big">${sealedPic(p.tcg, true)}</span>
@@ -2131,11 +2133,13 @@ function openSealed(k, onClose) {
           ${p.set ? `<span class="small muted">${z ? setIcon(p.set, "common") + " " + esc(z.name) : ""} ${esc(p.set.toUpperCase())}</span>` : ""}
           <b class="num gold" style="font-size:1.4rem" id="spMain">${m ? money(m.usd) : "No price"}</b>${m ? `<span class="small muted">${esc(m.from)}</span>` : ""}</div></div>
       <div class="box" style="margin-top:10px;gap:4px" id="spStores">
-        <div class="kv"><b class="grow">Mana Pool</b>${mp ? `<span class="num">${cents$(mp[0]) ? "from " + money(cents$(mp[0])) : "—"}</span>` : `<span class="small muted">not listed</span>`}</div>
+        <div class="kv"><b class="grow">TCGplayer</b>${tp ? `<span class="num">${cents$(tp[0]) ? money(cents$(tp[0])) : "—"}</span>` : `<span class="small muted">not listed</span>`}</div>
+        ${tp ? `<div class="kv small muted"><span class="grow">${cents$(tp[0]) ? "Market price" : "No market price yet"}${cents$(tp[1]) ? ` · listings from ${money(cents$(tp[1]))}` : ""}</span>${link(tp[3], "Open on TCGplayer")}</div>` : ""}
+        <div class="kv" style="margin-top:6px"><b class="grow">Mana Pool</b>${mp ? `<span class="num">${cents$(mp[0]) ? "from " + money(cents$(mp[0])) : "—"}</span>` : `<span class="small muted">not listed</span>`}</div>
         ${mp ? `<div class="kv small muted"><span class="grow">${cents$(mp[1]) ? "Market price " + money(cents$(mp[1])) : "No market price yet"}${mp[2] ? ` · ${Number(mp[2]).toLocaleString()} for sale` : ""}</span>${link(mp[3], "Open on Mana Pool")}</div>` : ""}
         <div class="kv" style="margin-top:6px"><b class="grow">Card Kingdom</b>${ck ? `<span class="num">${cents$(ck[0]) ? money(cents$(ck[0])) : "out of stock"}</span>` : `<span class="small muted">not listed</span>`}</div>
         ${ck ? `<div class="kv small muted"><span class="grow">${cents$(ck[1]) ? `Buys at ${money(cents$(ck[1]))}${ck[2] ? ` (wants ${ck[2]})` : ""}` : "Not buying"}</span>${link(ck[3], "Open on Card Kingdom")}</div>` : ""}
-        <span class="small muted">${SEALED.asOf && SEALED.asOf.mp ? `Prices from ${esc(scanWhen(Date.parse(SEALED.asOf.mp)))}, updated once a day.` : "Prices update once a day."}</span></div>
+        <span class="small muted">${SEALED.asOf && (SEALED.asOf.tp || SEALED.asOf.mp) ? `Prices from ${esc(scanWhen(Date.parse(SEALED.asOf.tp || SEALED.asOf.mp)))}, updated once a day. TCGplayer's can be a day behind.` : "Prices update once a day."}</span></div>
       <div class="box" style="margin-top:10px" id="spHist">${(hist && hist.length && sealedChartHTML(hist, o.range)) || `<span class="small muted" id="spNoHist">${hist && hist.length ? `Price history starts ${esc(dayStr(hist[0][0]))}; the chart appears once there are a few days of prices.` : SEALED.hist ? "No price history yet." : "Loading price history…"}</span>`}</div>
       <div class="box" style="margin-top:10px;gap:6px" id="spMine"><span class="label">Yours</span>
         ${mine.length ? mine.map(e => `<div class="kv wrap" data-se="${esc(e.id)}"><span class="grow small">${e.qty > 0 ? `<b class="num">${e.qty}</b> sealed` : "None sealed"}${e.opened ? ` · ${e.opened} opened` : ""}${e.paid != null ? ` · paid ${money(e.paid)} each` : ""}${e.date ? ` · ${esc(e.date)}` : ""}</span>
@@ -2175,7 +2179,7 @@ function sealedSheet() {
     const t = sealedTotals(), rows = Object.values(S.sealed).filter(e => e.qty > 0).sort((a, b) => (sealedNow(b) || 0) * b.qty - (sealedNow(a) || 0) * a.qty || a.name.localeCompare(b.name));
     const opened = Object.values(S.sealed).filter(e => !(e.qty > 0) && e.opened > 0);
     el.innerHTML = `<h2>Sealed products</h2>
-      <p class="small muted" style="margin:4px 0 10px">Booster boxes, bundles, Commander decks and more. Prices are Mana Pool's market price (else its lowest listing, else Card Kingdom), updated once a day. Opened ones don't count toward your value.</p>
+      <p class="small muted" style="margin:4px 0 10px">Booster boxes, bundles, Commander decks and more. Prices are TCGplayer's market price (else Mana Pool, else Card Kingdom), updated once a day. Opened ones don't count toward your value.</p>
       <div class="summary"><div><span class="label">Sealed</span><b class="num">${t.n.toLocaleString()}</b></div><div><span class="label">Value</span><b class="num gold" id="slVal">${money(t.value)}</b></div>
         ${t.paidN ? `<div><span class="label">Gain</span><b class="num ${t.paidNow >= t.paid ? "up" : "down"}" id="slGain">${signed(t.paidNow - t.paid)}</b></div>` : ""}</div>
       ${t.paidN ? `<p class="small" style="margin:6px 0 0">You paid <b class="num">${money(t.paid)}</b> for ${t.paidN.toLocaleString()} with a purchase price; they're worth <b class="num">${money(t.paidNow)}</b> now.</p>` : ""}
@@ -2201,7 +2205,7 @@ function renderSealedSearch() {
     if (!SEALED.list) { r.innerHTML = `<p class="small ${SEALED.err ? "down" : "muted"}">${SEALED.err ? esc(SEALED.err) : "Loading sealed products…"}</p>`; return; }
     const hits = sealedSearch(sealQ.q), mine = Object.values(S.sealed).filter(e => e.qty > 0);
     r.innerHTML = sealQ.q.trim() ? (hits.length ? `<p class="small muted" style="margin:0 0 6px">${hits.length === 60 ? "The 60 most valuable matches. Add words to narrow it down." : hits.length + " product" + (hits.length === 1 ? "" : "s")}</p>${sealedGrid(hits)}` : `<p class="small muted">No sealed products match “${esc(sealQ.q)}”.</p>`)
-      : `<p class="small muted">${SEALED.list.length.toLocaleString()} sealed products with prices from Mana Pool and Card Kingdom. Type part of a name or a set.</p>${mine.length ? `<span class="label">Yours</span>${sealedGrid([...new Set(mine.map(e => e.k))].map(k => SEALED.by[k] || Object.assign({ k }, sealedOwnedOf(k)[0], { mp: null, ck: null })))}` : ""}`;
+      : `<p class="small muted">${SEALED.list.length.toLocaleString()} sealed products with prices from TCGplayer, Mana Pool and Card Kingdom. Type part of a name or a set.</p>${mine.length ? `<span class="label">Yours</span>${sealedGrid([...new Set(mine.map(e => e.k))].map(k => SEALED.by[k] || Object.assign({ k }, sealedOwnedOf(k)[0], { mp: null, ck: null })))}` : ""}`;
     r.querySelectorAll("[data-sk]").forEach(b => b.onclick = () => openSealed(b.dataset.sk, () => { if (tab === "search" && sv.mode === "sealed") draw(); else render(); }));
   };
   $("#slq").oninput = debounce(e => { sealQ.q = e.target.value; draw(); }, 150);

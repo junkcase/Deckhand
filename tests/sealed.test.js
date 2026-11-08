@@ -5,6 +5,8 @@ const { chromium } = require("playwright"); const { spawn } = require("child_pro
 const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exitCode = 1; };
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
 const ALLJ = require("./sealed_fixture.js");
+// one product with TCGplayer prices too (test values)
+ALLJ.products.find(p => p.k === "bloomburrow bundle").tp = [5426, 4999, 5800, "https://www.tcgplayer.com/product/541241/magic-bloomburrow-bloomburrow-bundle"];
 const BOX = "bloomburrow play booster box", DAY = Math.floor(Date.now() / 864e5);
 const HIST = { [BOX]: [[DAY - 200, 23500], [DAY - 90, 21000], [DAY - 10, 20241]] };
 const SETLIST = [["blb", "Bloomburrow", "expansion", ""], ["blc", "Bloomburrow Commander", "commander", "blb"], ["dft", "Aetherdrift", "expansion", ""], ["m13", "Magic 2013", "core", ""]]
@@ -96,6 +98,8 @@ const SOL = { object: "card", id: "sol", oracle_id: "o-sol", name: "Sol Ring", s
   sealedUp = false;
   await p.evaluate(() => { SEALED.list = null; SEALED.p = null; SEALED.at = 0; SEALED.loading = false; sv.mode = "sealed"; go("search"); }); await p.waitForFunction(() => /Couldn't load sealed prices/.test(($("#slRes") || {}).textContent || ""));
   R.down = await p.$eval("#slRes", e => e.textContent);
+  // TCGplayer's market price comes first when there is one
+  R.tcg = await p.evaluate(async () => { openSealed("bloomburrow bundle"); await new Promise(r => setTimeout(r, 300)); const r = [$("#spMain").textContent + " · " + $("#spMain").nextElementSibling.textContent, $("#spStores").innerText.replace(/\s+/g, " "), [...$("#spStores").querySelectorAll("a")].map(a => a.textContent)]; closeSheet(); return r; });
   // a product whose history is only today: a note, not an empty chart
   R.newHist = await p.evaluate(async () => { SEALED.hist = { "bloomburrow bundle": [[today(), 4000]] }; SEALED.hp = Promise.resolve(SEALED.hist); openSealed("bloomburrow bundle"); await new Promise(r => setTimeout(r, 300)); const t = ($("#spNoHist") || {}).textContent || ""; closeSheet(); return [t, !!$("#spC")]; });
   R.errs = errs; R.imgs = imgs;
@@ -125,6 +129,8 @@ const SOL = { object: "card", id: "sol", oracle_id: "o-sol", name: "Sol Ring", s
   ok(JSON.stringify(R.merge) === JSON.stringify([5, true, true, true, 5]), "sync: changes and new purchases from both devices are kept (sync version 5) " + JSON.stringify(R.merge));
   ok(/Couldn't load sealed prices/.test(R.down), "a failed price list load shows a message: " + R.down);
   ok(/^Price history starts .+; the chart appears once there are a few days of prices\.$/.test(R.newHist[0]) && !R.newHist[1], "only today's price: a note instead of an empty chart: " + R.newHist[0]);
+  ok(R.tcg[0] === "$54.26 · TCGplayer market" && /TCGplayer \$54\.26 Market price · listings from \$49\.99/.test(R.tcg[1]) && R.tcg[2].join() === "Open on TCGplayer,Open on Mana Pool,Open on Card Kingdom", "TCGplayer: its market price comes first, with its lowest listing and a link; all three stores shown " + JSON.stringify(R.tcg));
+  ok(/TCGplayer not listed Mana Pool/.test(R.stores), "a product TCGplayer doesn't list says so");
   ok(!R.errs.length, "no page errors " + R.errs.join(" | "));
   await b.close(); srv.kill();
 })().catch(e => { console.error(e); process.exit(1); });
