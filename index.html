@@ -264,6 +264,7 @@ details>summary{cursor:pointer}.seg.wide button{flex:1 1 auto;min-width:0;white-
 .cbar .cbar-row{margin:0;flex-wrap:nowrap}.cbar #cPlus{min-height:40px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 details.menu{position:relative}details.menu>summary{list-style:none;cursor:pointer}details.menu>summary::-webkit-details-marker{display:none}
 .menu-list{position:absolute;left:0;top:calc(100% + 4px);z-index:30;min-width:200px;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:4px}
+.menu.up .menu-list{top:auto;bottom:calc(100% + 4px)}
 .mi{display:block;width:100%;text-align:left;padding:11px 14px;border:0;background:none;color:inherit;font:inherit;border-radius:8px;cursor:pointer}.mi:hover,.mi:focus-visible{background:var(--sunk)}.mi:disabled{opacity:.55}
 .cnav{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-4px 0 4px}.cnav .btn{font-size:1.4rem;line-height:1;min-width:44px}
 @keyframes slideL{from{transform:translateX(40px);opacity:.3}to{transform:none;opacity:1}}@keyframes slideR{from{transform:translateX(-40px);opacity:.3}to{transform:none;opacity:1}}
@@ -1744,6 +1745,11 @@ function renderColl() {
   $("#cq").oninput = debounce(e => { cv.q = e.target.value; collFiltersChanged(st); }, 150);
   $("#cs").onchange = e => { cv.sort = e.target.value; cv.limit = COLL_PAGE; drawCollList(); };
   const moreMenu = $("#cMoreMenu");
+  // low on the screen the menu opens upward, so its last items aren't under the tab bar
+  moreMenu.addEventListener("toggle", () => { if (!moreMenu.open) return; moreMenu.classList.remove("up");
+    const l = moreMenu.querySelector(".menu-list"), nav = document.querySelector("nav.tabs"), r = moreMenu.getBoundingClientRect(), nr = nav && nav.getBoundingClientRect();
+    const floor = nr && nr.height && nr.top > innerHeight / 2 ? nr.top : innerHeight;
+    if (l && r.bottom + 4 + l.offsetHeight > floor && r.top - 4 - l.offsetHeight > 0) moreMenu.classList.add("up"); });
   moreMenu.querySelector(".menu-list").addEventListener("click", e => { if (e.target.closest(".mi")) moreMenu.open = false; });
   moreMenu.addEventListener("keydown", e => { if (e.key === "Escape") { moreMenu.open = false; moreMenu.querySelector("summary").focus(); } });
   $("#cRefresh").onclick = () => refreshPrices(false);

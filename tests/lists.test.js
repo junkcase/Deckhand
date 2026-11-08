@@ -88,7 +88,7 @@ async function run(opts, shot) {
     ok(R.sound[0].length === 1 && R.sound[0][0] === R.sound[1], `[${label}] adding from a list plays the card's price sound ${JSON.stringify(R.sound)}`);
     ok(JSON.stringify(R.parsed) === JSON.stringify(["4|Kira Nerys, Firebrand|||nonfoil", "11|Koth, the Geomancer|||nonfoil", "9|Pia, Aether Ascetic|||nonfoil", "5|Pyre Rhymer // Molten Tide|||nonfoil", "8|Voracious Bibliophile|||nonfoil", "2|U.S.S. Enterprise-D, Galaxy-Class|||nonfoil", "1|Sol Ring|cmm|410|foil", "1|Lightnng Bolt|||nonfoil", "1|Zzzz Nothing Card|||nonfoil"]),
       `[${label}] reads Mana Pool's copied list: "4x", prices, headings and "39 CARDS" skipped, commas in names kept, *F* = foil ${JSON.stringify(R.parsed)}`);
-    ok(R.seg.join("|") === "Search cards|Sets|Staples|Lists", `[${label}] Search has a Lists button ${JSON.stringify(R.seg)}`);
+    ok(R.seg.join("|") === "Search cards|Sets|Sealed|Staples|Lists", `[${label}] Search has a Lists button ${JSON.stringify(R.seg)}`);
     ok(R.v1.head === "Mana Pool order" && /Incoming · order/.test(R.v1.chip) && /aren't in your collection until you add them/.test(R.v1.note) && R.coll0 === 0, `[${label}] new list opens as Incoming, nothing in the collection yet ${JSON.stringify(R.v1)}`);
     ok(R.v1.step === "Card 1 of 8" && R.v1.name === "Kira Nerys, Firebrand" && JSON.stringify(R.v1.missing) === '["Zzzz Nothing Card"]', `[${label}] one card at a time (8 found, the typo matched by closest name); the unknown line is listed to fix ${JSON.stringify(R.v1)}`);
     ok(R.v2.name === "Koth, the Geomancer" && /Added 5 Kira Nerys, Firebrand to Collection/.test(R.toast), `[${label}] Add (with +1) adds and moves on (${R.toast})`);

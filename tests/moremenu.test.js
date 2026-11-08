@@ -28,7 +28,7 @@ async function run(opts, shot) {
   for (const [label, opts, shot] of [["desktop", { viewport: { width: 1280, height: 900 } }], ["phone", devices["Pixel 7"], "moremenu_phone.png"]]) {
     const R = await run(opts, shot), J = JSON.stringify;
     ok(J(R.front) === '["Select","⋯ More"]', `${label}: only Select and ⋯ More sit above the list ${J(R.front)}`);
-    ok(J(R.items) === '["Update prices","Import CSV","Value breakdown","Duplicates","Price alerts","Backup / export","Sync"]', `${label}: the menu holds the other tools ${J(R.items)}`);
+    ok(J(R.items) === '["Update prices","Import CSV","Value breakdown","Duplicates","Sealed products","Price alerts","Backup / export","Sync"]', `${label}: the menu holds the other tools ${J(R.items)}`);
     ok(J(R.afterPick) === "[false,true]", `${label}: picking one opens it and closes the menu ${J(R.afterPick)}`);
     ok(R.outside === false && R.esc === false, `${label}: a tap elsewhere or Escape closes the menu`);
     ok(R.flag === "⋯ More ⚠", `${label}: a sync problem shows on the menu button (${R.flag})`);
