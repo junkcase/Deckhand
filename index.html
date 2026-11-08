@@ -2103,7 +2103,7 @@ function sealedGrid(list, attr = "data-sk") {
 function sealedChartHTML(pts, range) {
   const R = { "3m": 92, "1y": 366, "All": 1e5 }, end = today(), from = Math.max(end - R[range] + 1, pts.length ? pts[0][0] : end);
   const before = pts.filter(p => p[0] < from).at(-1), seg = [...(before ? [[from, before[1]]] : []), ...pts.filter(p => p[0] >= from && p[0] <= end)];
-  if (!seg.length) return "";
+  if (!seg.length || end - from < 2) return "";
   seg.push([end, seg.at(-1)[1]]);
   const vals = seg.map(p => p[1] / 100), lo = Math.min(...vals), hi = Math.max(...vals), pad = (hi - lo) * .08 || hi * .05 || 1, y0 = Math.max(0, lo - pad), y1 = hi + pad;
   const W = 600, Hh = 120, X = d => (d - from) / Math.max(1, end - from) * W, Y = v => Hh - (v - y0) / (y1 - y0) * Hh;
@@ -2136,7 +2136,7 @@ function openSealed(k, onClose) {
         <div class="kv" style="margin-top:6px"><b class="grow">Card Kingdom</b>${ck ? `<span class="num">${cents$(ck[0]) ? money(cents$(ck[0])) : "out of stock"}</span>` : `<span class="small muted">not listed</span>`}</div>
         ${ck ? `<div class="kv small muted"><span class="grow">${cents$(ck[1]) ? `Buys at ${money(cents$(ck[1]))}${ck[2] ? ` (wants ${ck[2]})` : ""}` : "Not buying"}</span>${link(ck[3], "Open on Card Kingdom")}</div>` : ""}
         <span class="small muted">${SEALED.asOf && SEALED.asOf.mp ? `Prices from ${esc(scanWhen(Date.parse(SEALED.asOf.mp)))}, updated once a day.` : "Prices update once a day."}</span></div>
-      <div class="box" style="margin-top:10px" id="spHist">${hist && hist.length ? sealedChartHTML(hist, o.range) : `<span class="small muted">${SEALED.hist ? "No price history yet." : "Loading price history…"}</span>`}</div>
+      <div class="box" style="margin-top:10px" id="spHist">${(hist && hist.length && sealedChartHTML(hist, o.range)) || `<span class="small muted" id="spNoHist">${hist && hist.length ? `Price history starts ${esc(dayStr(hist[0][0]))}; the chart appears once there are a few days of prices.` : SEALED.hist ? "No price history yet." : "Loading price history…"}</span>`}</div>
       <div class="box" style="margin-top:10px;gap:6px" id="spMine"><span class="label">Yours</span>
         ${mine.length ? mine.map(e => `<div class="kv wrap" data-se="${esc(e.id)}"><span class="grow small">${e.qty > 0 ? `<b class="num">${e.qty}</b> sealed` : "None sealed"}${e.opened ? ` · ${e.opened} opened` : ""}${e.paid != null ? ` · paid ${money(e.paid)} each` : ""}${e.date ? ` · ${esc(e.date)}` : ""}</span>
             <span class="row" style="gap:4px"><button class="btn sm" data-sm="${esc(e.id)}" aria-label="One fewer" ${e.qty > 0 ? "" : "disabled"}>−</button><button class="btn sm" data-sp="${esc(e.id)}" aria-label="One more">+</button>

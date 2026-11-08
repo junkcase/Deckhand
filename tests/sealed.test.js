@@ -96,6 +96,8 @@ const SOL = { object: "card", id: "sol", oracle_id: "o-sol", name: "Sol Ring", s
   sealedUp = false;
   await p.evaluate(() => { SEALED.list = null; SEALED.p = null; SEALED.at = 0; SEALED.loading = false; sv.mode = "sealed"; go("search"); }); await p.waitForFunction(() => /Couldn't load sealed prices/.test(($("#slRes") || {}).textContent || ""));
   R.down = await p.$eval("#slRes", e => e.textContent);
+  // a product whose history is only today: a note, not an empty chart
+  R.newHist = await p.evaluate(async () => { SEALED.hist = { "bloomburrow bundle": [[today(), 4000]] }; SEALED.hp = Promise.resolve(SEALED.hist); openSealed("bloomburrow bundle"); await new Promise(r => setTimeout(r, 300)); const t = ($("#spNoHist") || {}).textContent || ""; closeSheet(); return [t, !!$("#spC")]; });
   R.errs = errs; R.imgs = imgs;
   console.log(JSON.stringify(R, null, 1));
   ok(R.modes.join() === "Search cards,Sets,Sealed,Staples,Lists", "Search has a Sealed tab: " + R.modes.join());
@@ -122,6 +124,7 @@ const SOL = { object: "card", id: "sol", oracle_id: "o-sol", name: "Sol Ring", s
   ok(JSON.stringify(R.mig) === JSON.stringify([false, false, 3, "", null, false, false]), "bad entries dropped or cleaned " + JSON.stringify(R.mig));
   ok(JSON.stringify(R.merge) === JSON.stringify([5, true, true, true, 5]), "sync: changes and new purchases from both devices are kept (sync version 5) " + JSON.stringify(R.merge));
   ok(/Couldn't load sealed prices/.test(R.down), "a failed price list load shows a message: " + R.down);
+  ok(/^Price history starts .+; the chart appears once there are a few days of prices\.$/.test(R.newHist[0]) && !R.newHist[1], "only today's price: a note instead of an empty chart: " + R.newHist[0]);
   ok(!R.errs.length, "no page errors " + R.errs.join(" | "));
   await b.close(); srv.kill();
 })().catch(e => { console.error(e); process.exit(1); });
