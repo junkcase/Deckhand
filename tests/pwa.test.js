@@ -5,7 +5,11 @@ const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exit
   const b = await chromium.launch(), ctx = await b.newContext({ viewport: { width: 412, height: 900 } }), p = await ctx.newPage();
   await ctx.route(/fonts\.googleapis|fonts\.gstatic|cdn\.jsdelivr|api\.scryfall/, r => r.abort());
   const errs = []; p.on("pageerror", e => errs.push(e.message));
+  // saved copies belonging to other sites on the same address, and an old Deckhand one, before Deckhand's helper starts
+  await p.goto("http://127.0.0.1:8780/manifest.webmanifest"); await p.evaluate(async () => { for (const n of ["other-project-v1", "workbox-precache-v2", "deckhand-v1"]) await (await caches.open(n)).put("/x-" + n, new Response("x")); });
   await p.goto("http://127.0.0.1:8780/"); await p.waitForTimeout(1500);
+  const keys = await p.evaluate(async () => { await navigator.serviceWorker.ready; await new Promise(r => setTimeout(r, 500)); return (await caches.keys()).sort(); });
+  ok(keys.includes("other-project-v1") && keys.includes("workbox-precache-v2") && !keys.includes("deckhand-v1") && keys.some(k => /^deckhand-v\d+$/.test(k)), "the offline helper clears only Deckhand's own old saved copies, not other sites' " + JSON.stringify(keys));
   const man = await p.evaluate(async () => { const l = document.querySelector('link[rel="manifest"]'); return l ? await (await fetch(l.href)).json() : null; });
   ok(man && man.display === "standalone" && man.icons.length === 3 && man.icons.some(i => i.purpose === "maskable") && man.start_url === "./", "manifest: installs full screen, with app icons (incl. Android's shaped icon)");
   for (const i of man.icons) { const st = await p.evaluate(async src => (await fetch(src)).status, i.src); if (st !== 200) ok(false, "icon missing " + i.src); }

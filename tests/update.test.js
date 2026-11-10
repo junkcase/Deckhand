@@ -25,6 +25,11 @@ const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exit
   await p.click("#updGo"); await p.waitForTimeout(1500);
   R.blocked = await p.evaluate(() => [window.__nav, (document.querySelector("#updBar") || {}).textContent || "", ["#updBk", "#updRetry", "#updAnyway"].every(s => document.querySelector(s))]);
   await p.evaluate(() => { idb.ok = window.__idbOk; Storage.prototype.setItem = window.__set; });
+  // saving throws instead of failing quietly: still no reload
+  await p.evaluate(() => { window.__fs = flushSave; flushSave = () => Promise.reject(new Error("broken")); });
+  await p.click("#updRetry"); await p.waitForTimeout(1200);
+  R.thrown = await p.evaluate(() => [window.__nav, /Couldn't save your latest changes/.test((document.querySelector("#updBar") || {}).textContent || "")]);
+  await p.evaluate(() => { flushSave = window.__fs; });
   await Promise.all([p.waitForNavigation({ timeout: 10000 }), p.click("#updRetry")]); await p.waitForTimeout(800);
   R.after = await p.evaluate(() => [!!(S.decks.e && S.decks.e.name === "Eluge"), !document.querySelector("#updBar")]);
   R.errs = errs; await b.close(); srv.kill();
@@ -33,6 +38,7 @@ const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exit
   ok(R.bar && /A new version of Deckhand is ready/.test(R.bar) && /Update now/.test(R.bar), `a newer version on the server shows the notice (${R.bar})`);
   ok(R.onReturn, "coming back to the app checks again");
   ok(R.blocked[0] === 0 && /Couldn't save your latest changes/.test(R.blocked[1]) && R.blocked[2], `if saving fails it doesn't reload; it says so and offers Export a backup / Try again / Update anyway ${JSON.stringify(R.blocked)}`);
+  ok(R.thrown[0] === 0 && R.thrown[1], "if saving throws an error it doesn't reload either " + JSON.stringify(R.thrown));
   ok(R.after[0] && R.after[1], "Try again (storage back) saves first (the just-added deck survives the reload) and loads the new version");
   ok(!R.errs.length, "no console errors " + JSON.stringify(R.errs));
 })();

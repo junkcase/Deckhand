@@ -7002,7 +7002,9 @@ async function runUpdate(force) {
   const b = $("#updGo"); if (b) { b.disabled = true; b.textContent = "Saving…"; }
   // never reload while this device's latest changes aren't saved: they would be lost
   const saveFailed = async () => {
-    if (force === true || await flushSave()) return false;
+    if (force === true) return false;
+    let saved = false; try { saved = await flushSave(); } catch (e) {}
+    if (saved) return false;
     const bar = $("#updBar"); if (bar) { bar.innerHTML = `<span class="grow"><b>Couldn't save your latest changes</b> <span class="small">(storage full or blocked), so Deckhand didn't update. Updating now would lose them.</span></span>
       <button class="btn sm" id="updBk">Export a backup</button><button class="btn sm" id="updRetry">Try again</button><button class="btn sm ghost" id="updAnyway">Update anyway</button>`;
       $("#updBk").onclick = () => backupNow(); $("#updRetry").onclick = () => runUpdate(); $("#updAnyway").onclick = () => runUpdate(true); }
@@ -7020,7 +7022,10 @@ async function runUpdate(force) {
     if (b) b.textContent = "Updating…";
     const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration().catch(() => null);
     if (reg) await Promise.race([reg.update().catch(() => {}), sleep(4000)]);
-  } catch (e) {}
+  } catch (e) {
+    // something unexpected went wrong: still only reload once this device's changes are known to be saved
+    try { if (await saveFailed()) return; } catch (er) { return; }
+  }
   location.reload();
 }
 if (!/jsdom/i.test(navigator.userAgent)) setInterval(() => { if (!document.hidden) checkUpdate(); }, 5 * 6e4);      // (not in the test harness, where a timer would keep it running)
