@@ -4731,11 +4731,19 @@ function getWorkers() {
         else if (!workers && m.status && /load|init/i.test(m.status)) scStatus(`Getting the text reader ready (first time only)… ${Math.round((m.progress || 0) * 100)}%`);
       }
     });
-    const a = await mk(0);                     // first one downloads the language data
-    const b = await mk(1);                     // second one reuses it from the cache
-    await a.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',-", preserve_interword_spaces: "1" });
-    await b.setParameters({ tessedit_pageseg_mode: "6", tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/•·*-. " });
-    workers = [a, b]; if (tab === "scan") scStatus(readyMsg()); return workers;
+    // if getting ready fails partway, any reader already started is shut down, so a retry doesn't leave extras running
+    const made = [];
+    try {
+      // the first one downloads the language data; the second reuses it from the cache
+      const a = await mk(0); made.push(a);
+      const b = await mk(1); made.push(b);
+      await a.setParameters({ tessedit_pageseg_mode: "7", tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',-", preserve_interword_spaces: "1" });
+      await b.setParameters({ tessedit_pageseg_mode: "6", tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/•·*-. " });
+      workers = [a, b]; if (tab === "scan") scStatus(readyMsg()); return workers;
+    } catch (e) {
+      await Promise.all(made.map(w => Promise.resolve().then(() => w.terminate()).catch(() => {})));
+      throw e;
+    }
   })().catch(e => { workersP = null; throw e; });
   return workersP;
 }
