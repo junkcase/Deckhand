@@ -4756,7 +4756,8 @@ function prep(src, sx, sy, sw, sh, targetW = 1100, binarize = false) {
 }
 async function captureFrom(kind, file, alt) {
   if (sc.busy) return false; sc.busy = true; scanning = true; ocrProg[0] = ocrProg[1] = 0;
-  let ok = false;
+  // a photo's decoded picture and its temporary address are let go once the card is read from it (repeated scans add up on a phone)
+  let ok = false, photoUrl = null, photoBmp = null;
   if (kind !== "snap" || !sc.cur) sc.cur = { t0: performance.now(), wait: 0, try: 1, ms: {}, manual: kind !== "snap" };
   const cur = sc.cur, mark = k => { cur.ms[k] = performance.now() - (cur._last || cur.t0) ; cur._last = performance.now(); };
   cur._last = performance.now();
@@ -4769,14 +4770,15 @@ async function captureFrom(kind, file, alt) {
       cur.src = shot.src; cur.res = shot.res; cur.ms.capture = performance.now() - cur._last; cur._last = performance.now();
       src = shot.c; cx = 0; cy = 0; cw = src.width; ch = src.height;
     } else {
-      src = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => null);
-      if (!src) { const img = new Image(); img.src = URL.createObjectURL(file); await img.decode(); src = img; }
+      src = photoBmp = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => null);
+      if (!src) { const img = new Image(); img.src = photoUrl = URL.createObjectURL(file); await img.decode(); src = img; }
       const iw = src.width, ih = src.height; ch = Math.min(ih, iw * 88 / 63) * 0.96; cw = ch * 63 / 88; cx = (iw - cw) / 2; cy = (ih - ch) / 2;
     }
     scStatus("Reading the card…");
     const nameImg = alt ? prep(src, cx + cw * 0.025, cy + ch * 0.012, cw * 0.82, ch * 0.115, 820, true) : prep(src, cx + cw * 0.03, cy + ch * 0.022, cw * 0.80, ch * 0.09, 760);
     const infoImg = alt ? prep(src, cx + cw * 0.02, cy + ch * 0.86, cw * 0.52, ch * 0.13, 700, true) : prep(src, cx + cw * 0.025, cy + ch * 0.885, cw * 0.48, ch * 0.095, 640);
     mark("prep");
+    if (photoBmp) { photoBmp.close(); photoBmp = null; } if (photoUrl) { URL.revokeObjectURL(photoUrl); photoUrl = null; }
     scanProg(0.12, "Reading the card…");
     const [wn, wi] = await getWorkers();
     scanProg(0.18, "Reading the card…");
@@ -4786,6 +4788,7 @@ async function captureFrom(kind, file, alt) {
     return ok;
   } catch (e) { cur.err = e.message || String(e); scStatus("Scan failed: " + (e.message || e)); return false; }
   finally {
+    try { if (photoBmp) photoBmp.close(); if (photoUrl) URL.revokeObjectURL(photoUrl); } catch (e) {}
     sc.busy = false; scanning = false;
     cur.ms.total = performance.now() - cur.t0; cur.ok = ok; cur.at = Date.now(); delete cur._last;
     logScan(cur); sc.cur = null;
