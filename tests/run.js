@@ -13,7 +13,7 @@ for (const f of files) {
   pass += ok; fail += nf;
   const broke = nf || r.status !== 0 || !ok;
   console.log(`${broke ? "FAIL" : "ok  "} ${f.padEnd(32)} ${ok} passed${nf ? `, ${nf} failed` : ""}${r.status !== 0 && !nf ? ` (exit ${r.status ?? r.signal})` : ""}`);
-  if (broke) { bad.push(f); console.log(out.split("\n").filter(l => /^FAIL|Error|error/.test(l)).slice(0, 8).map(l => "     " + l).join("\n")); }
+  if (broke) { bad.push(f); console.log(out.split("\n").filter(l => /^FAIL|Error|error|Timeout|waiting for|intercepts|at .*\.test\.js:\d+/.test(l)).slice(0, 12).map(l => "     " + l).join("\n")); }
 }
 console.log(`\n${pass} checks passed, ${fail} failed, in ${files.length} files${bad.length ? "\nProblems in: " + bad.join(", ") : ""}`);
 process.exit(bad.length ? 1 : 0);
