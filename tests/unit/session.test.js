@@ -29,7 +29,7 @@ async function page(mode, plan) {
   return { w, T, show, $: s => w.document.querySelector(s) };
 }
 (async () => {
-  let { w, T, show, $ } = await page("ask", [["Lightnlng Bolt", "0117/332 U\n2X2 • EN"], ["Counterspel", "0267 U\nMH2 • EN"], ["Lightnlng Bolt", "0117/332 U\n2X2 • EN"], ["Lightning", ""], ["xq", ""], ["xq", ""], ["xq", ""], ["xq", ""], ["S0l Ring", ""]]);
+  let { w, T, show, $ } = await page("ask", [["Lightnlng Bolt", "0117/332 U\n2X2 • EN"], ["Counterspel", "0267 U\nMH2 • EN"], ["Lightnlng Bolt", "0117/332 U\n2X2 • EN"], ["Lightning", ""], ["Xqzt Vrk", ""], ["Xqzt Vrk", ""], ["Xqzt Vrk", ""], ["Xqzt Vrk", ""], ["S0l Ring", ""]]);
   await show(1); await show(2); await show(3);
   ok(T.sc.items.length === 2 && T.sc.items.every(i => i.state === "review"), "3 cards scanned back to back, nothing waited for a tap: " + T.sc.items.map(i => i.card.name + "×" + i.qty).join(", "));
   ok(T.sc.items.find(i => i.card.name === "Lightning Bolt").qty === 2, "the same card scanned twice counts up to ×2 instead of a second row");

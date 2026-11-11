@@ -31,14 +31,14 @@ async function setup(mode, plan) {
   ok(reads() === 1 && T.sc.items.at(-1) && T.sc.items.at(-1).card.name === "Lightning Bolt", "low 'sharpness' camera: still takes a snapshot and reads the card (" + reads() + " read)");
   ok(T.sc.items.at(-1).exact, "exact printing from the set code");
   // fails twice, then reads: retries happen on their own with fresh snapshots
-  ({ w, T, tickFor, reads } = await setup("any", [["xq", ""], ["zz", ""], ["Counterspel", "0267 U\nMH2 • EN"]]));
+  ({ w, T, tickFor, reads } = await setup("any", [["Xqzt Vrk", ""], ["Zzqv Wkt", ""], ["Counterspel", "0267 U\nMH2 • EN"]]));
   for (let k = 0; k < 12 && reads() < 3; k++) { await tickFor(360); await new Promise(r => setTimeout(r, 400)); }
   await new Promise(r => setTimeout(r, 400));
   ok(reads() === 3, `couldn't read → tried again automatically: ${reads()} reads`);
   ok(T.sc.items.length === 1 && T.sc.items[0].state === "added" && T.sc.items[0].card.name === "Counterspell", "third try found it and (hands-free) added it");
   ok(!T.ana.armed, "then waits for the next card instead of re-reading the same one");
   // never readable: gives up after 4 tries and says so
-  ({ w, T, tickFor, reads } = await setup("ask", [["xq", ""], ["xq", ""], ["xq", ""], ["xq", ""], ["xq", ""]]));
+  ({ w, T, tickFor, reads } = await setup("ask", [["Xqzt Vrk", ""], ["Xqzt Vrk", ""], ["Xqzt Vrk", ""], ["Xqzt Vrk", ""], ["Xqzt Vrk", ""]]));
   for (let k = 0; k < 20 && reads() < 4; k++) { await tickFor(360); await new Promise(r => setTimeout(r, 300)); }
   await tickFor(1200);
   ok(reads() === 4 && /Couldn't read that one/.test(w.document.querySelector("#camHint").textContent), `unreadable card: stops after ${reads()} tries and asks you to type it`);

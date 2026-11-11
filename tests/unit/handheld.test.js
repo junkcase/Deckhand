@@ -21,5 +21,5 @@ async function setup(lockIt) {
   tick(1000); ok(shots().length >= 1 && shots()[0] <= 1000, `…then takes the snapshot anyway ${shots()[0]} ms after the card appeared (target: 1 s; was 7–8 s on the tablet)`);
   ({ T, w, tick, shots } = await setup(false));
   tick(800); ok(shots().length === 0 && /edges/.test(w.document.querySelector("#camHint").textContent), "edges not found: waits for them instead of shooting a guess");
-  tick(1500); ok(shots().length >= 1 && shots()[0] > 1000 && shots()[0] <= 1600, `…then falls back to the on-screen frame (shot at ${shots()[0]} ms)`);
+  tick(3000); ok(shots().length >= 1 && shots()[0] > 2500 && shots()[0] <= 3100, `…then, after 2.5 s, falls back to the on-screen frame (shot at ${shots()[0]} ms)`);
 })();
