@@ -3087,8 +3087,35 @@ const CSV_FIELDS = [
   ["binder", "Binder or list", /^(binder name|binder|list name|folder|list|collection name)$/],
   ["board", "Main / side / commander", /^(board|section|categor(y|ies)|zone|deck section)$/],
   ["cond", "Condition", /^(condition|cond|card condition)$/],
-  ["paid", "Purchase price", /^(purchase price|price paid|paid|cost|buy price|acquired price|purchase price usd)$/]
+  ["paid", "Purchase price", /^(purchase price|price paid|paid|cost|buy price|acquired price|purchase price usd)$/],
+  // Deckhand's own export columns (exact names, so other apps' files read as before)
+  ["added", "Date added", /^date added$/],
+  ["scanned", "Last scanned", /^last scanned$/],
+  ["firstScanned", "First scanned", /^first scanned$/]
 ];
+/* A quantity from a file: a whole number of 1 or more, with commas as thousands separators ("1,000") and an optional
+   "x" ("4x"). Anything else — decimal, negative, 0, empty, words — comes back as { bad: reason } and is never guessed. */
+function csvQty(v) {
+  const t = String(v == null ? "" : v).trim().replace(/^x\s*/i, "").replace(/\s*x$/i, "");
+  if (!t) return { bad: "no quantity" };
+  if (/^-/.test(t)) return { bad: "negative" };
+  if (/^\d+$/.test(t) || /^\d{1,3}(,\d{3})+$/.test(t)) { const n = +t.replace(/,/g, ""); return n >= 1 && Number.isSafeInteger(n) ? { n } : { bad: n === 0 ? "zero" : "too large" }; }
+  if (/^\d*[.,]\d+$/.test(t) || /\d\/\d/.test(t)) return { bad: "not a whole number" };
+  return { bad: "not a number" };
+}
+/* A date from Deckhand's export ("2026-11-11 14:05", written in UTC), a full ISO date, or "2026-11-11". Anything
+   else, or a date before 1993 or in the future, gives null: left unset rather than guessed. */
+function csvDate(v) {
+  const t = String(v == null ? "" : v).trim(); if (!t) return null;
+  let m = t.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/);
+  if (!m) return null;
+  const [, y, mo, d, h = "0", mi = "0", se = "0", tz] = m;
+  if (+mo < 1 || +mo > 12 || +d < 1 || +d > 31 || +h > 23 || +mi > 59 || +se > 59) return null;
+  let ms = Date.UTC(+y, +mo - 1, +d, +h, +mi, +se);
+  if (new Date(ms).getUTCDate() !== +d) return null;                               // 31 February and the like
+  if (tz && tz !== "Z") { const sg = tz[0] === "-" ? -1 : 1, z = tz.slice(1).replace(":", ""); ms -= sg * (+z.slice(0, 2) * 60 + +z.slice(2)) * 60e3; }
+  return ms >= Date.UTC(1993, 0, 1) && ms <= Date.now() + 864e5 ? ms : null;
+}
 function pickCSV(target) { pickFile("", f => csvImport(f, target)); }
 // a text list turned into the same rows a CSV gives: sections ("Commander", "Sideboard", "SB:") become the board column
 function textListRows(lines) {
@@ -3123,8 +3150,10 @@ function csvRowInfo(r, m) {
   const g = k => m[k] >= 0 ? (r[m[k]] || "").trim() : "";
   const fv = g("foil").toLowerCase();
   const finish = fv.includes("etched") ? "etched" : /^(foil|true|yes|y|1|x)$/.test(fv) || (fv.includes("foil") && !fv.includes("non")) ? "foil" : "nonfoil";
-  const q = parseInt(g("qty").replace(/[^\d]/g, ""));
-  return { name: g("name").replace(/\s*\(.*?\)\s*$/, ""), qty: m.qty >= 0 ? (isNaN(q) ? 1 : q) : 1, set: g("set").toLowerCase(), setName: g("setName"), num: g("num").replace(/^#/, ""),
+  // no quantity column: one of each, as before; a quantity column: a proper whole number, or the row is flagged
+  const qv = m.qty >= 0 ? csvQty(g("qty")) : { n: 1 };
+  const dt = k => m[k] >= 0 ? csvDate(g(k)) : null;
+  return { name: g("name").replace(/\s*\(.*?\)\s*$/, ""), qty: qv.n || 0, qtyBad: qv.bad || "", qtyRaw: g("qty"), added: dt("added"), scanned: dt("scanned"), firstScanned: dt("firstScanned"), set: g("set").toLowerCase(), setName: g("setName"), num: g("num").replace(/^#/, ""),
     id: /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(g("id")) ? g("id").toLowerCase() : "", finish, binder: g("binder"), board: g("board").toLowerCase(),
     cond: m.cond >= 0 ? condOf(g("cond")) : "NM", paid: (() => { const v = parseFloat(g("paid").replace(/[^\d.]/g, "")); return m.paid >= 0 && isFinite(v) && v > 0 ? v : null; })() };
 }
@@ -3157,20 +3186,27 @@ async function csvImport(file, target) {
   const isDeck = target.kind === "deck";
   const decks = Object.values(S.decks);
   const baseName = file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim().slice(0, 60) || "Imported deck";
-  const st = { dest: isDeck ? (target.id === "__new" || !S.decks[target.id] ? "__new" : target.id) : (m.binder >= 0 ? "__file" : defaultBinder()), newName: baseName, fmt: "casual", running: false };
+  const st = { dest: isDeck ? (target.id === "__new" || !S.decks[target.id] ? "__new" : target.id) : (m.binder >= 0 ? "__file" : defaultBinder()), newName: baseName, fmt: "casual", running: false, fix: {}, skipBad: false };
   const draw = () => {
-    const info = data.map(r => csvRowInfo(r, m));
-    const usable = info.filter(x => x.id || x.name || (x.set && x.num));
+    const info = data.map((r, i) => { const x = csvRowInfo(r, m); x.row = i + 2; if (x.qtyBad && st.fix[i] != null) { x.qty = st.fix[i]; x.qtyBad = ""; x.fixed = true; } return x; });
+    const cardRows = info.filter(x => x.id || x.name || (x.set && x.num)), bad = cardRows.filter(x => x.qtyBad);
+    // rows with a quantity problem aren't imported: fixed here, or skipped on purpose
+    const usable = cardRows.filter(x => !x.qtyBad), blocked = bad.length && !st.skipBad;
     const total = usable.reduce((a, x) => a + x.qty, 0);
     const colSel = k => `<select data-col="${k}"><option value="-1">Not in file</option>${head.map((h, i) => `<option value="${i}" ${m[k] === i ? "selected" : ""}>${esc(h || "Column " + (i + 1))}</option>`).join("")}</select>`;
-    const fields = CSV_FIELDS.filter(([k]) => isDeck ? k !== "binder" : k !== "board");
+    const fields = CSV_FIELDS.filter(([k]) => isDeck ? !["binder", "added", "scanned", "firstScanned"].includes(k) : k !== "board");
     $("#impBody").innerHTML = `<h2>${isDeck ? "Import a deck" : "Import cards"}</h2>
       <p class="small muted" style="margin:4px 0 12px">${esc(file.name)} · ${data.length.toLocaleString()} ${fmt === "text" ? "cards listed · a text list, one card per line" : "rows · " + (fmt === "CSV" ? "columns detected automatically" : "looks like a " + fmt + " export")}</p>
       <div class="stack">
         <div class="box"><div class="kv"><span class="label">Preview</span><span class="small muted num">${total.toLocaleString()} cards in ${usable.length.toLocaleString()} rows</span></div>
           <div style="overflow-x:auto"><table class="ptable"><thead><tr><th>Qty</th><th>Card</th><th>Set</th><th>#</th><th>Finish</th>${isDeck ? "<th>Board</th>" : m.binder >= 0 ? "<th>Binder</th>" : ""}</tr></thead>
             <tbody>${info.slice(0, 6).map(x => `<tr><td class="num">${x.qty}</td><td>${esc(x.name || (x.id ? "(by Scryfall ID)" : "—"))}</td><td>${esc((x.set || x.setName || "").toUpperCase().slice(0, 14))}</td><td>${esc(x.num)}</td><td>${x.finish === "nonfoil" ? "normal" : x.finish}</td>${isDeck ? `<td>${esc(x.board || "main")}</td>` : m.binder >= 0 ? `<td>${esc(x.binder)}</td>` : ""}</tr>`).join("")}</tbody></table></div>
-          ${usable.length ? "" : `<span class="small down">No rows have a card name, Scryfall ID or set + number. Match the columns below.</span>`}</div>
+          ${cardRows.length ? "" : `<span class="small down">No rows have a card name, Scryfall ID or set + number. Match the columns below.</span>`}</div>
+        ${bad.length ? `<div class="box" id="impBad" style="gap:6px"><span class="small down"><b>${bad.length.toLocaleString()} row${bad.length === 1 ? " has" : "s have"} a quantity that isn't a whole number of 1 or more.</b> Type the right number, or skip ${bad.length === 1 ? "it" : "them"}. Nothing is imported for ${bad.length === 1 ? "it" : "them"} otherwise.</span>
+          <div style="overflow-x:auto"><table class="ptable"><thead><tr><th>Row</th><th>Card</th><th>In the file</th><th>Problem</th><th>Quantity</th></tr></thead>
+            <tbody>${bad.slice(0, 50).map(x => `<tr><td class="num">${x.row}</td><td>${esc(x.name || [x.set, x.num].filter(Boolean).join(" #") || x.id)}</td><td class="num">${esc(JSON.stringify(x.qtyRaw))}</td><td>${esc(x.qtyBad)}</td><td><input type="number" min="1" step="1" inputmode="numeric" data-fix="${x.row - 2}" style="width:5em" aria-label="Quantity for row ${x.row}"></td></tr>`).join("")}</tbody></table></div>
+          ${bad.length > 50 ? `<span class="small muted">…and ${(bad.length - 50).toLocaleString()} more.</span>` : ""}
+          <label class="toggle"><input type="checkbox" id="impSkipBad" ${st.skipBad ? "checked" : ""}> Skip the rows with a problem</label></div>` : ""}
         <details class="box" ${usable.length ? "" : "open"}><summary class="label" style="cursor:pointer">Columns (check if the preview looks wrong)</summary>
           <div class="stack" style="gap:8px;margin-top:10px">${fields.map(([k, label]) => `<div class="kv"><span>${label}</span>${colSel(k)}</div>`).join("")}</div></details>
         <div class="box"><span class="label">${isDeck ? "Add to deck" : "Put cards in"}</span>
@@ -3180,11 +3216,13 @@ async function csvImport(file, target) {
           ${isDeck ? `<span class="small muted">Cards are added to what's already in the deck.</span>`
             : `<label class="toggle"><input type="checkbox" id="impRepl" ${st.replace ? "checked" : ""}> Replace my whole collection with this file</label>
                <span class="small ${st.replace ? "down" : "muted"}">${st.replace ? `Your current ${Object.values(S.coll).reduce((a, e) => a + e.qty, 0).toLocaleString()} cards will be removed first, then this file is imported. Decks and price alerts stay. You can undo this right after.` : "Cards are added to what's already there. Use Replace when re-importing your full ManaBox export, so nothing gets doubled."}</span>`}</div>
-        <button class="btn primary" id="impGo" ${usable.length && !st.running ? "" : "disabled"}>${st.replace && !isDeck ? "Replace collection with" : "Import"} ${total.toLocaleString()} cards</button>
+        <button class="btn primary" id="impGo" ${usable.length && !blocked && !st.running ? "" : "disabled"}>${st.replace && !isDeck ? "Replace collection with" : "Import"} ${total.toLocaleString()} cards</button>
         <div id="impProg" class="status" aria-live="polite"></div>
         <div id="impRes"></div>
       </div>`;
     $("#impBody").querySelectorAll("[data-col]").forEach(sel => sel.onchange = () => { m[sel.dataset.col] = +sel.value; draw(); });
+    $("#impBody").querySelectorAll("[data-fix]").forEach(inp => inp.onchange = () => { const q = csvQty(inp.value); if (q.n) { st.fix[+inp.dataset.fix] = q.n; draw(); } else { inp.setCustomValidity("A whole number of 1 or more"); inp.reportValidity(); } });
+    const sk = $("#impSkipBad"); if (sk) sk.onchange = e => { st.skipBad = e.target.checked; draw(); };
     $("#impDest").onchange = e => { st.dest = e.target.value; draw(); };
     const nm = $("#impName"); if (nm) nm.oninput = e => st.newName = e.target.value;
     const fm = $("#impFmt"); if (fm) fm.onchange = e => st.fmt = e.target.value;
@@ -3231,7 +3269,9 @@ async function csvImport(file, target) {
           let b = st.dest;
           if (b === "__file") { const before = Object.keys(S.binders).length; b = w.binder ? binderByName(w.binder) : defaultBinder(); if (Object.keys(S.binders).length > before) newBinders.add(S.binders[b].name); }
           if ((isTokenCard(c) || /token/.test(w.board || "")) && !(st.dest === "__file" && w.binder)) b = tokensBinder();
-          addToColl(slim(c), w.finish, w.qty, b, true, { cond: w.cond, paid: w.paid, imported: true }); cards += w.qty; if (w.guessed) guessed++;      // a file import doesn't mark cards "New"
+          const ek = addToColl(slim(c), w.finish, w.qty, b, true, { cond: w.cond, paid: w.paid, imported: true }); cards += w.qty; if (w.guessed) guessed++;      // a file import doesn't mark cards "New"
+          // dates from a Deckhand export: kept (earliest added / first scanned, latest last scanned); none are made up
+          if (S.coll[ek] && (w.added || w.scanned || w.firstScanned)) { const e = S.coll[ek]; if (w.added && (!e.added || w.added < e.added)) e.added = w.added; mergeHistory(e, { scanned: w.scanned, firstScanned: w.firstScanned }); }
         }
         where = st.dest === "__file" ? (newBinders.size ? `New binders: ${[...newBinders].join(", ")}.` : "") : `Added to ${S.binders[st.dest].name}.`;
       } else {
