@@ -845,12 +845,17 @@ function addToColl(card, finish = "nonfoil", qty = 1, binder, noSave, extra = {}
   if (S.coll[k] && S.coll[k].qty <= 0) delete S.coll[k];
   if (!noSave) save(); return k;
 }
+// what was paid, when copies join an entry: averaged per copy over the copies with a price (as addToColl does)
+function mergePaid(t, tq, paid, q) {
+  if (paid == null) return;
+  t.paid = t.paid != null ? Math.round((t.paid * tq + paid * q) / (tq + q) * 100) / 100 : paid;
+}
 function moveEntry(k, b) {
   const e = S.coll[k]; if (!e || e.binder === b) return;
   delete S.coll[k]; e.binder = b;
   const nk = ckey(e.id, e.finish, b, e.cond);
   const t = S.coll[nk];
-  if (t) { t.qty += e.qty; if (e.scanned && (!t.scanned || e.scanned > t.scanned)) t.scanned = e.scanned; if (e.firstScanned && (!t.firstScanned || e.firstScanned < t.firstScanned)) t.firstScanned = e.firstScanned; t.scans = (t.scans || 0) + (e.scans || 0); }
+  if (t) { mergePaid(t, t.qty, e.paid, e.qty); t.qty += e.qty; if (e.scanned && (!t.scanned || e.scanned > t.scanned)) t.scanned = e.scanned; if (e.firstScanned && (!t.firstScanned || e.firstScanned < t.firstScanned)) t.firstScanned = e.firstScanned; t.scans = (t.scans || 0) + (e.scans || 0); }
   else S.coll[nk] = e;
   save();
 }
@@ -871,7 +876,7 @@ function takeCopies(k, n, ch) {
   e.qty -= n; if (e.qty <= 0) delete S.coll[k];
   const t = S.coll[nk];
   if (t) {
-    t.qty += n;
+    mergePaid(t, t.qty, moved.paid, n); t.qty += n;
     if (moved.scanned && (!t.scanned || moved.scanned > t.scanned)) t.scanned = moved.scanned;
     if (moved.firstScanned && (!t.firstScanned || moved.firstScanned < t.firstScanned)) t.firstScanned = moved.firstScanned;
   } else S.coll[nk] = moved;
@@ -4119,7 +4124,8 @@ function drawSession() {
   el.querySelectorAll("[data-dec]").forEach(b => b.onclick = () => { const it = find(b.dataset.dec); it.qty = Math.max(1, it.qty - 1); redraw(); });
   el.querySelectorAll("[data-fin]").forEach(b => b.onclick = () => { const it = find(b.dataset.fin), f = it.card.finishes; it.finish = f[(f.indexOf(it.finish) + 1) % f.length]; redraw(); });
   el.querySelectorAll("[data-undo]").forEach(b => b.onclick = () => { const it = find(b.dataset.undo);
-    if (it.binder) addToColl(it.card, it.finish, -it.qty, it.binder, true); if (it.deck && S.decks[it.deck]) addToDeck(S.decks[it.deck], it.card, -it.qty, false, true);
+    // take back what the scan added (and its scan count, for copies that stay)
+    if (it.binder) { const k = addToColl(it.card, it.finish, -it.qty, it.binder, true), e = S.coll[k]; if (e && e.scans) e.scans = Math.max(0, e.scans - it.qty); } if (it.deck && S.decks[it.deck]) addToDeck(S.decks[it.deck], it.card, -it.qty, false, true);
     it.state = "review"; it.binder = it.deck = it.rule = null; save(); redraw(); toast("Taken back out"); });
   el.querySelectorAll("[data-type]").forEach(b => b.onclick = () => { sc.fixId = b.dataset.type; const i = $("#scType"); i.placeholder = "Type the name of that card"; i.focus(); });
   el.querySelectorAll("[data-pick]").forEach(b => b.onclick = async () => {
