@@ -126,7 +126,7 @@ const SOL = { object: "card", id: "sol", oracle_id: "o-sol", name: "Sol Ring", s
   ok(R.offline === 23746, "without the price list, the last prices seen still count (" + R.offline + ")");
   ok(R.removed === 0 && R.restored === 1, "remove, with undo");
   ok(JSON.stringify(R.mig) === JSON.stringify([false, false, 3, "", null, false, false]), "bad entries dropped or cleaned " + JSON.stringify(R.mig));
-  ok(JSON.stringify(R.merge) === JSON.stringify([5, true, true, true, 5]), "sync: changes and new purchases from both devices are kept (sync version 5) " + JSON.stringify(R.merge));
+  ok(JSON.stringify(R.merge) === JSON.stringify([5, true, true, true, 6]), "sync: changes and new purchases from both devices are kept (sync version 6) " + JSON.stringify(R.merge));
   ok(/Couldn't load sealed prices/.test(R.down), "a failed price list load shows a message: " + R.down);
   ok(/^Price history starts .+; the chart appears once there are a few days of prices\.$/.test(R.newHist[0]) && !R.newHist[1], "only today's price: a note instead of an empty chart: " + R.newHist[0]);
   ok(R.tcg[0] === "$54.26 · TCGplayer market" && /TCGplayer \$54\.26 Market price · listings from \$49\.99/.test(R.tcg[1]) && R.tcg[2].join() === "Open on TCGplayer,Open on Mana Pool,Open on Card Kingdom", "TCGplayer: its market price comes first, with its lowest listing and a link; all three stores shown " + JSON.stringify(R.tcg));

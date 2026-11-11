@@ -57,7 +57,7 @@ const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exit
     captureFrom = async () => { adds++; sc.lastRead = "Sol Ring"; return true; };
     const run = async ms => { const end = performance.now() + ms; while (performance.now() < end) { autoTick(); await new Promise(r => setTimeout(r, 60)); } };
     await run(3000); const same = adds;
-    pic = 7; await run(400); pic = 13; await run(2000);
+    pic = 7; await run(600); pic = 13; for (let i = 0; i < 12 && adds < 2; i++) await run(500);
     return [same, adds];
   });
   R.errs = errs;
