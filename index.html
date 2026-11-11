@@ -546,11 +546,14 @@ function sf(path, body, opts = {}) {
     sfSent = performance.now(); if (slow) sfSentSlow = sfSent;
     let r;
     try {
+      // something you're waiting on gives up on a stalled connection after 8 s (and is tried again) instead of hanging
+      const ac = opts.now && typeof AbortController === "function" ? new AbortController() : null, tm = ac ? setTimeout(() => ac.abort(), 8000) : null;
       r = await fetch(path.startsWith("http") ? path : API + path, {
+        signal: ac ? ac.signal : undefined,
         method: body ? "POST" : "GET",
         headers: body ? { "Accept": "application/json", "Content-Type": "application/json" } : { "Accept": "application/json" },
         body: body ? JSON.stringify(body) : undefined
-      });
+      }).finally(() => tm && clearTimeout(tm));
     } catch (e) {
       if (navigator.onLine === false) throw Object.assign(new Error("You're offline. Check your internet connection."), { net: true, offline: true });
       // Scryfall's 30-second block usually arrives without the headers a browser needs to read it, so it looks like this too
@@ -562,14 +565,16 @@ function sf(path, body, opts = {}) {
     return j;
   };
   // background jobs (price updates, imports) can wait out a pause; something you're looking at gets one quick retry, then the message
-  const patient = !!(body || opts.queue);
+  // (a scan or a tap you're waiting on — opts.now — retries after a short pause, not the 2 s a background batch waits:
+  // that wait was behind the ~3 s card lookups in scan logs)
+  const patient = !!(body || opts.queue) && !opts.now;
   const run = async () => {
     for (let i = 0; ; i++) {
       try { return await once(); }
       catch (e) {
         if (e.offline || !(e.net || e.status === 429 || e.status >= 500)) throw e;
         if (e.limited ? (!patient || i >= 2) : i >= 2) throw e;
-        await sleep(e.limited ? 0 : (patient ? 2000 : 600) * (i + 1));         // a 429 pause is already booked into the next slot
+        await sleep(e.limited ? 0 : (patient ? 2000 : opts.now ? 300 : 600) * (i + 1));         // a 429 pause is already booked into the next slot
       }
     }
   };
@@ -4424,7 +4429,8 @@ async function startCamera() {
     if ((camDev.caps.focusMode || []).includes("continuous")) track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
     vid.onclick = e => { const t = camXform(vid), r = vid.getBoundingClientRect(); focusAt(((e.clientX - r.left) - t.ox) / t.s / vid.videoWidth, ((e.clientY - r.top) - t.oy) / t.s / vid.videoHeight, true); camHint("Focusing…"); };
     scStatus(readyMsg());
-    getWorker().catch(() => {}); loadSets().catch(() => {});
+    // the reader, set list and card-name list load while you line up the first card (the first scan waited for them)
+    getWorker().catch(() => {}); loadSets().catch(() => {}); if (typeof loadNames === "function" && !NAMES) loadNames().catch(() => {});
     vid.onloadedmetadata = () => placeFrame(vid); placeFrame(vid);
     startAuto();
   } catch (e) { scStatus(camError(e)); }
@@ -5045,6 +5051,10 @@ function scanStats(log) {
   const span = ok.length > 1 ? (ok.at(-1).at - ok[0].at) / 60000 : 0;
   return { n: log.length, ok: ok.length, rate: log.length ? ok.length / log.length : 0, med: pct(tot, 0.5), p95: pct(tot, 0.95), seenMed: pct(seen, 0.5),
     pre: Object.fromEntries(["find", "small", "moving", "hold"].map(k => [k, pct(log.filter(e => e.pre && e.try === 1).map(e => e.pre[k]), 0.5)])),
+    // each step: median, slowest 5% and slowest; scanner time (capture to result) apart from card handling (before the snapshot)
+    spread: Object.fromEntries(["capture", "prep", "ocr", "match", "lookup", "total"].map(k => { const v = log.map(e => e.ms[k]).filter(v => v != null); return [k, [pct(v, 0.5), pct(v, 0.95), v.length ? Math.round(Math.max(...v)) : null]]; })),
+    handling: pct(log.filter(e => e.ms.wait != null).map(e => e.ms.wait), 0.5),
+    noCard: log.filter(e => !e.ok && !(e.read || "").replace(/[^a-z]/gi, "").length).length,
     perMin: span > 0.2 ? (ok.length - 1) / span : null, stage: { capture: st("capture"), prep: st("prep"), ocr: st("ocr"), match: st("match"), lookup: st("lookup") },
     conf: { high: ok.filter(e => e.conf === "high").length, medium: ok.filter(e => e.conf === "medium").length, low: ok.filter(e => e.conf === "low").length },
     preTot: pct(log.filter(e => e.pre && e.try === 1).map(e => Object.values(e.pre).reduce((a, b) => a + (b || 0), 0)), 0.5),
@@ -5061,7 +5071,8 @@ function drawLog() {
     ${s.bySrc.length ? `<div class="small">${s.bySrc.map(b => `<b>${b.k === "photo" ? "Full photos" : "Snapshots"}</b>: read ${b.ok}/${b.n} (${b.high} high) · capture ${ms(b.cap)} · total ${ms(b.tot)}`).join("<br>")}</div>` : ""}
     <div class="small">Card found → snapshot: <b class="num">${ms(s.preTot)}</b> median. Before the snapshot (median): finding the card ${ms(s.pre.find)} · too far ${ms(s.pre.small)} · moving ${ms(s.pre.moving)} · holding still ${ms(s.pre.hold)}${s.perMin ? ` · <b class="num">${s.perMin.toFixed(1)}</b> cards per minute` : ""}</div>
     <div class="small muted">Steps (median): snapshot ${ms(s.stage.capture)} · prepare ${ms(s.stage.prep)} · read text ${ms(s.stage.ocr)} · match name ${ms(s.stage.match)} · look up card ${ms(s.stage.lookup)}</div>
-    <div class="small muted">Confidence: ${s.conf.high} high · ${s.conf.medium} medium · ${s.conf.low} low (choices)</div>
+    <div class="small muted">Slowest 5% of each step: snapshot ${ms(s.spread.capture[1])} · read text ${ms(s.spread.ocr[1])} · look up card ${ms(s.spread.lookup[1])} · whole scan ${ms(s.spread.total[1])}</div>
+    <div class="small muted">Confidence: ${s.conf.high} high · ${s.conf.medium} medium · ${s.conf.low} low (choices) · ${s.n - s.ok} not read${s.noCard ? `, ${s.noCard} with no name text` : ""}</div>
     <div style="overflow-x:auto"><table class="ptable"><thead><tr><th>Time</th><th>Result</th><th>Read</th><th>OCR</th><th>Match</th><th>Set/#</th><th>Total</th></tr></thead><tbody>
       ${log.slice(-15).reverse().map(e => `<tr><td class="num">${esc(clock(e.at))}${e.try > 1 ? ` <span class="muted">try ${e.try}</span>` : ""}</td>
         <td><span class="chip ${e.conf === "high" ? "ok" : e.conf === "medium" ? "foil" : e.ok ? "" : "warn"}">${e.ok ? esc(e.conf) : "failed"}</span> ${esc(e.result)}</td>
@@ -5072,6 +5083,9 @@ function drawLog() {
     const st = scanStats(log), txt = [`Deckhand scan log · ${new Date().toLocaleString()} · ${navigator.userAgent}`,
       `read ${st.ok}/${st.n}, median ${st.med} ms, p95 ${st.p95} ms, card found→snapshot ${st.preTot} ms; ${st.bySrc.map(b => `${b.k}: ${b.ok}/${b.n} read, ${b.high} high, capture ${b.cap} ms, total ${b.tot} ms`).join("; ")}; before snapshot medians: finding ${st.pre.find}, too far ${st.pre.small}, moving ${st.pre.moving}, holding ${st.pre.hold}, ${st.perMin ? st.perMin.toFixed(1) + "/min" : ""}`,
       `stage medians: capture ${st.stage.capture}, prep ${st.stage.prep}, ocr ${st.stage.ocr}, match ${st.stage.match}, lookup ${st.stage.lookup}`,
+      `stage p50/p95/max ms: ${Object.entries(st.spread).map(([k, v]) => `${k} ${v.map(x => x ?? "-").join("/")}`).join(", ")}`,
+      `scanner time (capture to result) median ${st.spread.total[0] ?? "-"} ms, p95 ${st.spread.total[1] ?? "-"} ms; card handling before the snapshot median ${st.handling ?? "-"} ms`,
+      `results: ${st.conf.high} high (added), ${st.conf.medium} medium (to check), ${st.conf.low} low (you pick), ${st.n - st.ok} not read (${st.noCard} with no name text at all)`,
       "time | try | result | conf | read | raw | ocr | score | margin | share | set # | image | find small moving hold | wait capture prep ocr match lookup total",
       ...log.map(e => [new Date(e.at).toLocaleTimeString(), e.try, e.result, e.conf, e.read, e.raw, e.ocr, e.score, e.margin, e.share ?? "", `${e.set} ${e.num}`, `${e.src || ""} ${e.res || ""}`, e.pre ? Object.values(e.pre).join(" ") : "", Object.values(e.ms).join(" ")].join(" | "))].join("\n");
     try { await navigator.clipboard.writeText(txt); toast("Log copied. Paste it to me in the chat"); } catch (er) { toast("Couldn't copy here"); }
