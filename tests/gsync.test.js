@@ -21,7 +21,7 @@ async function drive(r) {
     const q = u.searchParams.get("q"), live = Object.values(G.files).filter(f => !f.trashed);
     if (/mimeType='application\/vnd.google-apps.folder'/.test(q)) { const name = q.match(/name='([^']+)'/)[1]; return J({ files: live.filter(f => f.mimeType === "application/vnd.google-apps.folder" && f.name === name).map(f => ({ id: f.id })) }); }
     const parent = (q.match(/'([^']+)' in parents/) || [])[1], name = (q.match(/name='([^']+)'/) || [])[1];
-    return J({ files: live.filter(f => (f.parents || []).includes(parent) && (!name || f.name === name)).sort((a, b) => b.createdTime.localeCompare(a.createdTime)).map(({ data, ...f }) => f) });
+    return J({ files: live.filter(f => (!parent || (f.parents || []).includes(parent)) && (!name || f.name === name)).sort((a, b) => b.createdTime.localeCompare(a.createdTime)).map(({ data, ...f }) => f) });
   }
   if (u.pathname === "/drive/v3/files" && m === "POST") { const meta = JSON.parse(req.postData()), id = "f" + (++G.n); G.files[id] = Object.assign({ id, createdTime: new Date().toISOString(), version: "1" }, meta); return J({ id }); }
   const id = u.pathname.split("/")[4], f = G.files[id]; if (!f) return J({ error: { message: "not found" } }, 404);

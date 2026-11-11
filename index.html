@@ -2399,6 +2399,34 @@ async function gdPushSync(state) {
   if (!cfg.file) setSyncCfg(Object.assign({}, syncCfg(), { file: r.id }));
   GDS.version = r.version || null;
 }
+/* One synced copy for every device. If two devices ever made their own (set up at the same moment, or a copy found
+   differently on each), each would say "Synced" while holding different cards. So now and then every device looks for
+   all of Deckhand's synced copies and they all settle on the same one, the oldest; a device that was using another one
+   combines its cards into it (nothing is removed) and carries on there. The other copy is left as it is. */
+const ONE = { at: 0, every: 10 * 60e3, note: "" };
+async function oneSyncCopy() {
+  const cfg = syncCfg(); if (!cfg || Date.now() - ONE.at < ONE.every) return;
+  let found = [];
+  try {
+    if (isGoogleSync(cfg)) {
+      const f = (await (await gd(`/drive/v3/files?q=${gdq(`name='${GDS.file}' and trashed=false`)}&fields=files(id,createdTime,parents)&spaces=drive&pageSize=50`)).json()).files || [];
+      found = f.map(x => ({ id: x.id, at: x.createdTime || "", folder: (x.parents || [])[0] }));
+    } else {
+      for (let page = 1; page <= 5; page++) { const list = await (await gh(`/gists?per_page=100&page=${page}`)).json(); found.push(...list.filter(g => g.description === SYNC_DESC).map(g => ({ id: g.id, at: g.created_at || "" }))); if (list.length < 100) break; }
+    }
+  } catch (e) { if (e.needTap) throw e; ONE.at = Date.now() - ONE.every + 60e3; return; }       // couldn't look: sync as usual, look again in a minute
+  ONE.at = Date.now(); ONE.count = found.length;
+  const best = found.sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id))[0], old = syncTarget();
+  if (!best || best.id === old) return;
+  setSyncCfg(Object.assign({}, cfg, isGoogleSync(cfg) ? { file: best.id, folder: best.folder || cfg.folder } : { gist: best.id }));
+  GDS.version = null; SYNC.etag = null;
+  if (!old) return;                                                                 // hadn't made one yet: just use the existing copy
+  // the record of what was last synced belongs to the other copy now: mark it (saved straight away, in case the app
+  // closes first), so the next merge combines both and removes nothing
+  const b = await syncBase(); if (b) { b.target = old; if (idb.ok) await idbSet("syncBase", b).catch(() => {}); }
+  SYNC.dirty = true; ONE.note = `Found ${found.length} synced copies and joined this device to the shared one. Nothing was removed.`;
+  toast("Found a second synced copy and joined them. Nothing was removed.");
+}
 const readRemote = () => isGoogleSync() ? gdReadSync() : readGist();
 const pushRemote = st => { SYNC.lastPush = Date.now(); return isGoogleSync() ? gdPushSync(st) : pushGist(st); };
 const PUSH_GAP = 20e3;          // at most one automatic upload every 20 seconds, so a scanning session doesn't hit GitHub's limits
@@ -2489,13 +2517,16 @@ function mergeSync(B, L, R) {
   return done(out);
 }
 async function syncBase() { if (SYNC.base === undefined) { try { SYNC.base = idb.ok ? (await idbGet("syncBase")) || null : null; } catch (e) { SYNC.base = null; } } return SYNC.base; }
-const baseTrusted = base => !!(base && base.id && base.id === S.meta.syncId);
+// which synced copy this device uses (the GitHub gist or the Google Drive file)
+const syncTarget = () => { const c = syncCfg() || {}; return isGoogleSync(c) ? c.file || "" : c.gist || ""; };
+// a record from a different synced copy (two copies found and joined, or sync set up again) can't say what was deleted either
+const baseTrusted = base => !!(base && base.id && base.id === S.meta.syncId && (!base.target || !syncTarget() || base.target === syncTarget()));
 // The sync record ("what was last synced") and the cards are saved together, with a matching id. If they ever
 // disagree (a save that never landed, an old copy restored), this device's data can't be trusted to mean
 // "deleted here", so the next sync combines everything instead of removing anything.
 async function setSyncBase(st) {
   const id = uid() + Date.now().toString(36);
-  SYNC.base = { state: JSON.parse(JSON.stringify(st)), at: Date.now(), id };
+  SYNC.base = { state: JSON.parse(JSON.stringify(st)), at: Date.now(), id, target: syncTarget() };
   S.meta.syncId = id; pendingBase = SYNC.base;
   await flushSave();
 }
@@ -2540,6 +2571,7 @@ async function syncNow(manual) {
   try {
     if (saveT) await flushSave();
     let base = await syncBase(); if (base && (!base.state || typeof base.state !== "object")) base = SYNC.base = null;     // a damaged record counts as none
+    await oneSyncCopy();
     const wasDirty = SYNC.dirty, trusted = baseTrusted(base); SYNC.dirty = false;
     if (base && !trusted) SYNC.etag = null;                                                          // re-read the synced copy in full
     const remote = await readRemote();
@@ -2621,7 +2653,8 @@ async function connectSync(token) {
     let gist = null;
     for (let page = 1; page <= 5 && !gist; page++) {
       const list = await (await gh(`/gists?per_page=100&page=${page}`)).json();
-      gist = list.find(g => g.description === SYNC_DESC); if (list.length < 100) break;
+      // the oldest one, the same one every device settles on
+      gist = list.filter(g => g.description === SYNC_DESC).sort((a, b) => (a.created_at || "").localeCompare(b.created_at || "") || a.id.localeCompare(b.id))[0] || gist; if (list.length < 100) break;
     }
     if (!gist) gist = await (await gh("/gists", { method: "POST", body: JSON.stringify({ description: SYNC_DESC, public: false, files: { "deckhand-sync.json": { content: JSON.stringify({ v: 1, chunks: 0, at: 0 }) } } }) })).json();
     setSyncCfg({ token, gist: gist.id, login: me.login }); SYNC.base = undefined; SYNC.etag = null; SYNC.dirty = true; SYNC.err = "";
@@ -2689,7 +2722,9 @@ function drawSync() {
       ${isGoogleSync(cfg) && !gdSignedIn() && !cfg.paused ? `<div class="row wrap"><span class="small grow">Google's hour has run out. Your changes are saved here.</span><button class="btn sm primary" id="syGTap">Sign in and sync</button></div>` : ""}
       <div class="kv"><span>Status</span><b class="${SYNC.err ? "down" : "up"}">${cfg.paused ? "Paused" : SYNC.busy ? "Syncing…" : SYNC.err ? "Problem" : SYNC.at ? "Synced " + ago(SYNC.at) : "Waiting"}</b></div>
       ${SYNC.err ? `<div class="small down">${esc(SYNC.err)}</div><div class="small muted">Your cards on this ${devName()} are saved and will sync once this is sorted. Details: <span class="num">${esc(SYNC.errDetail || "")}</span></div>` : ""}
-      ${SYNC.from ? `<div class="small muted">Last change came from your ${esc(SYNC.from)}.</div>` : ""}</div>
+      ${SYNC.from ? `<div class="small muted">Last change came from your ${esc(SYNC.from)}.</div>` : ""}
+      ${syncTarget() ? `<div class="small muted" id="syCopy">Synced copy <b class="num">${esc(syncTarget().slice(-6))}</b>. Every device should show the same code here.</div>` : ""}
+      ${ONE.note ? `<div class="small up">${esc(ONE.note)}</div>` : ""}</div>
     <p class="small muted">Every change is saved on this device at once and sent to your other devices about 2 seconds later. Deckhand also checks for changes from your other devices when it opens, when you come back to it, and every 15 seconds while it's open. Scan settings stay separate on each device.</p>
     <div class="menu">
       <button class="btn primary" id="syNow">${cfg.paused ? "Resume and sync now" : "Sync now"}</button>
