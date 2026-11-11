@@ -4229,9 +4229,19 @@ function drawSession() {
   el.querySelectorAll("[data-dec]").forEach(b => b.onclick = () => { const it = find(b.dataset.dec); it.qty = Math.max(1, it.qty - 1); redraw(); });
   el.querySelectorAll("[data-fin]").forEach(b => b.onclick = () => { const it = find(b.dataset.fin), f = it.card.finishes; it.finish = f[(f.indexOf(it.finish) + 1) % f.length]; redraw(); });
   el.querySelectorAll("[data-undo]").forEach(b => b.onclick = () => { const it = find(b.dataset.undo);
-    // take back what the scan added (and its scan count, for copies that stay)
-    if (it.binder) { const k = addToColl(it.card, it.finish, -it.qty, it.binder, true), e = S.coll[k]; if (e && e.scans) e.scans = Math.max(0, e.scans - it.qty); } if (it.deck && S.decks[it.deck]) addToDeck(S.decks[it.deck], it.card, -it.qty, false, true);
-    it.state = "review"; it.binder = it.deck = it.rule = null; save(); redraw(); toast("Taken back out"); });
+    // take back what the scan added, from the entry the scan added to (same card, finish and binder, Near Mint), and its
+    // scan count. Copies moved since (another binder, condition, finish or printing) are a different entry and aren't
+    // touched; if fewer copies are left there than the scan added, only those are taken back, and it says so.
+    let short = 0;
+    if (it.binder) {
+      const sl = isSlim(it.card) ? it.card : slim(it.card), fin = sl.finishes.includes(it.finish) ? it.finish : sl.finishes[0] || "nonfoil";
+      const k0 = ckey(sl.id, fin, S.binders[it.binder] ? it.binder : defaultBinder(), undefined), cur = S.coll[k0], take = Math.min(it.qty, cur ? cur.qty : 0);
+      short = it.qty - take;
+      if (take > 0) { const sc0 = cur.scans; addToColl(it.card, it.finish, -take, it.binder, true); const e = S.coll[k0]; if (e && sc0 != null) { e.scans = Math.max(0, sc0 - take); if (!e.scans) delete e.scans; } }
+    }
+    if (it.deck && S.decks[it.deck]) addToDeck(S.decks[it.deck], it.card, -it.qty, false, true);
+    it.state = "review"; it.binder = it.deck = it.rule = null; save(); redraw();
+    toast(short ? `Taken back out, except ${short} that ${short === 1 ? "was" : "were"} moved or removed since (left as they are)` : "Taken back out"); });
   el.querySelectorAll("[data-type]").forEach(b => b.onclick = () => { sc.fixId = b.dataset.type; const i = $("#scType"); i.placeholder = "Type the name of that card"; i.focus(); });
   el.querySelectorAll("[data-pick]").forEach(b => b.onclick = async () => {
     const it = find(b.dataset.pick);

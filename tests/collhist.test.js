@@ -6,7 +6,7 @@ const { chromium } = require("playwright"); const { spawn } = require("child_pro
 const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exitCode = 1; };
 (async () => {
   const srv = spawn("python3", ["-m", "http.server", "8842", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
-  const b = await chromium.launch(), p = await (await b.newContext()).newPage(), errs = [];
+  const b = await chromium.launch({ args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] }), p = await (await b.newContext()).newPage(), errs = [];
   p.on("pageerror", e => errs.push(e.message));
   await p.route("https://**", r => r.abort());
   await p.goto("http://127.0.0.1:8842/app_real.html"); await p.waitForTimeout(500);
@@ -49,6 +49,64 @@ const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exit
     S.coll = {}; k = make(); const same = takeCopies(k, 2, {}); o.same = [same === k, hist(S.coll[k])];
     return o;
   });
+  // ---- more cases
+  const X = await p.evaluate(() => {
+    const sol = { id: "sol", oid: "osol", name: "Sol Ring", set: "cmm", setName: "CMM", num: "1", rarity: "rare", type: "Artifact", cmc: 1, colors: [], ci: [], img: "", prices: { usd: "2", usd_foil: "5" }, finishes: ["nonfoil", "foil"] };
+    S.binders = { main: { id: "main", name: "Collection" }, trade: { id: "trade", name: "Trade" }, b3: { id: "b3", name: "Box 3" } };
+    const total = () => Object.values(S.coll).reduce((a, e) => a + (e.scans || 0), 0), qty = () => Object.values(S.coll).reduce((a, e) => a + e.qty, 0);
+    const where = () => Object.values(S.coll).map(e => `${e.binder}|${e.finish}|${e.cond || "NM"}|${e.qty}|s${e.scans || 0}`).sort().join(" ");
+    const bad = () => Object.values(S.coll).some(e => ["scanned", "firstScanned", "added", "newAt", "scans"].some(f => f in e && !(typeof e[f] === "number" && isFinite(e[f]) && e[f] >= 0)) || !(e.qty > 0));
+    const o = {};
+    // 1. scan undo after moving some of the scanned copies
+    const undoAfter = (pre, move) => {
+      S.coll = {}; if (pre) addToColl(sol, "nonfoil", pre, "main");
+      S.meta.scanDeck = null; save(); go("scan"); stopAuto();
+      const it = { id: "u1", state: "review", card: sol, finish: "nonfoil", qty: 3, at: Date.now() }; sc.items = [it]; addItem(it, 3); save(); drawSession();
+      const k = Object.keys(S.coll).find(k => S.coll[k].binder === "main"); const after = where();
+      if (move) takeCopies(k, move, { binder: "trade" }); const moved = where(), toasts = [];
+      const t0 = toast; toast = m => toasts.push(m); document.querySelector('[data-undo="u1"]').click(); toast = t0;
+      return { after, moved, undone: where(), qty: qty(), bad: bad(), toast: toasts[0], item: sc.items[0].state };
+    };
+    o.undoNoMove = undoAfter(1, 0);
+    o.undoMoved1 = undoAfter(0, 1);
+    o.undoMovedPre = undoAfter(1, 2);
+    // 2. the same entry split across several places, one move at a time: the scan total never changes
+    S.coll = {}; let k = addToColl(sol, "nonfoil", 10, "main"); Object.assign(S.coll[k], { scans: 7, scanned: 3000, firstScanned: 1000, added: 1000, newAt: 3000 });
+    const sums = [total()];
+    takeCopies(k, 3, { binder: "trade" }); sums.push(total());
+    takeCopies(k, 2, { binder: "b3" }); sums.push(total());
+    takeCopies(k, 1, { cond: "LP" }); sums.push(total());
+    takeCopies(k, 2, { finish: "foil" }); sums.push(total());
+    const tk = Object.keys(S.coll).find(x => S.coll[x].binder === "trade"); takeCopies(tk, 1, { binder: "b3" }); sums.push(total());
+    takeCopies(k, 2, { binder: "trade" }); sums.push(total());
+    o.repeat = { sums, where: where(), qty: qty(), bad: bad() };
+    // 3. "added": kept on both sides of a part move; a merge keeps the earliest
+    S.coll = {}; k = addToColl(sol, "nonfoil", 4, "main"); Object.assign(S.coll[k], { added: 1500 });
+    let nk = takeCopies(k, 1, { binder: "trade" }); o.addedPart = [S.coll[k].added, S.coll[nk].added];
+    const t2 = addToColl(sol, "nonfoil", 1, "b3"); S.coll[t2].added = 900; takeCopies(k, 1, { binder: "b3" }); const t3 = addToColl(sol, "foil", 1, "main"); S.coll[t3].added = 5000; takeCopies(k, 1, { finish: "foil" });
+    o.addedMerge = [S.coll[t2].added, S.coll[t3].added];
+    // 4. older entries with no dates at all: nothing invented, nothing reset, nothing invalid
+    S.coll = {}; k = addToColl(sol, "nonfoil", 3, "main"); for (const f of ["scanned", "firstScanned", "added", "newAt", "scans"]) delete S.coll[k][f];
+    nk = takeCopies(k, 1, { binder: "trade" }); takeCopies(k, 1, { binder: "trade" });
+    o.legacy = [Object.keys(S.coll[k]).filter(f => ["scanned", "firstScanned", "added", "newAt", "scans"].includes(f)), Object.keys(S.coll[nk]).filter(f => ["scanned", "firstScanned", "added", "newAt", "scans"].includes(f)), bad()];
+    // …merged into an entry that has dates: its dates stay
+    const dk = addToColl(sol, "nonfoil", 1, "b3"); Object.assign(S.coll[dk], { added: 2000, newAt: 2500, scanned: 2400, firstScanned: 2100, scans: 1 });
+    takeCopies(nk, 2, { binder: "b3" }); o.legacyIntoDated = [S.coll[dk].added, S.coll[dk].newAt, S.coll[dk].scanned, S.coll[dk].firstScanned, S.coll[dk].scans, S.coll[dk].qty, bad()];
+    // 5. a scan count of 0: no scan history appears
+    S.coll = {}; k = addToColl(sol, "nonfoil", 3, "main"); Object.assign(S.coll[k], { scans: 0 }); delete S.coll[k].scanned; delete S.coll[k].firstScanned;
+    nk = takeCopies(k, 1, { binder: "trade" }); const whole = takeCopies(k, 2, { binder: "b3" });
+    o.zero = [S.coll[nk].scans, "scanned" in S.coll[nk], S.coll[whole].scans, "scanned" in S.coll[whole], total(), bad()];
+    // …0 scans but scan dates (every scan undone): a part move doesn't hand out dates for scans that aren't there; a whole move keeps them
+    S.coll = {}; k = addToColl(sol, "nonfoil", 3, "main"); Object.assign(S.coll[k], { scans: 0, scanned: 3000, firstScanned: 1000 });
+    nk = takeCopies(k, 1, { binder: "trade" }); const w2 = takeCopies(k, 2, { binder: "b3" });
+    o.zeroDates = ["scanned" in S.coll[nk], S.coll[w2].scanned, S.coll[w2].firstScanned, total()];
+    // 6. more scans than copies (some removed by hand): shared out by the same rule, total kept
+    S.coll = {}; k = addToColl(sol, "nonfoil", 2, "main"); Object.assign(S.coll[k], { scans: 5, scanned: 3000, firstScanned: 1000 });
+    nk = takeCopies(k, 1, { binder: "trade" }); o.over = [S.coll[k].scans, S.coll[nk].scans, total()];
+    const m2 = addToColl(sol, "nonfoil", 1, "b3"); S.coll[m2].scans = 4; takeCopies(k, 1, { binder: "b3" }); o.overMerge = [k in S.coll, S.coll[m2].scans, S.coll[m2].qty, total(), bad()];
+    return o;
+  });
+  R.X = X;
   console.log(JSON.stringify(R));
   const H = (q, scans, scanned, first, added, newAt) => JSON.stringify({ qty: q, scans, scanned, first, added, newAt });
   const J = JSON.stringify;
@@ -65,6 +123,17 @@ const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exit
   ok(R.moveEntry[0] === null && J(R.moveEntry[1]) === H(6, 4, 5000, 1000, 1000, 4000) && R.moveEntry[2] === 4, "moving a whole entry to another binder merges the same way (and keeps the later New) " + J(R.moveEntry));
   ok(R.isNew[0] === true && R.isNew[1] === true, "copies still marked New after moving");
   ok(R.same[0] && J(R.same[1]) === H(4, 3, 3000, 1000, 1000, 3000), "a move to the same place changes nothing");
+  const U = X.undoNoMove, U1 = X.undoMoved1, U2 = X.undoMovedPre;
+  ok(U.after === "main|nonfoil|NM|4|s3" && U.undone === "main|nonfoil|NM|1|s0" && U.toast === "Taken back out" && U.item === "review", "scan undo, nothing moved: takes the 3 back, the copy from before stays " + J(U));
+  ok(U1.moved === "main|nonfoil|NM|2|s2 trade|nonfoil|NM|1|s1" && U1.undone === "trade|nonfoil|NM|1|s1" && U1.qty === 1 && !U1.bad && /except 1 that was moved or removed since/.test(U1.toast), "scan undo after 1 of the 3 moved: takes back the 2 still where the scan put them, leaves the moved one alone and says so " + J(U1));
+  ok(U2.moved === "main|nonfoil|NM|2|s1 trade|nonfoil|NM|2|s2" && U2.undone === "trade|nonfoil|NM|2|s2" && U2.qty === 2 && !U2.bad && /except 1 that was moved/.test(U2.toast), "scan undo after a move, with a copy from before: never goes below zero or touches the other binder; nothing invalid " + J(U2));
+  ok(X.repeat.sums.every(x => x === 7) && X.repeat.qty === 10 && !X.repeat.bad, "the same entry split 6 times across binders, a condition and a finish: the scan total stays 7 every time " + J(X.repeat));
+  ok(J(X.addedPart) === "[1500,1500]" && J(X.addedMerge) === "[900,1500]", "added: kept on both the original and the moved copies; a merge keeps the earlier date " + J([X.addedPart, X.addedMerge]));
+  ok(J(X.legacy[0]) === "[]" && J(X.legacy[1]) === "[]" && !X.legacy[2], "entries with no dates or scan count: moving and merging adds none, no invalid values " + J(X.legacy));
+  ok(J(X.legacyIntoDated) === "[2000,2500,2400,2100,1,3,false]", "an undated entry merged into a dated one: the dates and scan count there stay as they were " + J(X.legacyIntoDated));
+  ok(X.zero[0] === undefined && !X.zero[1] && X.zero[2] === undefined && !X.zero[3] && X.zero[4] === 0 && !X.zero[5], "a scan count of 0: moving invents no scans or scan dates " + J(X.zero));
+  ok(X.zeroDates[0] === false && X.zeroDates[1] === 3000 && X.zeroDates[2] === 1000 && X.zeroDates[3] === 0, "0 scans with old scan dates: a part move doesn't hand them out; the whole entry keeps them " + J(X.zeroDates));
+  ok(J(X.over) === "[2,3,5]" && J(X.overMerge) === "[false,6,2,9]".replace("]", ",false]"), "more scans than copies (5 scans, 2 copies): 1 copy moved takes 3, 2 stay, total 5; merging adds up (2+4=6, total 9) " + J([X.over, X.overMerge]));
   ok(!errs.length, "no page errors " + errs.join(" | "));
   await b.close(); srv.kill();
 })().catch(e => { console.error(e); process.exit(1); });
