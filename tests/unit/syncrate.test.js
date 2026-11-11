@@ -27,7 +27,7 @@ async function open(name, prof) {
   w.scrollTo = () => {}; w.indexedDB = prof.idb; Object.defineProperty(w, "localStorage", { value: prof.ls, configurable: true });
   Object.assign(w, { CompressionStream, DecompressionStream, Response, TextEncoder });
   w.fetch = async (u, o) => String(u).startsWith("https://api.github.com") ? github(String(u), o) : { ok: false, status: 404, json: async () => ({}) };
-  w.eval(fs.readFileSync(require("path").join(__dirname, "../.build/app.js"), "utf8") + ";window.T={S:()=>S,PUSH_GAP,addToColl,slim,connectSync,syncNow,SYNC,addToDeck,save,flushSave,takeCopies,deleteDeck:typeof deleteDeck==='function'?deleteDeck:null};");
+  w.eval(fs.readFileSync(require("path").join(__dirname, "../.build/app.js"), "utf8") + ";window.T={S:()=>S,PUSH_GAP,pushGap,addToColl,slim,connectSync,syncNow,SYNC,addToDeck,save,flushSave,takeCopies,deleteDeck:typeof deleteDeck==='function'?deleteDeck:null};");
   await new Promise(r => setTimeout(r, 400));
   const T = w.T; T.w = w; T.dom = dom;
   T.cards = () => Object.values(T.S().coll).map(e => `${e.name.split(" ")[0].replace(",", "")}×${e.qty}`).sort().join(", ");
@@ -61,7 +61,10 @@ const settle = () => new Promise(r => setTimeout(r, 400));
   GH.limit = { msg: "API rate limit exceeded for user ID 1.", h: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) } };
   D.addToColl(D.slim(cs), "nonfoil", 1, "main"); await settle(); await D.sync();
   ok(D.SYNC.holdUntil >= reset * 1e3 && /try again by/.test(D.SYNC.err), "API limit: waits until GitHub's reset time");
-  D.SYNC.holdUntil = 0; await D.sync(); ok(!D.SYNC.err, "a tap on Sync now still tries straight away");
+  const p0 = GH.patches; D.addToColl(D.slim(cs), "nonfoil", 1, "main"); await settle(); await D.sync();
+  ok(GH.patches === p0 && D.SYNC.dirty, "while GitHub says wait, even a tap on Sync doesn't send (that only makes the wait longer); the change stays saved here");
+  ok(D.pushGap() === 180e3, "for an hour after GitHub asked to slow down, saves are 3 minutes apart");
+  D.SYNC.holdUntil = 0; D.SYNC.rateAt = 0; await D.sync(); ok(!D.SYNC.err, "once the wait is over, a tap on Sync goes straight away");
 
   // ---- 3. a token that can't write gists
   GH.limit = { msg: "Resource not accessible by personal access token", h: {} };
@@ -75,7 +78,8 @@ const settle = () => new Promise(r => setTimeout(r, 400));
   n = GH.patches;
   for (let i = 0; i < 6; i++) { D.addToColl(D.slim(P("x" + i, "Card " + i)), "nonfoil", 1, "main"); await settle(); await D.syncNow(); for (let k = 0; k < 100 && D.SYNC.busy; k++) await new Promise(r => setTimeout(r, 20)); }
   ok(GH.patches - n <= 1, `6 cards added in a row: ${GH.patches - n} upload(s), not 6`);
-  D.SYNC.lastPush = Date.now() - D.PUSH_GAP - 1; await D.syncNow(); for (let k = 0; k < 100 && D.SYNC.busy; k++) await new Promise(r => setTimeout(r, 20));
+  ok(D.pushGap() === 60e3, "while changes keep coming, saves to GitHub are a minute apart");
+  D.SYNC.lastPush = Date.now() - 60e3 - 1; await D.syncNow(); for (let k = 0; k < 100 && D.SYNC.busy; k++) await new Promise(r => setTimeout(r, 20));
   ok(!D.SYNC.dirty && /Card 5/.test(JSON.stringify(D.S().coll)), "the rest go up together once the gap has passed");
   const rc = await remoteCards(); ok((rc.match(/Card×1/g) || []).length === 6, `other device gets all 6 (${rc})`);
   D.close(); process.exit();

@@ -11,8 +11,8 @@ async function run(opts, shot) {
   await p.evaluate(() => { S.binders = { main: { id: "main", name: "Collection" } }; for (let i = 0; i < 3; i++) addToColl({ id: "c" + i, name: "Card " + i, set: "tst", num: String(i), type: "Creature", prices: { usd: "2" }, finishes: ["nonfoil", "foil"] }, "nonfoil", 1, "main"); save(); go("coll"); showList(); });
   await p.waitForTimeout(300); await p.click("#clist [data-open]"); await p.waitForSelector("#cAddRow");
   const R = {};
-  // [no bottom bar, the add row is inside the card's own box, the + button is in it, its distance from the top of the screen's content]
-  const barPos = () => p.evaluate(() => { const r = document.querySelector("#cAddRow"), sh = document.querySelector("#sheetRoot .sheet"); return [!document.querySelector("#cBar, .cbar"), !!r.closest(".box"), !!r.querySelector("#cPlus"), Math.round(r.getBoundingClientRect().top - sh.getBoundingClientRect().top + sh.scrollTop)]; });
+  // [no bottom bar, the add row is inside the card's own box, the + button is in it, its place within that box (the same while scrolling)]
+  const barPos = () => p.evaluate(() => { const r = document.querySelector("#cAddRow"), sh = document.querySelector("#sheetRoot .sheet"); return [!document.querySelector("#cBar, .cbar"), !!r.closest(".box"), !!r.querySelector("#cPlus"), Math.round(r.getBoundingClientRect().top - r.closest(".box").getBoundingClientRect().top)]; });
   R.atTop = await barPos();
   await p.evaluate(() => { const sh = document.querySelector("#sheetRoot .sheet"); sh.scrollTop = (sh.scrollHeight - sh.clientHeight) / 2; }); await p.waitForTimeout(150); R.mid = await barPos();
   if (shot) await p.screenshot({ path: __dirname + "/" + shot });
