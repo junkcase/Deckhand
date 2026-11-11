@@ -4444,8 +4444,10 @@ async function toggleTorch() {
 }
 
 /* ---------- auto-capture: watch the frame, shoot when a card is in focus and still ---------- */
-const AUTO = { patience: 450, guideWait: 1000, W: 144, H: 200, still: 7, hold: 300, holdLocked: 150, minStd: 20, minText: 12, minSharp: 2.5, rearm: 30, every: 120, tries: 4, tooSmall: 0.22 };
-const ana = { timer: null, prev: null, since: 0, armed: true, sig: null, fails: 0, cool: 0, cv: null, ac: null, failMsg: "" };
+// guideWait: how long to look for the card's edges before reading the on-screen frame anyway (shots without the edges
+// were mostly of nothing); retryGap: the pause before trying a card again
+const AUTO = { patience: 450, guideWait: 2500, retryGap: 700, W: 144, H: 200, still: 7, hold: 300, holdLocked: 150, minStd: 20, minText: 12, minSharp: 2.5, rearm: 30, every: 120, tries: 4, tooSmall: 0.22 };
+const ana = { timer: null, prev: null, since: 0, armed: true, sig: null, fails: 0, empties: 0, cool: 0, cv: null, ac: null, failMsg: "" };
 function startAuto() { stopAuto(); ana.prev = null; ana.since = 0; ana.timer = setInterval(watchTick, AUTO.every); }
 function stopAuto() { if (ana.timer) clearInterval(ana.timer); ana.timer = null; setFrameState("", 0); }
 function setFrameState(st, p) {
@@ -4489,7 +4491,7 @@ function autoTick() {
   const noCard = s.std < AUTO.minStd || s.text < AUTO.minText;
   if (!ana.armed) {
     // ready again once the card leaves the frame or a clearly different picture shows up
-    if (noCard || (ana.sig && diffL(s.L, ana.sig) > AUTO.rearm)) { ana.armed = true; ana.fails = 0; ana.failMsg = ""; }
+    if (noCard || (ana.sig && diffL(s.L, ana.sig) > AUTO.rearm)) { ana.armed = true; ana.fails = 0; ana.empties = 0; ana.failMsg = ""; }
     else { setFrameState("", 0); camHint(ana.failMsg || "Got it. Show the next card"); return; }
   }
   if (now < ana.cool) return;
@@ -4704,12 +4706,20 @@ async function shootAndRead(s) {
   if (!shot) { setFrameState("", 0); sc.cur = null; return; }
   sc.cur.ms.capture = performance.now() - t0; sc.cur.src = shot.src; sc.cur.res = shot.res;
   try { const t = document.createElement("canvas"); t.width = 63; t.height = 88; t.getContext("2d").drawImage(shot.c, 0, 0, 63, 88); sc.lastThumb = t.toDataURL("image/jpeg", 0.7); } catch (e) { sc.lastThumb = ""; }
+  sc.lastRead = null; const edges = cardLocked();
   const ok = await captureFrom("snap", shot.c, ana.fails % 2 === 1);    // every other retry uses stronger settings
   shot.c.width = shot.c.height = 0;                                       // the snapshot is deleted once read
   if (!sc.auto) return;
-  if (ok) { ana.armed = false; ana.sig = s.L; ana.fails = 0; ana.failMsg = ""; ana.seenAt = 0; ana.pre = null; if (navigator.vibrate) navigator.vibrate(40); }
+  if (ok) { ana.empties = 0; ana.armed = false; ana.sig = s.L; ana.fails = 0; ana.failMsg = ""; ana.seenAt = 0; ana.pre = null; if (navigator.vibrate) navigator.vibrate(40); }
+  else if ((String(sc.lastRead || "").match(/[a-z]/gi) || []).length < 3 && (!edges || ana.empties++ >= 1)) {
+    // no name-like text at all: probably no card there (a table, a sleeve, a hand), so don't fire again and again;
+    // wait until the picture changes, and don't count it as a card that couldn't be read. (With a card's edges found,
+    // one more try first: a blurry first shot can read nothing.)
+    ana.empties = 0; ana.armed = false; ana.sig = s.L; ana.fails = 0; ana.seenAt = 0; ana.pre = null;
+    ana.failMsg = "No card name there. Show a card, or tap the white button to read it anyway";
+  }
   else {
-    ana.fails++; ana.cool = performance.now() + 250;                      // quick automatic retry with a fresh snapshot
+    ana.fails++; ana.cool = performance.now() + AUTO.retryGap;              // automatic retry with a fresh snapshot
     if (ana.fails >= AUTO.tries) {
       ana.armed = false; ana.sig = s.L; ana.fails = 0; ana.failMsg = "Couldn't read that one. It's in the list below. Show the next card";
       sc.items.push({ id: uid(), state: "failed", read: sc.lastRead, thumb: sc.lastThumb, finish: sc.finish, qty: 1, at: Date.now() }); saveSession(); drawSession(); scanHead(); cardSound("miss");
