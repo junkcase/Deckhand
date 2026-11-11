@@ -64,13 +64,11 @@ async function device(name) {
   A.undoSync(); await A.sync(); await B.sync();
   ok(/Sol×3/.test(A.cards()) && /Sol×3/.test(B.cards()), "Undo the last sync on the tablet puts it back, everywhere: " + A.cards());
 
-  // a third device that already had a different collection: asks, then combines
+  // a third device that already had a different collection: combines, removing nothing
   const C = await device("computer");
   C.addToColl(C.slim(sol), "nonfoil", 1, "main"); C.addToColl(C.slim(bolt), "nonfoil", 4, "main");
   await C.connectSync("ghp_good"); await C.sync();
-  const body = C.w.document.querySelector("#syBody");
-  ok(body && /Which should Deckhand keep/.test(body.textContent) && C.SYNC.ask, "device that already has cards: asks to combine, use the synced copy, or use its own");
-  C.w.document.querySelector("#syComb").click(); await new Promise(r => setTimeout(r, 400));
+  ok(!C.SYNC.ask && !C.SYNC.err, "device that already has cards: combines on its own (no question that could replace one side's cards)");
   ok(/Sol×3/.test(C.cards()) && /Lightning×4/.test(C.cards()) && /Counterspell×1/.test(C.cards()), "Combine: every card from both, shared cards at the larger count: " + C.cards());
   await A.sync(); ok(/Lightning×4/.test(A.cards()), "…and the tablet picks that up: " + A.cards());
 

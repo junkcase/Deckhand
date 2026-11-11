@@ -2235,7 +2235,8 @@ const SYNC_KEYS = ["coll", "decks", "binders", "alerts", "ph", "hist", "trade", 
 const SYNC_DESC = "Deckhand sync (managed by the Deckhand app)";
 // the version of the sync rules; raised whenever how devices combine their data changes
 // 3: card lists (Search → Lists) sync too; 4: the Market watchlist; 5: sealed products
-var SYNC_V = 5;
+// 6: each upload carries a version number and the list of versions it was built on (see "Versions of the synced copy")
+var SYNC_V = 6;
 var SYNC = { cfg: undefined, busy: false, t: null, etag: null, base: undefined, dirty: true, err: "", at: 0, from: "", files: [], undo: null, poll: null, ask: null };
 // sync is set up: GitHub (a private gist) or Google (a file in the user's Drive)
 const isGoogleSync = (cfg = syncCfg()) => !!(cfg && cfg.kind === "google");
@@ -2364,9 +2365,9 @@ function trashDeck(d, why) {
   S.meta.deckTrash.unshift({ deck: JSON.parse(JSON.stringify(d)), at: Date.now(), why });
   S.meta.deckTrash = S.meta.deckTrash.slice(0, 30);
 }
-async function pushGist(state) {
+async function pushGist(state, meta = {}) {
   const text = await packState(state), chunks = text.match(/[\s\S]{1,900000}/g) || [""], files = {};
-  files["deckhand-sync.json"] = { content: JSON.stringify({ v: 1, sv: SYNC_V, chunks: chunks.length, at: Date.now(), device: devName() }) };
+  files["deckhand-sync.json"] = { content: JSON.stringify(Object.assign({ v: 1, sv: SYNC_V, chunks: chunks.length, at: Date.now(), device: devName() }, meta)) };
   chunks.forEach((c, i) => files[`deckhand-data-${i}.txt`] = { content: c });
   for (const n of SYNC.files) if (/^deckhand-data-\d+\.txt$/.test(n) && !files[n]) files[n] = null;     // drop parts no longer used
   await gh("/gists/" + syncCfg().gist, { method: "PATCH", body: JSON.stringify({ files }) });
@@ -2397,14 +2398,16 @@ async function gdReadSync() {
   if (!+m.size) { GDS.version = m.version; return { info, state: null }; }
   const text = await ungzip(await (await gd(`/drive/v3/files/${id}?alt=media`)).arrayBuffer());
   GDS.version = m.version;
-  return { info, state: pickSync(JSON.parse(text)) };
+  const j = JSON.parse(text); if (j && j._sync && typeof j._sync === "object") Object.assign(info, j._sync);
+  return { info, state: pickSync(j) };
 }
-async function gdPushSync(state) {
+async function gdPushSync(state, ver = {}) {
   const cfg = syncCfg(), meta = { appProperties: { deckhandSync: "1", device: devName(), at: String(Date.now()), sv: String(SYNC_V) } };
   const body = new FormData();
   if (!cfg.file) Object.assign(meta, { name: GDS.file, parents: [cfg.folder], mimeType: "application/gzip" });
   body.append("metadata", new Blob([JSON.stringify(meta)], { type: "application/json" }));
-  body.append("file", await gzipText(JSON.stringify(state)));
+  // the version details ride inside the file (older versions of Deckhand ignore the extra key)
+  body.append("file", await gzipText(JSON.stringify(Object.assign({}, state, { _sync: ver }))));
   const r = await (await gd(cfg.file ? `https://www.googleapis.com/upload/drive/v3/files/${cfg.file}?uploadType=multipart&fields=id,version` : "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,version", { method: cfg.file ? "PATCH" : "POST", body })).json();
   if (!cfg.file) setSyncCfg(Object.assign({}, syncCfg(), { file: r.id }));
   GDS.version = r.version || null;
@@ -2438,7 +2441,41 @@ async function oneSyncCopy() {
   toast("Found a second synced copy and joined them. Nothing was removed.");
 }
 const readRemote = () => isGoogleSync() ? gdReadSync() : readGist();
-const pushRemote = st => { SYNC.prevPush = SYNC.lastPush || 0; SYNC.lastPush = Date.now(); return isGoogleSync() ? gdPushSync(st) : pushGist(st); };
+/* Versions of the synced copy. GitHub has no "only save if nobody else saved since I looked", and right after a save it can
+   still hand out the copy from before. So each upload says which version it is (seq, a counting number, and pid, a random
+   id) and lists the versions it was built on (chain). A device can then tell, when it looks next:
+   - the copy is its own upload, or built on it: all is well;
+   - the copy is older than what it already has (GitHub hasn't caught up): it waits and looks again, instead of
+     treating the missing newer cards as deleted;
+   - another device's upload replaced its own (both saved at once): it combines again from the version both started from,
+     so neither device's cards are lost. */
+// a short history of this device's syncs (kept on this device only), to copy from the Sync screen when devices disagree
+function slog(what) {
+  try {
+    const L = S.meta.syncLog || (S.meta.syncLog = []), r = SYNC.rinfo || {};
+    L.push({ at: Date.now(), what: String(what).slice(0, 160), cards: syncCount(S), decks: Object.keys(S.decks || {}).length, seq: +r.seq || 0, from: String(r.device || "").slice(0, 20) });
+    if (L.length > 60) L.splice(0, L.length - 60);
+  } catch (e) {}
+}
+function syncLogText() {
+  const cfg = syncCfg() || {}, b = SYNC.base || {}, r = SYNC.rinfo || {};
+  return [`Deckhand sync log · ${new Date().toLocaleString()} · this ${devName()} · ${isGoogleSync(cfg) ? "Google Drive" : "GitHub"} · synced copy ${syncTarget().slice(-6) || "-"} · Deckhand sync rules ${SYNC_V}`,
+    `here: ${syncCount(S)} cards, ${Object.keys(S.decks).length} decks · last synced ${SYNC.at ? new Date(SYNC.at).toLocaleString() : "never"} · record: version ${b.seq || "-"} ${b.pid ? "(" + b.pid.slice(-5) + ")" : ""}${b.prev ? ", built on " + b.prev.pid.slice(-5) : ""} · synced copy: version ${r.seq || "-"} from ${r.device || "-"}`,
+    `status: ${SYNC.err ? "problem: " + SYNC.err + (SYNC.errDetail ? " [" + SYNC.errDetail + "]" : "") : "ok"}${SYNC.needTap ? " · waiting for a tap (Google)" : ""}${SYNC.holdUntil > Date.now() ? " · GitHub asked to wait" : ""}${SYNC.dirty ? " · changes not sent yet" : ""}`,
+    "time | what | cards | decks | copy version | from",
+    ...(S.meta.syncLog || []).slice().reverse().map(e => `${new Date(e.at).toLocaleString()} | ${e.what} | ${e.cards} | ${e.decks} | ${e.seq || "-"} | ${e.from || ""}`)].join("\n");
+}
+function nextSyncMeta() {
+  const r = SYNC.rinfo || {}, pid = uid() + Date.now().toString(36);
+  return { seq: Math.max(+r.seq || 0, +((SYNC.base || {}).seq) || 0) + 1, pid, chain: [...(Array.isArray(r.chain) ? r.chain : []), pid].slice(-40) };
+}
+const pushRemote = async st => {
+  SYNC.prevPush = SYNC.lastPush || 0; SYNC.lastPush = Date.now();
+  const meta = nextSyncMeta();
+  await (isGoogleSync() ? gdPushSync(st, meta) : pushGist(st, meta));
+  SYNC.rinfo = Object.assign({ device: devName(), at: Date.now(), sv: SYNC_V }, meta);
+  return meta;
+};
 const PUSH_GAP = 20e3;          // at most one automatic upload every 20 seconds, so a scanning session doesn't hit GitHub's limits
 // GitHub limits how often a gist can be saved. Adding lots of cards (a scanning session, an import) means a change every few
 // seconds, so with GitHub: the first save goes after 20 s, saves while changes keep coming are a minute apart, and for an
@@ -2543,9 +2580,12 @@ const baseTrusted = base => !!(base && base.id && base.id === S.meta.syncId && (
 // The sync record ("what was last synced") and the cards are saved together, with a matching id. If they ever
 // disagree (a save that never landed, an old copy restored), this device's data can't be trusted to mean
 // "deleted here", so the next sync combines everything instead of removing anything.
-async function setSyncBase(st) {
-  const id = uid() + Date.now().toString(36);
-  SYNC.base = { state: JSON.parse(JSON.stringify(st)), at: Date.now(), id, target: syncTarget() };
+// the record of what was last synced: the cards, and which version of the synced copy they are (pid, seq). After an
+// upload it also keeps the version the upload was built on (prev), to combine from if another upload replaced it.
+async function setSyncBase(st, prev) {
+  const id = uid() + Date.now().toString(36), r = SYNC.rinfo || {};
+  SYNC.base = { state: JSON.parse(JSON.stringify(st)), at: Date.now(), id, target: syncTarget(), pid: r.pid || null, seq: +r.seq || 0 };
+  if (prev && prev.pid) SYNC.base.prev = { pid: prev.pid, state: JSON.parse(JSON.stringify(prev.state)) };
   S.meta.syncId = id; pendingBase = SYNC.base;
   await flushSave();
 }
@@ -2594,32 +2634,63 @@ async function syncNow(manual) {
     await oneSyncCopy();
     const wasDirty = SYNC.dirty, trusted = baseTrusted(base); SYNC.dirty = false;
     if (base && !trusted) SYNC.etag = null;                                                          // re-read the synced copy in full
+    const before = SYNC.rinfo || {};
     const remote = await readRemote();
     // the synced copy was written by newer sync rules: don't merge or upload with older ones, ask for the update
     if (remote && remote.info && +remote.info.sv > SYNC_V) { SYNC.dirty = true; SYNC.err = "Another device is using a newer version of Deckhand. Update this one to keep syncing; your changes here are saved."; SYNC.errDetail = ""; showUpdate(true); return; }
-    if (!remote && !wasDirty && trusted) { SYNC.at = Date.now(); SYNC.err = ""; return; }            // nothing new anywhere
+    // which version is this? (see "Versions of the synced copy")
+    let replaced = false, prevState = null;
+    const ri = remote && remote.info;
+    if (ri && remote.state && base && base.pid && trusted) {
+      const chain = Array.isArray(ri.chain) ? ri.chain : [], has = p => !!p && (ri.pid === p || chain.includes(p));
+      if (!has(base.pid)) {
+        if ((+ri.seq || 0) < (+base.seq || 0) && (SYNC.stale = (SYNC.stale || 0) + 1) <= 6) {
+          // older than what this device already has: GitHub hasn't caught up yet. Look again shortly, change nothing.
+          SYNC.dirty = SYNC.dirty || wasDirty; SYNC.etag = null; GDS.version = null; SYNC.rinfo = before; slog(`saw an older synced copy (version ${ri.seq || 0}); waiting`); scheduleSync(5000); return;
+        }
+        replaced = true; prevState = base.prev && has(base.prev.pid) ? base.prev.state : null;
+      }
+    }
+    SYNC.stale = 0;
+    if (ri) SYNC.rinfo = ri;
+    if (!remote && !wasDirty && trusted && !replaced) { SYNC.at = Date.now(); SYNC.err = ""; return; }            // nothing new anywhere
     const local = pickSync(S);
     if (!remote && trusted && SYNC.lastJ && J_(local) === SYNC.lastJ) { SYNC.at = Date.now(); SYNC.err = ""; return; }   // only device settings changed
-    if (base && remote && !remote.state) { await pushRemote(local); await setSyncBase(local); }       // the synced copy is empty: fill it from here, change nothing here
+    if (base && remote && !remote.state) { await pushRemote(local); await setSyncBase(local); slog("synced copy was empty: filled it from here"); }       // the synced copy is empty: fill it from here, change nothing here
     else if (!base) {                                                                                // first sync on this device
       const rs = remote && remote.state, lc = syncCount(local) + Object.keys(local.decks).length, rc = rs ? syncCount(rs) + Object.keys(rs.decks).length : 0;
-      if (!rs || !rc) { await pushRemote(local); await setSyncBase(local); }
-      else if (!lc) { applySynced(rs); await setSyncBase(rs); toast(`Loaded ${syncCount(rs).toLocaleString()} cards from your other device`); }
-      else { SYNC.ask = { local, remote: rs }; syncSheet(); return; }
+      if (!rs || !rc) { await pushRemote(local); await setSyncBase(local); slog("first sync: sent this device's cards"); }
+      else if (!lc) { applySynced(rs); await setSyncBase(rs); slog("first sync: loaded the synced copy"); toast(`Loaded ${syncCount(rs).toLocaleString()} cards from your other device`); }
+      else {
+        // both have cards and this device has no record of syncing (set up again, or a new device): combine them, with
+        // nothing removed. (It used to ask, and two of the three answers replaced one side's cards entirely.)
+        SYNC.undo = pickSync(JSON.parse(JSON.stringify(S)));
+        const both = mergeSync(combineBase(local, rs), local, rs);
+        applySynced(both); clearTimeout(SYNC.t); SYNC.dirty = false; await flushSave();
+        await pushRemote(pickSync(S)); await setSyncBase(pickSync(S)); slog("first sync here with cards on both: combined, nothing removed");
+        toast(`Combined this ${devName()}'s cards with your synced copy. Nothing was removed.`, { label: "Undo", fn: undoSync }); render();
+      }
     } else {
       const R = pickSync(remote ? remote.state : base.state), from = remote && remote.info ? remote.info.device || "" : "";
-      const merged = mergeSync(trusted ? pickSync(base.state) : combineBase(local, R), local, R);
+      // another device's upload replaced this one's: combine from the version both started from (or, if that isn't known,
+      // keep everything from both), so nothing either device added is lost
+      const B0 = replaced ? (prevState ? pickSync(prevState) : combineBase(local, R)) : trusted ? pickSync(base.state) : combineBase(local, R);
+      if (replaced) { SYNC.replaced = (SYNC.replaced || 0) + 1; slog(`another device's upload replaced this one's; combined again ${prevState ? "from the version both started from" : "keeping everything from both"}`); }
+      const merged = mergeSync(B0, local, R);
       const ms = J_(merged), changedHere = SYNC_KEYS.some(k => J_(merged[k]) !== J_(local[k]));
       // 1. save the combined cards here first (the sync record stays as it was), 2. upload, 3. save the new sync record with the cards
       if (changedHere) { applySynced(merged, from); clearTimeout(SYNC.t); SYNC.dirty = false; await flushSave(); if (remote) { SYNC.from = from; toast(`Updated from your ${from || "other device"}`); } }
-      if (ms !== J_(R)) await pushRemote(merged);
-      await setSyncBase(merged); SYNC.lastJ = ms;
+      const rBefore = SYNC.rinfo || {};
+      if (ms !== J_(R)) { await pushRemote(merged); await setSyncBase(merged, { pid: rBefore.pid, state: R }); }
+      else await setSyncBase(merged);
+      slog((changedHere ? `took changes from ${from || "the synced copy"}` : "") + (changedHere && ms !== J_(R) ? " and " : "") + (ms !== J_(R) ? "sent this device's changes" : "") || "checked: no changes");
+      SYNC.lastJ = ms;
     }
     SYNC.at = Date.now(); SYNC.err = ""; SYNC.needTap = false; SYNC.holdUntil = 0;
   } catch (e) {
-    if (e.needTap) { SYNC.needTap = true; SYNC.dirty = true; return; }                                   // signed out of Google partway: not an error, just needs a tap
+    if (e.needTap) { SYNC.needTap = true; SYNC.dirty = true; slog("Google sign-in ran out: waiting for a tap"); return; }                                   // signed out of Google partway: not an error, just needs a tap
     if (e.rate) { SYNC.holdUntil = e.until; SYNC.rateAt = Date.now(); scheduleSync(Math.max(5e3, e.until - Date.now() + 500)); }
-    SYNC.err = e.message || String(e); SYNC.dirty = true;
+    SYNC.err = e.message || String(e); SYNC.dirty = true; slog("problem: " + SYNC.err);
     // keep the details so a problem that only happens on one device can be tracked down
     SYNC.errDetail = String(e && e.stack || e).split("\n").slice(0, 3).map(x => x.trim().replace(/\(?https?:\/\/[^)\s]*\/([^/)\s]+)\)?/g, "$1")).join(" ← ");
     try { console.warn("Deckhand sync:", e); } catch (er) {}
@@ -2752,9 +2823,11 @@ function drawSync() {
       ${SYNC.undo ? `<button class="btn" id="syUndo">Undo the last sync on this device</button>` : ""}
       ${SYNC.err && /token/.test(SYNC.err) ? `<form class="row" id="syForm"><input type="password" id="syTok" class="grow" placeholder="Paste a new token" autocomplete="off"><button class="btn">Use token</button></form>` : ""}
       <button class="btn" id="syOld">Find a missing deck in earlier syncs</button>
+      <button class="btn ghost" id="syLog">Copy the sync log</button>
       ${syncRemovedHTML()}
       <button class="btn ghost" id="syOff">Stop syncing on this device</button></div>`;
   $("#syOld").onclick = () => { closeSheet(); oldDecksSheet(); };
+  $("#syLog").onclick = async () => { const t = syncLogText(); try { await navigator.clipboard.writeText(t); toast("Sync log copied. Paste it to whoever is helping you."); } catch (e) { openSheet(`<h2>Sync log</h2><textarea readonly style="width:100%;height:60vh;font-size:11px">${esc(t)}</textarea>`); } };
   el.querySelectorAll("[data-unrm]").forEach(b => b.onclick = () => { restoreSyncRemoved(b.dataset.unrm); drawSync(); });
   $("#syNow").onclick = () => { if (cfg.paused) { setSyncCfg(Object.assign({}, cfg, { paused: false })); startSyncLoop(); } else if (isGoogleSync(cfg)) googleTapSync(); else syncNow(true); };
   const gt = $("#syGTap"); if (gt) gt.onclick = () => googleTapSync();
@@ -2784,7 +2857,9 @@ function backupNow() {
 const GD = { cid: "209447163612-8ma7rsakde9dm8rdvvupsp9tvqtm2kr7.apps.googleusercontent.com", scope: "https://www.googleapis.com/auth/drive.file", tok: null, exp: 0, lib: null, busy: false, keep: 30, folderName: "Deckhand backups" };
 function gdCfg() { try { return JSON.parse(localStorage.getItem("deckhand.gdrive") || "null"); } catch (e) { return null; } }
 function setGdCfg(c) { try { c ? localStorage.setItem("deckhand.gdrive", JSON.stringify(c)) : localStorage.removeItem("deckhand.gdrive"); } catch (e) {} }
-(function () { try { const t = JSON.parse(sessionStorage.getItem("deckhand.gdtok") || "null"); if (t && t.exp > Date.now() + 60000) { GD.tok = t.tok; GD.exp = t.exp; } } catch (e) {} })();
+// Google's sign-in lasts an hour; it's kept for that hour even if the app is closed and opened again, so a quick reopen
+// doesn't need a tap (it used to be forgotten on close, and a device left waiting for a tap stops syncing)
+(function () { try { const t = JSON.parse(localStorage.getItem("deckhand.gdtok") || sessionStorage.getItem("deckhand.gdtok") || "null"); if (t && t.exp > Date.now() + 60000) { GD.tok = t.tok; GD.exp = t.exp; } } catch (e) {} })();
 const gdSignedIn = () => !!(GD.tok && Date.now() < GD.exp - 60000);
 function loadGis() {
   if (window.google && google.accounts && google.accounts.oauth2) return Promise.resolve();
@@ -2799,7 +2874,7 @@ async function gdSignIn() {
     const cfg = gdCfg();
     const client = google.accounts.oauth2.initTokenClient({ client_id: GD.cid, scope: GD.scope, prompt: cfg ? "" : "consent", hint: cfg && cfg.email || undefined,
       callback: r => { if (r.error) return rej(new Error(r.error === "access_denied" ? "Google Drive access wasn't allowed." : "Google sign-in failed (" + r.error + ").")); GD.tok = r.access_token; GD.exp = Date.now() + (+r.expires_in || 3600) * 1000;
-        try { sessionStorage.setItem("deckhand.gdtok", JSON.stringify({ tok: GD.tok, exp: GD.exp })); } catch (e) {} res(GD.tok); },
+        try { localStorage.setItem("deckhand.gdtok", JSON.stringify({ tok: GD.tok, exp: GD.exp })); } catch (e) {} res(GD.tok); },
       error_callback: e => rej(new Error(e && e.type === "popup_closed" ? "Google sign-in was closed before it finished." : e && e.type === "popup_failed_to_open" ? "The browser blocked Google's sign-in window. Allow pop-ups for this site and try again." : "Google sign-in failed.")) });
     client.requestAccessToken();
   });
@@ -2809,7 +2884,7 @@ async function gd(path, opts = {}) {
   let r;
   try { r = await fetch(path.startsWith("http") ? path : "https://www.googleapis.com" + path, Object.assign({}, opts, { headers: Object.assign({ Authorization: "Bearer " + GD.tok }, opts.headers || {}) })); }
   catch (e) { throw new Error("Couldn't reach Google Drive. Check your connection."); }
-  if (r.status === 401) { GD.tok = null; try { sessionStorage.removeItem("deckhand.gdtok"); } catch (e) {} throw Object.assign(new Error("Sign in to Google again to use Drive."), { needTap: true }); }
+  if (r.status === 401) { GD.tok = null; try { localStorage.removeItem("deckhand.gdtok"); sessionStorage.removeItem("deckhand.gdtok"); } catch (e) {} throw Object.assign(new Error("Sign in to Google again to use Drive."), { needTap: true }); }
   if (r.status === 403) { const j = await r.json().catch(() => ({})); throw new Error("Google Drive refused: " + ((j.error && j.error.message) || "no permission")); }
   if (!r.ok) throw new Error("Google Drive returned " + r.status);
   return r;
@@ -2896,7 +2971,7 @@ function wireGdSection(redraw) {
     catch (e) { msg(e.message); } };
   const bk = $("#gdBk"); if (bk) bk.onclick = async () => { msg("Backing up…"); try { if (!gdSignedIn()) await gdSignIn(); await gdBackupNow(); redraw(); } catch (e) { msg(e.message); } };
   const rs = $("#gdRs"); if (rs) rs.onclick = async () => { msg("Looking for backups…"); try { if (!gdSignedIn()) await gdSignIn(); gdRestoreSheet(await gdList()); } catch (e) { msg(e.message); } };
-  const off = $("#gdOff"); if (off) off.onclick = () => { setGdCfg(null); GD.tok = null; try { sessionStorage.removeItem("deckhand.gdtok"); } catch (e) {} redraw(); toast("Drive backups stopped. The backups already in your Drive stay there."); };
+  const off = $("#gdOff"); if (off) off.onclick = () => { setGdCfg(null); GD.tok = null; try { localStorage.removeItem("deckhand.gdtok"); sessionStorage.removeItem("deckhand.gdtok"); } catch (e) {} redraw(); toast("Drive backups stopped. The backups already in your Drive stay there."); };
 }
 // put a backup back: without Sync it replaces this device's data; with Sync it brings back anything missing and the next sync shares it
 async function restoreBackup(d) {

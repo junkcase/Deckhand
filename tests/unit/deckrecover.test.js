@@ -41,14 +41,14 @@ async function device(name) {
   A.S().decks.gj = { id: "gj", name: "Gjalta EDH", format: "commander", cmdr: [], cards: {}, created: Date.now(), updated: Date.now() };
   A.addToDeck(A.S().decks.gj, A.slim(bolt), 1, false); A.addToDeck(A.S().decks.gj, A.slim(cs), 1, false); A.save();
   await new Promise(r => setTimeout(r, 300)); await A.sync();
-  // the tablet already has cards and connects; the dialog now warns what each choice removes
+  // the tablet already has cards and connects: it combines, keeping the computer's deck
   B.addToColl(B.slim(path), "nonfoil", 2, "main");
   await B.connectSync("ghp_good"); await B.sync();
-  const dlg = B.w.document.querySelector("#syBody").textContent;
-  ok(/Removes the deck “Gjalta EDH”/.test(dlg), "first sync on another device warns: “Use this tablet's cards everywhere … Removes the deck “Gjalta EDH””");
-  B.w.document.querySelector("#syMine").click(); await new Promise(r => setTimeout(r, 400));
+  ok(B.S().decks.gj && !B.SYNC.ask, "a device that already has cards combines with the synced copy and gets the deck (no question that could remove it)");
+  // a deck removed on the tablet (as the old “use this device's cards everywhere” could do) goes missing everywhere
+  delete B.S().decks.gj; B.save(); await new Promise(r => setTimeout(r, 300)); await B.sync();
   await A.sync();
-  ok(!A.S().decks.gj, "(the way a deck can go missing: that choice removed it everywhere)");
+  ok(!A.S().decks.gj, "(the deck is gone from the computer too after it syncs)");
   ok((A.S().meta.deckTrash || []).some(x => x.deck.name === "Gjalta EDH" && /sync/.test(x.why)), "…but this computer kept it under Recently deleted (removed by a sync)");
   // recover from GitHub's history on the tablet, which never had it
   const found = await B.findOldDecks();
