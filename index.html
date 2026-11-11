@@ -855,12 +855,23 @@ function mergePaid(t, tq, paid, q) {
   if (paid == null) return;
   t.paid = t.paid != null ? Math.round((t.paid * tq + paid * q) / (tq + q) * 100) / 100 : paid;
 }
+/* History that goes with copies when they move (copy history isn't per copy, so it's shared out):
+   scans: how many copies were added by scanning (history: removing a copy by hand doesn't lower it; undoing a scan does).
+   When copies join an entry that's already there, its history and theirs combine: scan counts add up, the latest
+   "last scanned" and the earliest "first scanned" are kept, "added" keeps the earlier date and "New" (newAt) the later. */
+function mergeHistory(t, h) {
+  if (h.scans) t.scans = (t.scans || 0) + h.scans;
+  if (h.scanned && (!t.scanned || h.scanned > t.scanned)) t.scanned = h.scanned;
+  if (h.firstScanned && (!t.firstScanned || h.firstScanned < t.firstScanned)) t.firstScanned = h.firstScanned;
+  if (h.added && (!t.added || h.added < t.added)) t.added = h.added;
+  if (h.newAt && (!t.newAt || h.newAt > t.newAt)) t.newAt = h.newAt;
+}
 function moveEntry(k, b) {
   const e = S.coll[k]; if (!e || e.binder === b) return;
   delete S.coll[k]; e.binder = b;
   const nk = ckey(e.id, e.finish, b, e.cond);
   const t = S.coll[nk];
-  if (t) { mergePaid(t, t.qty, e.paid, e.qty); t.qty += e.qty; if (e.scanned && (!t.scanned || e.scanned > t.scanned)) t.scanned = e.scanned; if (e.firstScanned && (!t.firstScanned || e.firstScanned < t.firstScanned)) t.firstScanned = e.firstScanned; t.scans = (t.scans || 0) + (e.scans || 0); }
+  if (t) { mergePaid(t, t.qty, e.paid, e.qty); t.qty += e.qty; mergeHistory(t, e); }
   else S.coll[nk] = e;
   save();
 }
@@ -875,15 +886,18 @@ function takeCopies(k, n, ch) {
   const cond = "cond" in ch ? (ch.cond === "NM" ? undefined : ch.cond) : e.cond;
   const nk = ckey(base.id, fin, binder, cond);
   if (nk === k) return k;
-  const moved = Object.assign(base, { finish: fin, binder, qty: n, added: e.added, scanned: e.scanned, firstScanned: e.firstScanned, scans: e.scans, cond, paid: e.paid });
-  if (!cond) delete moved.cond; if (moved.paid == null) delete moved.paid;
+  // the moved copies' share of the scan count (all of it when the whole entry moves): split, never copied, so the total stays
+  // the same. They take the scan dates when they take scans, or when there's no count to go by (older entries).
+  const whole = n >= e.qty, s = e.scans || 0, ms = whole ? s : Math.min(s, Math.round(s * n / e.qty));
+  const dates = whole || ms > 0 || e.scans == null;
+  const moved = Object.assign(base, { finish: fin, binder, qty: n, added: e.added, newAt: e.newAt, scanned: dates ? e.scanned : undefined, firstScanned: dates ? e.firstScanned : undefined, scans: ms || undefined, cond, paid: e.paid });
+  for (const f of ["cond", "paid", "added", "newAt", "scanned", "firstScanned", "scans"]) if (moved[f] == null) delete moved[f];
   delete moved.priceFrom;
   e.qty -= n; if (e.qty <= 0) delete S.coll[k];
+  else if (e.scans != null) { e.scans = s - ms; if (!e.scans) delete e.scans; }
   const t = S.coll[nk];
   if (t) {
-    mergePaid(t, t.qty, moved.paid, n); t.qty += n;
-    if (moved.scanned && (!t.scanned || moved.scanned > t.scanned)) t.scanned = moved.scanned;
-    if (moved.firstScanned && (!t.firstScanned || moved.firstScanned < t.firstScanned)) t.firstScanned = moved.firstScanned;
+    mergePaid(t, t.qty, moved.paid, n); t.qty += n; mergeHistory(t, moved);
   } else S.coll[nk] = moved;
   save(); return nk;
 }
