@@ -3096,7 +3096,11 @@ const CSV_FIELDS = [
 /* A quantity from a file: a whole number of 1 or more, with commas as thousands separators ("1,000") and an optional
    "x" ("4x"). Anything else — decimal, negative, 0, empty, words — comes back as { bad: reason } and is never guessed. */
 function csvQty(v) {
-  const t = String(v == null ? "" : v).trim().replace(/^x\s*/i, "").replace(/\s*x$/i, "");
+  const raw = String(v == null ? "" : v).trim();
+  if (!raw) return { bad: "no quantity" };
+  // one "x", before or after ("x4", "4x"), not both ("x4x")
+  if (/^x/i.test(raw) && /x$/i.test(raw)) return { bad: "not a number" };
+  const t = raw.replace(/^x\s*/i, "").replace(/\s*x$/i, "");
   if (!t) return { bad: "no quantity" };
   if (/^-/.test(t)) return { bad: "negative" };
   if (/^\d+$/.test(t) || /^\d{1,3}(,\d{3})+$/.test(t)) { const n = +t.replace(/,/g, ""); return n >= 1 && Number.isSafeInteger(n) ? { n } : { bad: n === 0 ? "zero" : "too large" }; }
@@ -3104,17 +3108,24 @@ function csvQty(v) {
   return { bad: "not a number" };
 }
 /* A date from Deckhand's export ("2026-11-11 14:05", written in UTC), a full ISO date, or "2026-11-11". Anything
-   else, or a date before 1993 or in the future, gives null: left unset rather than guessed. */
+   else — a year before 1993 (checked before the date is built: Date.UTC reads years 0–99 as 1900–1999), a time zone
+   outside −12:00…+14:00, a date that doesn't exist, or one in the future — gives null: left unset rather than guessed. */
 function csvDate(v) {
   const t = String(v == null ? "" : v).trim(); if (!t) return null;
   let m = t.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/);
   if (!m) return null;
   const [, y, mo, d, h = "0", mi = "0", se = "0", tz] = m;
-  if (+mo < 1 || +mo > 12 || +d < 1 || +d > 31 || +h > 23 || +mi > 59 || +se > 59) return null;
-  let ms = Date.UTC(+y, +mo - 1, +d, +h, +mi, +se);
-  if (new Date(ms).getUTCDate() !== +d) return null;                               // 31 February and the like
-  if (tz && tz !== "Z") { const sg = tz[0] === "-" ? -1 : 1, z = tz.slice(1).replace(":", ""); ms -= sg * (+z.slice(0, 2) * 60 + +z.slice(2)) * 60e3; }
-  return ms >= Date.UTC(1993, 0, 1) && ms <= Date.now() + 864e5 ? ms : null;
+  if (+y < 1993 || +mo < 1 || +mo > 12 || +d < 1 || +d > 31 || +h > 23 || +mi > 59 || +se > 59) return null;
+  let off = 0;
+  if (tz && tz !== "Z") {
+    const sg = tz[0] === "-" ? -1 : 1, z = tz.slice(1).replace(":", ""), oh = +z.slice(0, 2), om = +z.slice(2);
+    if (z.length !== 4 || om > 59 || (sg > 0 ? oh * 60 + om > 14 * 60 : oh * 60 + om > 12 * 60)) return null;
+    off = sg * (oh * 60 + om) * 60e3;
+  }
+  const local = Date.UTC(+y, +mo - 1, +d, +h, +mi, +se);
+  if (new Date(local).getUTCDate() !== +d || new Date(local).getUTCMonth() !== +mo - 1) return null;   // 31 February and the like
+  const ms = local - off;
+  return ms >= Date.UTC(1993, 0, 1) && ms <= Date.now() ? ms : null;
 }
 function pickCSV(target) { pickFile("", f => csvImport(f, target)); }
 // a text list turned into the same rows a CSV gives: sections ("Commander", "Sideboard", "SB:") become the board column
@@ -3192,6 +3203,8 @@ async function csvImport(file, target) {
     const cardRows = info.filter(x => x.id || x.name || (x.set && x.num)), bad = cardRows.filter(x => x.qtyBad);
     // rows with a quantity problem aren't imported: fixed here, or skipped on purpose
     const usable = cardRows.filter(x => !x.qtyBad), blocked = bad.length && !st.skipBad;
+    // problem rows 50 at a time, every one reachable (the page stays in range as rows get corrected)
+    const bp = st.badPage = Math.max(0, Math.min(st.badPage || 0, Math.ceil(bad.length / 50) - 1));
     const total = usable.reduce((a, x) => a + x.qty, 0);
     const colSel = k => `<select data-col="${k}"><option value="-1">Not in file</option>${head.map((h, i) => `<option value="${i}" ${m[k] === i ? "selected" : ""}>${esc(h || "Column " + (i + 1))}</option>`).join("")}</select>`;
     const fields = CSV_FIELDS.filter(([k]) => isDeck ? !["binder", "added", "scanned", "firstScanned"].includes(k) : k !== "board");
@@ -3204,8 +3217,8 @@ async function csvImport(file, target) {
           ${cardRows.length ? "" : `<span class="small down">No rows have a card name, Scryfall ID or set + number. Match the columns below.</span>`}</div>
         ${bad.length ? `<div class="box" id="impBad" style="gap:6px"><span class="small down"><b>${bad.length.toLocaleString()} row${bad.length === 1 ? " has" : "s have"} a quantity that isn't a whole number of 1 or more.</b> Type the right number, or skip ${bad.length === 1 ? "it" : "them"}. Nothing is imported for ${bad.length === 1 ? "it" : "them"} otherwise.</span>
           <div style="overflow-x:auto"><table class="ptable"><thead><tr><th>Row</th><th>Card</th><th>In the file</th><th>Problem</th><th>Quantity</th></tr></thead>
-            <tbody>${bad.slice(0, 50).map(x => `<tr><td class="num">${x.row}</td><td>${esc(x.name || [x.set, x.num].filter(Boolean).join(" #") || x.id)}</td><td class="num">${esc(JSON.stringify(x.qtyRaw))}</td><td>${esc(x.qtyBad)}</td><td><input type="number" min="1" step="1" inputmode="numeric" data-fix="${x.row - 2}" style="width:5em" aria-label="Quantity for row ${x.row}"></td></tr>`).join("")}</tbody></table></div>
-          ${bad.length > 50 ? `<span class="small muted">…and ${(bad.length - 50).toLocaleString()} more.</span>` : ""}
+            <tbody>${bad.slice(bp * 50, bp * 50 + 50).map(x => `<tr><td class="num">${x.row}</td><td>${esc(x.name || [x.set, x.num].filter(Boolean).join(" #") || x.id)}</td><td class="num">${esc(JSON.stringify(x.qtyRaw))}</td><td>${esc(x.qtyBad)}</td><td><input type="number" min="1" step="1" inputmode="numeric" data-fix="${x.row - 2}" style="width:5em" aria-label="Quantity for row ${x.row}"></td></tr>`).join("")}</tbody></table></div>
+          ${bad.length > 50 ? `<div class="row" style="gap:8px;align-items:center" id="impBadPg"><button class="btn sm" id="impBadPrev" ${bp ? "" : "disabled"}>Previous</button><span class="small muted num">Rows ${(bp * 50 + 1).toLocaleString()}–${Math.min(bad.length, bp * 50 + 50).toLocaleString()} of ${bad.length.toLocaleString()} with a problem</span><button class="btn sm" id="impBadNext" ${bp * 50 + 50 < bad.length ? "" : "disabled"}>Next</button></div>` : ""}
           <label class="toggle"><input type="checkbox" id="impSkipBad" ${st.skipBad ? "checked" : ""}> Skip the rows with a problem</label></div>` : ""}
         <details class="box" ${usable.length ? "" : "open"}><summary class="label" style="cursor:pointer">Columns (check if the preview looks wrong)</summary>
           <div class="stack" style="gap:8px;margin-top:10px">${fields.map(([k, label]) => `<div class="kv"><span>${label}</span>${colSel(k)}</div>`).join("")}</div></details>
@@ -3223,6 +3236,7 @@ async function csvImport(file, target) {
     $("#impBody").querySelectorAll("[data-col]").forEach(sel => sel.onchange = () => { m[sel.dataset.col] = +sel.value; draw(); });
     $("#impBody").querySelectorAll("[data-fix]").forEach(inp => inp.onchange = () => { const q = csvQty(inp.value); if (q.n) { st.fix[+inp.dataset.fix] = q.n; draw(); } else { inp.setCustomValidity("A whole number of 1 or more"); inp.reportValidity(); } });
     const sk = $("#impSkipBad"); if (sk) sk.onchange = e => { st.skipBad = e.target.checked; draw(); };
+    const pv = $("#impBadPrev"), nx = $("#impBadNext"); if (pv) pv.onclick = () => { st.badPage--; draw(); }; if (nx) nx.onclick = () => { st.badPage++; draw(); };
     $("#impDest").onchange = e => { st.dest = e.target.value; draw(); };
     const nm = $("#impName"); if (nm) nm.oninput = e => st.newName = e.target.value;
     const fm = $("#impFmt"); if (fm) fm.onchange = e => st.fmt = e.target.value;

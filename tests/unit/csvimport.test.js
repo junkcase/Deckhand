@@ -28,7 +28,7 @@ async function run(csvText, fileName, target, pick, pre) {
     return { ok: false, status: 404, json: async () => ({ details: "nf" }) };
   };
   const js = fs.readFileSync(require("path").join(__dirname, "../.build/app.js"), "utf8");
-  w.eval(js + "\n;window.__t={S:()=>S,csvImport,go,ioSheet,addToColl,slim,save};"); if (pre) pre(w);
+  w.eval(js + "\n;window.__t={S:()=>S,csvImport,go,ioSheet,addToColl,slim,save,csvQty,csvDate};"); if (pre) pre(w);
   const file = { name: fileName, text: async () => csvText };
   await w.__t.csvImport(file, target);
   const $ = s => w.document.querySelector(s);
@@ -153,6 +153,36 @@ Counterspell,mh2,267,2
   // another app's file with an "Added" column: not read as a date (unchanged)
   r = await run(`Name,Set code,Collector number,Quantity,Added\nSol Ring,cmm,410,1,2020-01-01\n`, "other.csv", { kind: "coll" });
   ok(Object.values(r.S.coll)[0].added > Date.now() - 60e3, "another app's \"Added\" column isn't treated as Deckhand's Date added");
+
+  // ---- follow-up edge cases (parsers checked directly)
+  r = await run(`Name,Quantity\nSol Ring,1\n`, "x.csv", { kind: "coll" });
+  const { csvQty: Q, csvDate: Dt } = r.w.__t, now = Date.now(), iso = ms => new Date(ms).toISOString();
+  // 1. nothing in the future, not even by a minute
+  ok(Dt(iso(now + 60e3)) === null && Dt(iso(now + 3600e3)) === null && Dt(iso(now - 60e3)) === Math.floor((now - 60e3) / 1e3) * 1e3, "a time even a minute in the future is rejected; a minute ago is kept");
+  // 2. time zones: real ones applied, malformed or out of range rejected (not calculated)
+  const z = s => Dt("2025-01-01T12:00:00" + s);
+  ok(z("+14:00") === Date.UTC(2024, 11, 31, 22) && z("-12:00") === Date.UTC(2025, 0, 2, 0) && z("+0530") === Date.UTC(2025, 0, 1, 6, 30) && z("Z") === Date.UTC(2025, 0, 1, 12), "+14:00, −12:00, +0530 and Z applied");
+  ok(["+14:01", "-12:30", "+05:60", "+24:00", "+99:99", "+5:30", "+05:3", "+0530x", "+05:30:00", "UTC"].every(s => z(s) === null), "+14:01, −12:30, +05:60, +24:00, +99:99, +5:30, +05:3 and other malformed zones rejected");
+  // 3. years below 100 (Date.UTC would read them as 1900s) and before 1993
+  ok(["0099-01-01", "0001-06-15", "0093-01-01", "0999-01-01", "1992-12-31 23:59"].every(s => Dt(s) === null) && Dt("1993-01-01") === Date.UTC(1993, 0, 1), "years 0099, 0001, 0093, 0999 and 1992 rejected (0099 isn't read as 1999); 1993-01-01 kept");
+  // 4. one x at most
+  ok(Q("4x").n === 4 && Q("x4").n === 4 && Q("X4").n === 4 && Q("4 x").n === 4 && Q("x 4").n === 4 && Q("4").n === 4 && Q("1,000x").n === 1000, "4x, x4, X4, 4 x, x 4 and 1,000x still accepted");
+  ok(["x4x", "X4X", "xx4", "4xx", "x", "xx", "x4 x"].every(s => Q(s).bad), "x4x, xx4, 4xx, x, xx and x4 x rejected");
+  // 5. more than 50 problem rows: every one can be corrected, page by page
+  const many = "Name,Set code,Collector number,Quantity\n" + Array.from({ length: 120 }, (_, i) => `Sol Ring,cmm,410,${i + 1}.5`).join("\n") + "\nCounterspell,mh2,267,2\n";
+  r = await run(many, "many.csv", { kind: "coll" }, Object.assign(() => {}, { after: ($, w) => {
+    const pg = () => ($("#impBadPg") || { textContent: "" }).textContent.replace(/\s+/g, " ").trim(), fixAll = () => { for (const i of [...w.document.querySelectorAll("[data-fix]")]) { i.value = "1"; i.dispatchEvent(new w.Event("change")); } };
+    w.__pg = [pg(), w.document.querySelectorAll("[data-fix]").length];
+    $("#impBadNext").click(); w.__pg.push(pg(), w.document.querySelectorAll("[data-fix]").length);
+    $("#impBadNext").click(); w.__pg.push(pg(), w.document.querySelectorAll("[data-fix]").length, $("#impBadNext").disabled);
+    $("#impBadPrev").click(); $("#impBadPrev").click(); w.__pg.push(pg());
+    // correct every row, page by page, without skipping
+    for (let k = 0; k < 10 && $("#impBad"); k++) fixAll();
+    w.__pg.push(!!$("#impBad"), $("#impGo").disabled, ($("#impBody").textContent.match(/([\d,]+) cards in (\d+) rows/) || []).slice(1).join("/"));
+  } }));
+  const P = r.w.__pg;
+  ok(/Rows 1–50 of 120/.test(P[0]) && P[1] === 50 && /Rows 51–100 of 120/.test(P[2]) && P[3] === 50 && /Rows 101–120 of 120/.test(P[4]) && P[5] === 20 && P[6] === true && /Rows 1–50/.test(P[7]), "120 problem rows: shown 50 at a time, every page reachable " + JSON.stringify(P.slice(0, 8)));
+  ok(P[8] === false && P[9] === false && P[10] === "122/121" && qtyOf(r.S, "Sol Ring") === 120 && qtyOf(r.S, "Counterspell") === 2, "all 120 corrected page by page: nothing left to skip, all imported " + JSON.stringify(P.slice(8)));
 
   // ---- round trip: Deckhand's CSV export, imported again
   let exported = "", exportedBlob = null;
