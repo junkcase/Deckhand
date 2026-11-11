@@ -4355,7 +4355,17 @@ async function startCamera() {
   try {
     if (!stream) stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 2560 }, height: { ideal: 1440 } }, audio: false });
     if (tab !== "scan") { stopCamera(); return; }
-    vid.srcObject = stream; await vid.play().catch(() => {});
+    if (vid.srcObject !== stream) vid.srcObject = stream;
+    // the picture must actually be showing before saying "ready" or scanning: play() can be refused (iPhone Low Power Mode,
+    // a browser that wants a tap first) or the stream can give no frames
+    // (play() itself may never finish when no frames come, so it isn't waited on; the picture is)
+    let playErr = null; vid.play().catch(e => { playErr = e; });
+    if (!await videoLive(vid, 4000)) {
+      if (tab !== "scan") return;
+      scStatus((playErr && playErr.name === "NotAllowedError" ? "The browser didn't let the camera start on its own." : "The camera turned on but no picture is showing.") + " Tap the camera area to try again, or use the photo button.");
+      vid.onclick = async () => { vid.onclick = null; scStatus("Starting the camera…"); await vid.play().catch(() => {}); startCamera(); };
+      return;
+    }
     const track = stream.getVideoTracks()[0];
     camDev.track = track; camDev.caps = track.getCapabilities ? track.getCapabilities() : {};
     camDev.ic = null; camDev.photoOpts = {};
@@ -4377,6 +4387,12 @@ async function startCamera() {
     vid.onloadedmetadata = () => placeFrame(vid); placeFrame(vid);
     startAuto();
   } catch (e) { scStatus(camError(e)); }
+}
+// the video is playing and has a picture size (checked for up to ms)
+async function videoLive(vid, ms) {
+  const live = () => !vid.paused && vid.readyState >= 2 && vid.videoWidth > 0 && vid.videoHeight > 0;
+  for (let t = 0; t < ms && !live(); t += 100) await sleep(100);
+  return live();
 }
 function camError(e) {
   const n = e && e.name;
