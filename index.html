@@ -2988,21 +2988,79 @@ function wireGdSection(redraw) {
   const off = $("#gdOff"); if (off) off.onclick = () => { setGdCfg(null); GD.tok = null; try { localStorage.removeItem("deckhand.gdtok"); sessionStorage.removeItem("deckhand.gdtok"); } catch (e) {} redraw(); toast("Drive backups stopped. The backups already in your Drive stay there."); };
 }
 // put a backup back: without Sync it replaces this device's data; with Sync it brings back anything missing and the next sync shares it
-async function restoreBackup(d) {
-  if (!d || typeof d.coll !== "object" || typeof d.decks !== "object") throw new Error("That isn't a Deckhand backup.");
-  S = d; migrate(); save(); render();
+/* A backup file, checked and brought up to date on a copy before anything here changes. The root, the collection and
+   the decks must be keyed objects (not missing, null or a list). Entries that are damaged — not an object, no id or
+   name, a quantity that isn't a whole number of 1 or more — are left out and counted; if every one is damaged, the
+   backup is refused. Sections of the wrong kind are dropped, and older backups go through migrate() as before. If
+   anything fails, nothing here has changed. */
+const isPlain = v => Object.prototype.toString.call(v) === "[object Object]";
+function prepareBackup(d) {
+  const notBackup = () => new Error("That isn't a Deckhand backup.");
+  if (!isPlain(d) || !isPlain(d.coll) || !isPlain(d.decks)) throw notBackup();
+  let st; try { st = JSON.parse(JSON.stringify(d)); } catch (e) { throw new Error("That backup is damaged and couldn't be read."); }
+  let skipped = 0, total = 0, good = 0;
+  const qtyOk = q => Number.isInteger(typeof q === "string" && /^\d+$/.test(q) ? +q : q) && +q >= 1;
+  for (const [k, e] of Object.entries(st.coll)) {
+    total++;
+    if (!isPlain(e) || typeof e.id !== "string" || !e.id || typeof e.name !== "string" || !e.name || !qtyOk(e.qty)) { delete st.coll[k]; skipped++; continue; }
+    e.qty = +e.qty; if (typeof e.finish !== "string") e.finish = "nonfoil"; good++;
+  }
+  for (const [k, dk] of Object.entries(st.decks)) {
+    total++;
+    if (!isPlain(dk) || !isPlain(dk.cards) || typeof (dk.name ?? "") !== "string") { delete st.decks[k]; skipped++; continue; }
+    if (!dk.id) dk.id = k;
+    for (const [ck, c] of Object.entries(dk.cards)) if (!isPlain(c) || typeof c.name !== "string" || !qtyOk(c.qty)) { delete dk.cards[ck]; skipped++; } else c.qty = +c.qty;
+    good++;
+  }
+  if (total && !good) throw new Error("That backup is damaged: none of its cards or decks could be read.");
+  // sections of the wrong kind are dropped (migrate() puts back empty ones)
+  for (const k of ["binders", "settings", "alerts", "ph", "marks", "roles", "lists", "spec", "sealed", "meta"]) if (k in st && !isPlain(st[k])) delete st[k];
+  if ("hist" in st && !Array.isArray(st.hist)) delete st.hist;
+  if ("trade" in st && !isPlain(st.trade)) delete st.trade;
+  if (st.binders) for (const [k, b] of Object.entries(st.binders)) if (!isPlain(b) || typeof b.name !== "string") delete st.binders[k];
+  if (st.binders && !Object.keys(st.binders).length) delete st.binders;
+  // brought up to date on its own, without touching what's here
+  const here = S; S = st;
+  try { migrate(); } catch (e) { S = here; throw new Error("That backup is damaged and couldn't be read."); }
+  const out = S; S = here;
+  return { st: out, skipped };
 }
+/* With Sync on, a restore combines: whatever the backup has that's missing here (or has fewer copies here) comes back,
+   and nothing here is removed, including changes not synced yet. This device's own things (scan list, scan log,
+   settings for this device) stay. The record of the last sync is marked as not matching, and saved straight away, so
+   the next sync combines too instead of treating restored cards as deleted elsewhere — which also means a card removed
+   on another device since this one last synced can come back. With Sync off, it replaces everything, as before. */
+async function restoreBackup(d) {
+  const { st, skipped } = prepareBackup(d);
+  if (syncOn()) {
+    const local = pickSync(JSON.parse(JSON.stringify(S))), bk = pickSync(st);
+    const both = mergeSync(combineBase(local, bk), local, bk);
+    const b = await syncBase(); if (b) { b.target = "restored:" + Date.now(); if (idb.ok) await idbSet("syncBase", b).catch(() => {}); }
+    applySynced(both); SYNC.undo = local;
+    SYNC.dirty = true; await flushSave(); render();
+    if (typeof slog === "function") slog("restored a backup: combined with this device" + (skipped ? `, ${skipped} damaged entries left out` : ""));
+    syncNow(true);
+    return { combined: true, skipped };
+  }
+  S = st; save(); render();
+  return { combined: false, skipped };
+}
+// the words for what a restore will do, and the confirm button
+const restoreWords = () => syncOn()
+  ? "Sync is on, so restoring combines the backup with what's here: anything in the backup that's missing or has fewer copies here comes back, and nothing here is removed (including changes not synced yet). Your other devices get the result. A card removed on another device since this one last synced may come back too."
+  : "Restoring replaces what's on this device with the backup. Make a backup first if you might want today's cards back.";
+const restoreDone = r => (r.combined ? "Backup combined with this device. Syncing it to your other devices." : "Backup restored") + (r.skipped ? ` · ${r.skipped} damaged ${r.skipped === 1 ? "entry was" : "entries were"} left out` : "");
 function gdRestoreSheet(files) {
   const syncing = syncOn();
   openSheet(`<h2>Restore from Google Drive</h2>
-    <p class="small muted" style="margin:4px 0 10px">${syncing ? "Sync is on, so restoring brings back everything in the backup that's missing now (cards, decks) and your other devices get it too. Nothing you have now is removed." : "Restoring replaces what's on this device with the backup. Make a backup first if you're not sure."}</p>
+    <p class="small muted" style="margin:4px 0 10px" id="gdRsWords">${syncing ? esc(restoreWords()) : "Restoring replaces what's on this device with the backup. Make a backup first if you're not sure."}</p>
     <div class="stack" id="gdRsList">${files.length ? files.map((f, i) => { const a = f.appProperties || {}; return `<div class="kv"><span class="grow small">${i === 0 ? `<span class="chip ok">Latest</span> ` : ""}<b>${esc(new Date(f.when || f.createdTime).toLocaleString())}</b>${a.device ? ` · from your ${esc(a.device)}` : ""}${a.cards ? ` · ${(+a.cards).toLocaleString()} cards, ${esc(a.decks || "0")} decks` : ""}</span><button class="btn sm" data-gdr="${esc(f.id)}">Restore</button></div>`; }).join("") : `<p class="small muted">No backups in your Drive yet.</p>`}</div>
     <div class="small muted" id="gdRsMsg"></div>`, () => render());
   $("#gdRsList").querySelectorAll("[data-gdr]").forEach(b => b.onclick = async () => {
-    if (!syncing && b.dataset.sure !== "1") { b.dataset.sure = "1"; b.textContent = "Tap again to replace"; b.classList.add("danger"); return; }
+    if (b.dataset.sure !== "1") { b.dataset.sure = "1"; b.textContent = syncing ? "Tap again to combine" : "Tap again to replace"; if (!syncing) b.classList.add("danger"); return; }
     $("#gdRsMsg").textContent = "Downloading…";
     try { if (!gdSignedIn()) await gdSignIn(); const buf = await (await gd(`/drive/v3/files/${encodeURIComponent(b.dataset.gdr)}?alt=media`)).arrayBuffer();
-      await restoreBackup(JSON.parse(await ungzip(buf))); closeSheet(); toast(syncing ? "Backup restored. Syncing it to your other devices." : "Backup restored"); }
+      const r = await restoreBackup(JSON.parse(await ungzip(buf))); closeSheet(); toast(restoreDone(r)); }
     catch (e) { $("#gdRsMsg").textContent = "Couldn't restore: " + (e instanceof SyntaxError ? "the file isn't a Deckhand backup." : e.message); }
   });
 }
@@ -3033,9 +3091,18 @@ function ioSheet() {
   loadGis().catch(() => {});          // ready before the tap, so Google's window isn't blocked
   const stamp = localDate();
   $("#ioBack").onclick = () => backupNow();
+  // a backup file: read and checked first, then what restoring will do is shown and confirmed
   $("#ioRest").onclick = () => pickFile(".json,.gz,application/json,application/gzip", async f => {
-    try { await restoreBackup(JSON.parse(await ungzip(await f.arrayBuffer()))); closeSheet(); render(); toast("Backup restored"); }
-    catch (e) { $("#ioMsg").textContent = "That file isn't a Deckhand backup."; }
+    let d; try { d = JSON.parse(await ungzip(await f.arrayBuffer())); prepareBackup(d); }
+    catch (e) { $("#ioMsg").textContent = e instanceof SyntaxError || !e.message ? "That file isn't a Deckhand backup." : e.message; return; }
+    const sy = syncOn();
+    $("#ioMsg").innerHTML = `<div class="box" style="gap:6px" id="ioRestAsk"><span class="small">${esc(restoreWords())}</span>
+      <div class="row" style="gap:6px"><button class="btn ${sy ? "primary" : "danger"}" id="ioRestGo">${sy ? "Combine with this device" : "Replace this device's cards"}</button><button class="btn ghost" id="ioRestNo">Cancel</button></div></div>`;
+    $("#ioRestNo").onclick = () => { $("#ioMsg").textContent = ""; };
+    $("#ioRestGo").onclick = async () => {
+      try { const r = await restoreBackup(d); closeSheet(); render(); toast(restoreDone(r)); }
+      catch (e) { $("#ioMsg").textContent = e.message || "That file isn't a Deckhand backup."; }
+    };
   });
   $("#ioCsv").onclick = () => {
     const head = "Name,Set code,Set name,Collector number,Foil,Rarity,Quantity,Binder Name,Scryfall ID,Price USD,Condition,Language,Purchase price,Date added,Last scanned,First scanned";
