@@ -17,5 +17,6 @@ jobs:
           node-version: 22
       - run: npm install
       - run: pip install ijson          # for the price history job's test
-      - run: npx playwright install --with-deps chromium
+      # the extra system packages come from Ubuntu's servers; if those can't be reached, the browser alone still runs the tests
+      - run: npx playwright install --with-deps chromium || npx playwright install chromium
       - run: node run.js
