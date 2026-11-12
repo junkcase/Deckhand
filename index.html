@@ -420,8 +420,8 @@ const norm = s => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
 /* ---------- storage & migration ---------- */
 const KEY = "deckhand.v1";
-let S = {};
-try { const t = localStorage.getItem(KEY); if (t) S = JSON.parse(t); } catch (e) {}
+let S = {}, lsCopy = false;        // lsCopy: a saved copy was found in localStorage (see boot)
+try { const t = localStorage.getItem(KEY); if (t) { S = JSON.parse(t); lsCopy = !!(S && typeof S === "object" && S.coll && typeof S.coll === "object"); } } catch (e) {}
 function migrate() {
   S.coll = S.coll || {}; S.decks = S.decks || {}; S.meta = S.meta || {}; if (!S.lists || typeof S.lists !== "object") S.lists = {}; if (!S.spec || typeof S.spec !== "object") S.spec = {};
   migrateSealed();
@@ -490,24 +490,36 @@ async function idbGet(k) { const db = await idbOpen(); return new Promise((res, 
 // several keys in ONE transaction: either all of them are saved or none (used to keep the cards and the sync record in step)
 async function idbSetMany(pairs) { const db = await idbOpen(); return new Promise((res, rej) => { const tx = db.transaction("kv", "readwrite"), st = tx.objectStore("kv"); for (const [k, v] of pairs) st.put(v, k); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error || new Error("aborted")); }); }
 async function idbSet(k, v) { const db = await idbOpen(); return new Promise((res, rej) => { const tx = db.transaction("kv", "readwrite"); tx.objectStore("kv").put(v, k); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error || new Error("aborted")); }); }
-let saveT = null, saving = null, saveWarned = false, pendingBase = null;
+let saveT = null, saving = null, saveWarned = false, pendingBase = null, saveFailed = false;      // saveFailed: the last save reached neither store
 function save() { staleIndex(); clearTimeout(saveT); saveT = setTimeout(flushSave, 250); if (typeof SYNC !== "undefined") { SYNC.dirty = true; scheduleSync(); syncBadge(); } }
 async function flushSave() {
   clearTimeout(saveT); saveT = null;
   const base = pendingBase; pendingBase = null;
+  // every saved copy says when it was saved, so boot() can tell which of two copies is the newer one
+  try { if (S.meta) S.meta.savedAt = Math.max(Date.now(), (+S.meta.savedAt || 0) + 1); } catch (e) {}
+  // a database write that failed (storage full, a hiccup) is tried again after a while, not given up on until the app is reopened
+  if (!idb.ok && idb.failedAt && Date.now() - idb.failedAt > 15000) { idb.ok = true; idb.failedAt = 0; }
   if (idb.ok) {
     try {
       saving = idbSetMany(base ? [["state", S], ["syncBase", base]] : [["state", S]]); await saving; saving = null;
       try { if (localStorage.getItem(KEY)) localStorage.removeItem(KEY); } catch (e) {}
-      return true;
-    } catch (e) { saving = null; idb.ok = false; }
+      saveFailed = false; return true;
+    } catch (e) { saving = null; idb.ok = false; idb.failedAt = Date.now(); }
   }
   if (typeof SYNC !== "undefined" && base) SYNC.base = null;      // no database: the sync record can't be kept with the cards, so the next sync combines instead
-  try { localStorage.setItem(KEY, JSON.stringify(S)); return true; }
-  catch (e) { if (!saveWarned) { saveWarned = true; toast("Couldn't save: phone storage is full or blocked. Export a backup from Collection."); } return false; }
+  try { localStorage.setItem(KEY, JSON.stringify(S)); saveFailed = false; return true; }
+  catch (e) { saveFailed = true; if (!saveWarned) { saveWarned = true; toast("Couldn't save: phone storage is full or blocked. Export a backup from Collection."); } return false; }
+}
+// The page is going away (reload, closed, another site) with a change not saved yet: the database write started here may
+// never finish, so a copy is also written to localStorage, which is done before the page is gone. If the database write
+// does finish it removes that copy again; if not, boot() finds it and uses it (it is the newer one).
+function saveOnLeave() {
+  if (!saveT && !saving) return;
+  try { if (S.meta) S.meta.savedAt = Math.max(Date.now(), (+S.meta.savedAt || 0) + 1); localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {}
+  if (saveT) flushSave();
 }
 document.addEventListener("visibilitychange", () => { if (document.hidden && saveT) flushSave(); });
-window.addEventListener("pagehide", () => { if (saveT) flushSave(); });
+window.addEventListener("pagehide", saveOnLeave);
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
 
 /* ---------- Scryfall ---------- */
@@ -2287,7 +2299,7 @@ async function gh(path, opts = {}) {
 async function packState(o) {
   const json = JSON.stringify(o);
   if (typeof CompressionStream === "undefined") return "J" + json;
-  const cs = new CompressionStream("gzip"), w = cs.writable.getWriter(); w.write(new TextEncoder().encode(json)); w.close();
+  const cs = new CompressionStream("gzip"), w = cs.writable.getWriter(); w.write(new TextEncoder().encode(json)).catch(() => {}); w.close().catch(() => {});
   const buf = new Uint8Array(await new Response(cs.readable).arrayBuffer()); let bin = "";
   for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
   return "G" + btoa(bin);
@@ -2295,15 +2307,18 @@ async function packState(o) {
 async function unpackState(t) {
   if (t[0] === "J") return JSON.parse(t.slice(1));
   const bin = atob(t.slice(1)), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
-  const ds = new DecompressionStream("gzip"), w = ds.writable.getWriter(); w.write(u); w.close();
+  const ds = new DecompressionStream("gzip"), w = ds.writable.getWriter(); w.write(u).catch(() => {}); w.close().catch(() => {});      // a damaged copy fails at the read below
   return JSON.parse(await new Response(ds.readable).text());
 }
 // returns null when nothing changed on GitHub since the last look (a cheap "not modified" answer)
 async function readGist() {
   const cfg = syncCfg(), r = await gh("/gists/" + cfg.gist, { headers: SYNC.etag ? { "If-None-Match": SYNC.etag } : {} });
   if (r.status === 304) return null;
-  const j = await r.json(); SYNC.etag = r.headers.get("ETag"); SYNC.files = Object.keys(j.files || {});
-  return parseGist(j);
+  const j = await r.json(), out = await parseGist(j);
+  // only now, with the whole copy downloaded, unpacked and read: a download that failed partway must be fetched again,
+  // not answered with "nothing changed"
+  SYNC.etag = r.headers.get("ETag"); SYNC.files = Object.keys(j.files || {});
+  return out;
 }
 async function parseGist(j) {
   const f = j.files || {}, info = f["deckhand-sync.json"] ? JSON.parse(f["deckhand-sync.json"].content || "{}") : {};
@@ -2411,8 +2426,9 @@ async function gdReadSync() {
   const info = { device: (m.appProperties || {}).device || "", at: +((m.appProperties || {}).at || 0), sv: +((m.appProperties || {}).sv || 0) };
   if (!+m.size) { GDS.version = m.version; return { info, state: null }; }
   const text = await ungzip(await (await gd(`/drive/v3/files/${id}?alt=media`)).arrayBuffer());
-  GDS.version = m.version;
-  const j = JSON.parse(text); if (j && j._sync && typeof j._sync === "object") Object.assign(info, j._sync);
+  const j = JSON.parse(text); if (!j || typeof j !== "object") throw new Error("The synced copy on Google Drive couldn't be read. Trying again.");
+  if (j._sync && typeof j._sync === "object") Object.assign(info, j._sync);
+  GDS.version = m.version;                                                                              // only once the file has been read in full
   return { info, state: pickSync(j) };
 }
 async function gdPushSync(state, ver = {}) {
@@ -2486,6 +2502,11 @@ function nextSyncMeta() {
 const pushRemote = async st => {
   SYNC.prevPush = SYNC.lastPush || 0; SYNC.lastPush = Date.now();
   const meta = nextSyncMeta();
+  // Remember what is being sent before sending it (and keep it with the sync record). If the upload arrives but its
+  // reply never does, the next sync finds this version in the synced copy and knows those are this device's own cards,
+  // instead of counting them a second time.
+  SYNC.sent = { pid: meta.pid, state: JSON.parse(JSON.stringify(st)) };
+  if (SYNC.base && idb.ok) { SYNC.base.sent = SYNC.sent; await idbSet("syncBase", SYNC.base).catch(() => {}); }
   await (isGoogleSync() ? gdPushSync(st, meta) : pushGist(st, meta));
   SYNC.rinfo = Object.assign({ device: devName(), at: Date.now(), sv: SYNC_V }, meta);
   return meta;
@@ -2600,8 +2621,8 @@ async function setSyncBase(st, prev) {
   const id = uid() + Date.now().toString(36), r = SYNC.rinfo || {};
   SYNC.base = { state: JSON.parse(JSON.stringify(st)), at: Date.now(), id, target: syncTarget(), pid: r.pid || null, seq: +r.seq || 0 };
   if (prev && prev.pid) SYNC.base.prev = { pid: prev.pid, state: JSON.parse(JSON.stringify(prev.state)) };
-  S.meta.syncId = id; pendingBase = SYNC.base;
-  await flushSave();
+  S.meta.syncId = id; pendingBase = SYNC.base; SYNC.sent = null;
+  return flushSave();
 }
 // a starting point that keeps everything from both sides: cards on both count once at the larger quantity, nothing is deleted
 function combineBase(L, R) {
@@ -2688,8 +2709,11 @@ async function syncNow(manual) {
       const R = pickSync(remote ? remote.state : base.state), from = remote && remote.info ? remote.info.device || "" : "";
       // another device's upload replaced this one's: combine from the version both started from (or, if that isn't known,
       // keep everything from both), so nothing either device added is lost
-      const B0 = replaced ? (prevState ? pickSync(prevState) : combineBase(local, R)) : trusted ? pickSync(base.state) : combineBase(local, R);
-      if (replaced) { SYNC.replaced = (SYNC.replaced || 0) + 1; slog(`another device's upload replaced this one's; combined again ${prevState ? "from the version both started from" : "keeping everything from both"}`); }
+      // the synced copy is (or is built on) an upload of this device's whose reply never arrived: start from what was sent
+      const sent = SYNC.sent || base.sent, mine = !!(trusted && sent && sent.pid && sent.state && ri && remote.state && (ri.pid === sent.pid || (Array.isArray(ri.chain) && ri.chain.includes(sent.pid))) && !(base.pid && base.pid === sent.pid));
+      if (mine) slog("an earlier upload had arrived after all; carried on from it");
+      const B0 = mine ? pickSync(sent.state) : replaced ? (prevState ? pickSync(prevState) : combineBase(local, R)) : trusted ? pickSync(base.state) : combineBase(local, R);
+      if (replaced && !mine) { SYNC.replaced = (SYNC.replaced || 0) + 1; slog(`another device's upload replaced this one's; combined again ${prevState ? "from the version both started from" : "keeping everything from both"}`); }
       const merged = mergeSync(B0, local, R);
       const ms = J_(merged), changedHere = SYNC_KEYS.some(k => J_(merged[k]) !== J_(local[k]));
       // 1. save the combined cards here first (the sync record stays as it was), 2. upload, 3. save the new sync record with the cards
@@ -2700,10 +2724,13 @@ async function syncNow(manual) {
       slog((changedHere ? `took changes from ${from || "the synced copy"}` : "") + (changedHere && ms !== J_(R) ? " and " : "") + (ms !== J_(R) ? "sent this device's changes" : "") || "checked: no changes");
       SYNC.lastJ = ms;
     }
-    SYNC.at = Date.now(); SYNC.err = ""; SYNC.needTap = false; SYNC.holdUntil = 0;
+    SYNC.at = Date.now(); SYNC.needTap = false; SYNC.holdUntil = 0;
+    // the cards went to the synced copy, but this device couldn't save them: say so instead of "synced"
+    SYNC.err = saveFailed ? "Synced, but this device couldn't save (storage is full or blocked). Your cards are in the synced copy; free up space, then reload." : ""; if (saveFailed) { SYNC.errDetail = ""; slog("problem: synced, but couldn't save on this device"); }
   } catch (e) {
     if (e.needTap) { SYNC.needTap = true; SYNC.dirty = true; slog("Google sign-in ran out: waiting for a tap"); return; }                                   // signed out of Google partway: not an error, just needs a tap
     if (e.rate) { SYNC.holdUntil = e.until; SYNC.rateAt = Date.now(); scheduleSync(Math.max(5e3, e.until - Date.now() + 500)); }
+    if (!e.rate) { SYNC.etag = null; GDS.version = null; }                    // whatever failed, read the synced copy in full next time
     SYNC.err = e.message || String(e); SYNC.dirty = true; slog("problem: " + SYNC.err);
     // keep the details so a problem that only happens on one device can be tracked down
     SYNC.errDetail = String(e && e.stack || e).split("\n").slice(0, 3).map(x => x.trim().replace(/\(?https?:\/\/[^)\s]*\/([^/)\s]+)\)?/g, "$1")).join(" ← ");
@@ -3035,21 +3062,24 @@ async function restoreBackup(d) {
   if (syncOn()) {
     const local = pickSync(JSON.parse(JSON.stringify(S))), bk = pickSync(st);
     const both = mergeSync(combineBase(local, bk), local, bk);
-    const b = await syncBase(); if (b) { b.target = "restored:" + Date.now(); if (idb.ok) await idbSet("syncBase", b).catch(() => {}); }
+    let saved = true;
+    const b = await syncBase(); if (b) { b.target = "restored:" + Date.now(); if (idb.ok) await idbSet("syncBase", b).catch(() => { saved = false; }); }
     applySynced(both); SYNC.undo = local;
-    SYNC.dirty = true; await flushSave(); render();
+    SYNC.dirty = true; saved = (await flushSave()) && saved; render();
     if (typeof slog === "function") slog("restored a backup: combined with this device" + (skipped ? `, ${skipped} damaged entries left out` : ""));
+    // sent to the synced copy even if this device couldn't save: then that is the one place the restored cards are kept
     syncNow(true);
-    return { combined: true, skipped };
+    return { combined: true, skipped, saved };
   }
-  S = st; save(); render();
-  return { combined: false, skipped };
+  S = st; save(); const saved = await flushSave(); render();
+  return { combined: false, skipped, saved };
 }
 // the words for what a restore will do, and the confirm button
 const restoreWords = () => syncOn()
   ? "Sync is on, so restoring combines the backup with what's here: anything in the backup that's missing or has fewer copies here comes back, and nothing here is removed (including changes not synced yet). Your other devices get the result. A card removed on another device since this one last synced may come back too."
   : "Restoring replaces what's on this device with the backup. Make a backup first if you might want today's cards back.";
-const restoreDone = r => (r.combined ? "Backup combined with this device. Syncing it to your other devices." : "Backup restored") + (r.skipped ? ` · ${r.skipped} damaged ${r.skipped === 1 ? "entry was" : "entries were"} left out` : "");
+const restoreDone = r => (r.saved === false ? (r.combined ? "Backup combined, but this device couldn't save it (storage is full or blocked). It's being sent to your synced copy; free up space, then reload." : "Backup loaded, but this device couldn't save it (storage is full or blocked). Free up space and restore again.")
+  : r.combined ? "Backup combined with this device. Syncing it to your other devices." : "Backup restored") + (r.skipped ? ` · ${r.skipped} damaged ${r.skipped === 1 ? "entry was" : "entries were"} left out` : "");
 function gdRestoreSheet(files) {
   const syncing = syncOn();
   openSheet(`<h2>Restore from Google Drive</h2>
@@ -7288,8 +7318,12 @@ async function boot() {
   const splashDone = splash();
   let stored = null;
   if (idb.ok) { try { stored = await idbGet("state"); } catch (e) { idb.ok = false; } }
-  if (stored && stored.coll) { S = stored; migrate(); applySearchPrefs(); sc.mode = S.meta.scanMode || "ask"; sc.auto = S.meta.autoCap !== false; }
-  else if (Object.keys(S.coll).length || Object.keys(S.decks).length) await flushSave();     // move older data into the database
+  // A copy in localStorage next to one in the database is there because a database write failed or didn't finish after
+  // it was written (a successful write removes it), so it is the newer one unless the database copy's stamp says otherwise.
+  const lsAt = lsCopy ? +(S.meta && S.meta.savedAt) || 0 : -1, dbAt = stored && stored.coll ? +(stored.meta && stored.meta.savedAt) || 0 : -1;
+  const useLs = lsCopy && stored && stored.coll && (lsAt > dbAt || (!lsAt && !dbAt));
+  if (stored && stored.coll && !useLs) { S = stored; migrate(); applySearchPrefs(); sc.mode = S.meta.scanMode || "ask"; sc.auto = S.meta.autoCap !== false; }
+  else if (Object.keys(S.coll).length || Object.keys(S.decks).length) { if (useLs) { applySearchPrefs(); sc.mode = S.meta.scanMode || "ask"; sc.auto = S.meta.autoCap !== false; } await flushSave(); }     // move older data (or the newer copy) into the database
   sc.items = Array.isArray(S.scanSession) ? S.scanSession : [];
   Object.assign(stp, S.meta.staples || {});
   go("coll");
