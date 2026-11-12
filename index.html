@@ -1042,6 +1042,8 @@ function deckUse() {
   }
   return m;
 }
+// how many of a deck's copies of a card (by name, any printing) sit in its sideboard
+const sideIn = (deckId, name) => { const d = S.decks[deckId]; return d ? Object.values(d.cards).reduce((a, c) => a + (c.side && c.name === name ? c.qty : 0), 0) : 0; };
 const deckChips = (uses, max = 2) => !uses || !uses.length ? "" : uses.slice(0, max).map(u => `<span class="chip deck" title="In the deck ${esc(u.name)}">In ${esc(u.name)}${u.qty > 1 ? " ×" + u.qty : ""}</span>`).join("") + (uses.length > max ? `<span class="chip deck">+${uses.length - max} deck${uses.length - max > 1 ? "s" : ""}</span>` : "");
 // Copies of a card for one deck: owned, used by other decks, free. With "share copies between decks" on
 // (the default), a copy can count toward several decks, so nothing is "taken"; with it off, each copy
@@ -4194,7 +4196,8 @@ function openCard(card, finish, binder, ctx) {
       <div class="box" style="margin-top:12px">
         ${(() => { const own = ownedByName(s.name), uses = deckUse()[s.name] || [], inDecks = uses.reduce((a, u) => a + u.qty, 0);
           return `<div class="row" style="justify-content:space-between"><span class="label">In your collection</span><span class="num">${own} owned${inDecks ? ` · ${inDecks} in decks · ${Math.max(0, own - inDecks)} free` : ""}</span></div>
-          ${uses.length ? `<div class="chips">${uses.map(u => `<button class="chip deck" data-deck="${esc(u.id)}">In ${esc(u.name)}${u.qty > 1 ? " ×" + u.qty : ""} ›</button>`).join("")}</div>` : ""}`; })()}
+          ${own || uses.length ? `<div class="stack" id="usedIn" style="gap:4px;margin-top:6px"><div class="row" style="justify-content:space-between"><span class="label">Used in decks</span>${uses.length ? `<span class="small muted num">${uses.length} deck${uses.length > 1 ? "s" : ""}</span>` : ""}</div>
+            ${uses.length ? `<div class="chips">${uses.map(u => { const sd = sideIn(u.id, s.name); return `<button class="chip deck" data-deck="${esc(u.id)}" title="Open the deck ${esc(u.name)}">${esc(u.name)} ×${u.qty}${sd ? ` <span class="muted">(${sd === u.qty ? "sideboard" : sd + " in sideboard"})</span>` : ""} ›</button>`; }).join("")}</div>` : `<span class="small muted">Not currently used in any decks.</span>`}</div>` : ""}`; })()}
         ${owned.map(([k, e], i) => `<div class="own ${editing === k ? "open" : ""} ${e.id === s.id && e.finish === fin && e.binder === bsel ? "picked" : ""}" data-ok="${esc(k)}">
           <div class="kv"><span class="grow">${e.qty}× ${setIcon(e.set, e.rarity)} ${esc(e.set.toUpperCase())} #${esc(e.num)}${e.finish !== "nonfoil" ? ` <span class="chip foil">${esc(e.finish)}</span>` : ""} ${e.cond && e.cond !== "NM" ? `<span class="chip warn" title="${esc((CONDS.find(c => c[0] === e.cond) || [])[1] || "")}">${esc(e.cond)}</span>` : ""}${e.lang && e.lang !== "en" ? `<span class="chip">${esc(e.lang.toUpperCase())}</span>` : ""} <span class="chip">${esc(binderName(e.binder))}</span>
             ${e.paid != null ? (() => { const now = priceOf(e, e.finish), d = now != null ? now - e.paid : null; return `<span class="small" style="display:block">Paid ${money(e.paid)} each${d != null ? ` · now ${money(now)} <span class="${d >= 0 ? "up" : "down"}">${signed(d)}</span>` : ""}</span>`; })() : ""}
@@ -4316,7 +4319,8 @@ function openCard(card, finish, binder, ctx) {
     box.querySelectorAll("[data-cdel]").forEach(b => b.onclick = () => { const i = al.rules.findIndex(x => x.id === b.dataset.cdel); if (i < 0) return; al.rules.splice(i, 1); al.updated = Date.now();
       if (!al.rules.length && !al.log.length) delete S.alerts[ak]; if (aEdit === b.dataset.cdel) aEdit = null; save(); draw(); toast("Alert deleted"); });
     if (decks.length) {
-      const add = side => { const d = S.decks[$("#dSel").value]; addToDeck(d, s, 1, side); toast(`Added to ${d.name}${side ? " sideboard" : ""}`); };
+      // redrawn so "Used in decks" above shows the deck straight away (the deck picked stays picked)
+      const add = side => { const d = S.decks[$("#dSel").value]; addToDeck(d, s, 1, side); toast(`Added to ${d.name}${side ? " sideboard" : ""}`); draw(); const sel = $("#dSel"); if (sel) sel.value = d.id; };
       $("#dMain").onclick = () => add(false); $("#dSide").onclick = () => add(true);
     }
     $("#cWatch").onclick = () => { sheetOnClose = null; closeSheet(); specForm(s, fin); };
