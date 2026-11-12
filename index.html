@@ -490,15 +490,81 @@ async function idbGet(k) { const db = await idbOpen(); return new Promise((res, 
 // several keys in ONE transaction: either all of them are saved or none (used to keep the cards and the sync record in step)
 async function idbSetMany(pairs) { const db = await idbOpen(); return new Promise((res, rej) => { const tx = db.transaction("kv", "readwrite"), st = tx.objectStore("kv"); for (const [k, v] of pairs) st.put(v, k); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error || new Error("aborted")); }); }
 async function idbSet(k, v) { const db = await idbOpen(); return new Promise((res, rej) => { const tx = db.transaction("kv", "readwrite"); tx.objectStore("kv").put(v, k); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error || new Error("aborted")); }); }
+const LEAVE_KEY = KEY + ".leave", BASE_KEY = KEY + ".base";      // a note of unsaved changes left on leaving the page; the sync record when there is no database
 let saveT = null, saving = null, saveWarned = false, pendingBase = null, saveFailed = false;      // saveFailed: the last save reached neither store
 function save() { staleIndex(); clearTimeout(saveT); saveT = setTimeout(flushSave, 250); if (typeof SYNC !== "undefined") { SYNC.dirty = true; scheduleSync(); syncBadge(); } }
+// ---- more than one tab ----
+// Every tab holds the whole collection in memory and saves the whole of it. So that one tab's save doesn't wipe out what
+// another tab saved a moment ago: each save leaves a stamp in localStorage; a tab that finds a stamp it didn't write
+// reads the database copy and combines it with its own changes (as a sync would: quantities add up, removals stay
+// removed) before it saves. Saves take turns (a browser lock), and a tab with nothing to save is told through the
+// "storage" event and refreshes itself.
+const STAMP_KEY = KEY + ".saved", TAB = uid();
+let tabSeen = null, flushing = 0, tabT = null;         // tabSeen: the stamp this tab last read or wrote
+const readStamp = () => { try { return localStorage.getItem(STAMP_KEY); } catch (e) { return null; } };
+function tabLock(fn) {
+  if (typeof navigator === "undefined" || !navigator.locks || !navigator.locks.request) return fn();
+  return new Promise((res, rej) => {
+    let started = false; const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const t = setTimeout(() => { if (ctl && !started) ctl.abort(); }, 4000);          // never wait long on a tab that is stuck
+    navigator.locks.request("deckhand-save", ctl ? { signal: ctl.signal } : {}, () => { started = true; clearTimeout(t); return fn(); })
+      .then(res, e => { clearTimeout(t); if (started) rej(e); else Promise.resolve().then(fn).then(res, rej); });
+  });
+}
+const notSynced = st => { const o = {}; for (const k of Object.keys(st)) if (!SYNC_KEYS.includes(k)) o[k] = st[k]; return o; };
+// combine the database copy another tab saved (db) with this tab's state
+function takeOtherTab(db) {
+  const base = savedCopy, idWas = S.meta && S.meta.syncId;
+  const L = pickSync(S), R = pickSync(db), merged = JSON.parse(JSON.stringify(mergeSync(base ? pickSync(base) : combineBase(L, R), L, R)));
+  // everything else (this browser's settings, a scan in progress…): this tab's changes since its last save, on top of the other tab's
+  if (base) {
+    const rest = applyLeaveNote(JSON.parse(JSON.stringify(notSynced(db))), JSON.parse(JSON.stringify(leaveNote(notSynced(S), [notSynced(base)]))));
+    for (const k of Object.keys(S)) if (!SYNC_KEYS.includes(k) && !(k in rest)) delete S[k];
+    for (const [k, v] of Object.entries(rest)) {
+      if (plainObj(S[k]) && plainObj(v)) { for (const x of Object.keys(S[k])) if (!(x in v)) delete S[k][x]; Object.assign(S[k], v); } else S[k] = v;
+    }
+  }
+  adoptSynced(merged); migrate(); staleIndex();
+  try { savedCopy = typeof structuredClone === "function" ? structuredClone(db) : null; } catch (e) { savedCopy = null; }
+  // the other tab synced: its sync record (in the database) is the one that goes with these cards now
+  if (typeof SYNC !== "undefined" && S.meta && S.meta.syncId !== idWas) SYNC.base = undefined;
+}
+// take in what other tabs saved (and a change note a closed tab left behind). True if anything was taken.
+async function pullTabs() {
+  let took = false; const st = readStamp();
+  if (st && st !== tabSeen && idb.ok) {
+    const db = await idbGet("state");
+    if (db && db.coll && !(savedCopy && savedCopy.meta && db.meta && db.meta.savedAt === savedCopy.meta.savedAt)) { takeOtherTab(db); took = true; }
+    tabSeen = st;
+  }
+  try {
+    const t = localStorage.getItem(LEAVE_KEY), n = t ? JSON.parse(t) : null;
+    if (n && n.v === 1 && n.tab && n.tab !== TAB && savedCopy && +n.at > (+(savedCopy.meta && savedCopy.meta.savedAt) || 0)) { applyLeaveNote(S, n); migrate(); staleIndex(); took = true; pullTabs.note = true; }
+  } catch (e) {}
+  return took;
+}
+const redrawSoon = () => { try { if (typeof render !== "function" || !$("#sheetRoot")) return; if (!$("#sheetRoot").innerHTML) whenNotTyping(() => { if (!$("#sheetRoot").innerHTML) render(); }); } catch (e) {} };
+async function otherTabSaved() {
+  if (flushing || saveT) return;                    // a save is on its way here: it combines first
+  flushing++;
+  try {
+    pullTabs.note = false;
+    if (await tabLock(pullTabs)) { redrawSoon(); if (pullTabs.note) save(); else if (typeof SYNC !== "undefined" && typeof syncOn === "function" && syncOn(syncCfg())) { SYNC.dirty = true; scheduleSync(); } }
+  } catch (e) {} finally { flushing--; }
+}
+window.addEventListener("storage", e => { if (e.key === STAMP_KEY && e.newValue && e.newValue !== tabSeen) { clearTimeout(tabT); tabT = setTimeout(otherTabSaved, 150); } });
 async function flushSave() {
   clearTimeout(saveT); saveT = null;
   const base = pendingBase; pendingBase = null;
-  // every saved copy says when it was saved, so boot() can tell which of two copies is the newer one
-  try { if (S.meta) S.meta.savedAt = Math.max(Date.now(), (+S.meta.savedAt || 0) + 1); } catch (e) {}
+  flushing++;
+  try { return await tabLock(() => flushLocked(base)); } finally { flushing--; }
+}
+async function flushLocked(base) {
   // a database write that failed (storage full, a hiccup) is tried again after a while, not given up on until the app is reopened
   if (!idb.ok && idb.failedAt && Date.now() - idb.failedAt > 15000) { idb.ok = true; idb.failedAt = 0; }
+  if (idb.ok) { try { if (await pullTabs()) redrawSoon(); } catch (e) {} }
+  // every saved copy says when it was saved, so boot() can tell which of two copies is the newer one
+  try { if (S.meta) S.meta.savedAt = Math.max(Date.now(), (+S.meta.savedAt || 0) + 1); } catch (e) {}
   if (idb.ok) {
     try {
       // what goes into the database is kept as well (savedCopy), so that on leaving the page the few things changed since
@@ -507,11 +573,14 @@ async function flushSave() {
       const mine = snap !== S ? snap : null; savingCopy = mine;
       saving = idbSetMany(base ? [["state", snap], ["syncBase", base]] : [["state", snap]]); await saving; saving = null;
       if (savingCopy === mine) savingCopy = null; savedCopy = mine;
-      try { if (localStorage.getItem(KEY)) localStorage.removeItem(KEY); if (localStorage.getItem(LEAVE_KEY)) localStorage.removeItem(LEAVE_KEY); } catch (e) {}
+      try { tabSeen = String(snap.meta && snap.meta.savedAt) + ":" + TAB; localStorage.setItem(STAMP_KEY, tabSeen); } catch (e) {}
+      try { if (localStorage.getItem(KEY)) localStorage.removeItem(KEY); if (localStorage.getItem(LEAVE_KEY)) localStorage.removeItem(LEAVE_KEY); if (base && localStorage.getItem(BASE_KEY)) localStorage.removeItem(BASE_KEY); } catch (e) {}
       saveFailed = false; return true;
     } catch (e) { saving = null; savingCopy = null; savedCopy = null; idb.ok = false; idb.failedAt = Date.now(); }
   }
-  if (typeof SYNC !== "undefined" && base) SYNC.base = null;      // no database: the sync record can't be kept with the cards, so the next sync combines instead
+  // No database: the cards go to localStorage. The sync record stays in memory (so this session still knows what was
+  // removed where) and is kept in localStorage too when it fits; if it doesn't, the next start combines instead.
+  if (base) { try { localStorage.setItem(BASE_KEY, JSON.stringify(base)); } catch (e) { try { localStorage.removeItem(BASE_KEY); } catch (e2) {} } }
   try { localStorage.setItem(KEY, JSON.stringify(S)); saveFailed = false; return true; }
   catch (e) { saveFailed = true; if (!saveWarned) { saveWarned = true; toast("Couldn't save: phone storage is full or blocked. Export a backup from Collection."); } return false; }
 }
@@ -520,7 +589,6 @@ async function flushSave() {
 // collection can be too big for localStorage (about 5 MB), so only what differs from the copy in the database is written:
 // a few entries, whatever the collection's size. If the database write does finish it removes the note again; if not,
 // boot() finds it and applies it. (With no database copy to compare with, the whole state is written, if it fits.)
-const LEAVE_KEY = KEY + ".leave";
 let savedCopy = null, savingCopy = null;       // the state as last written to the database / as being written right now
 const sameDeep = (a, b) => {
   if (a === b) return true;
@@ -535,7 +603,7 @@ const plainObj = v => !!v && typeof v === "object" && !Array.isArray(v);
 // what differs between the state now and the given saved copies: whole top-level things, and single entries of the big
 // keyed ones (cards, decks, price history…). An entry is listed if it differs from ANY of the copies.
 function leaveNote(now, copies) {
-  const note = { v: 1, at: +(now.meta && now.meta.savedAt) || 0, top: {}, gone: [], set: {}, del: {} };
+  const note = { v: 1, tab: TAB, at: +(now.meta && now.meta.savedAt) || 0, top: {}, gone: [], set: {}, del: {} };
   const keys = new Set(Object.keys(now)); for (const c of copies) for (const k of Object.keys(c)) keys.add(k);
   for (const k of keys) {
     if (!(k in now) || now[k] === undefined) { note.gone.push(k); continue; }
@@ -556,7 +624,7 @@ function applyLeaveNote(st, note) {
   return st;
 }
 function saveOnLeave() {
-  if (!saveT && !saving) return;
+  if (!saveT && !saving && !flushing) return;
   try {
     if (S.meta) S.meta.savedAt = Math.max(Date.now(), (+S.meta.savedAt || 0) + 1);
     let noted = false;
@@ -2484,9 +2552,18 @@ async function gdReadSync() {
   const cfg = syncCfg();
   if (!cfg.file) { const id = await gdSyncFile(cfg.folder); if (!id) return { info: {}, state: null }; setSyncCfg(Object.assign({}, cfg, { file: id })); }
   const id = syncCfg().file;
+  // Only "not found" means the file is gone. Anything else (a network blip, Drive busy or having trouble) says nothing
+  // about the file: the sync stops with that error and tries again, and this device keeps the file it knows.
   let m; try { m = await (await gd(`/drive/v3/files/${id}?fields=id,version,trashed,size,appProperties`)).json(); }
-  catch (e) { if (e.needTap) throw e; m = null; }
-  if (!m || m.trashed) { setSyncCfg(Object.assign({}, syncCfg(), { file: null })); GDS.version = null; return { info: {}, state: null }; }     // file gone: the next upload makes a new one
+  catch (e) { if (e.status !== 404) throw e; m = null; }
+  if (!m || m.trashed) {
+    // the file is gone: another device may have made a new one already, so look before making a second
+    GDS.version = null;
+    const other = await gdSyncFile(syncCfg().folder).catch(e => { if (e.status === 404) return null; throw e; });
+    setSyncCfg(Object.assign({}, syncCfg(), { file: other && other !== id ? other : null }));
+    if (!syncCfg().file) return { info: {}, state: null };                                              // none: the next upload makes a new one
+    return gdReadSync();
+  }
   if (GDS.version && m.version === GDS.version) return null;                                            // unchanged since the last look
   const info = { device: (m.appProperties || {}).device || "", at: +((m.appProperties || {}).at || 0), sv: +((m.appProperties || {}).sv || 0) };
   if (!+m.size) { GDS.version = m.version; return { info, state: null }; }
@@ -2504,7 +2581,7 @@ async function gdPushSync(state, ver = {}) {
   // the version details ride inside the file (older versions of Deckhand ignore the extra key)
   body.append("file", await gzipText(JSON.stringify(Object.assign({}, state, { _sync: ver }))));
   const r = await (await gd(cfg.file ? `https://www.googleapis.com/upload/drive/v3/files/${cfg.file}?uploadType=multipart&fields=id,version` : "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,version", { method: cfg.file ? "PATCH" : "POST", body })).json();
-  if (!cfg.file) setSyncCfg(Object.assign({}, syncCfg(), { file: r.id }));
+  if (!cfg.file) { setSyncCfg(Object.assign({}, syncCfg(), { file: r.id })); ONE.at = 0; }      // a new file: check straight away that no other device made one at the same moment
   GDS.version = r.version || null;
 }
 /* One synced copy for every device. If two devices ever made their own (set up at the same moment, or a copy found
@@ -2560,9 +2637,17 @@ function syncLogText() {
     "time | what | cards | decks | copy version | from",
     ...(S.meta.syncLog || []).slice().reverse().map(e => `${new Date(e.at).toLocaleString()} | ${e.what} | ${e.cards} | ${e.decks} | ${e.seq || "-"} | ${e.from || ""}`)].join("\n");
 }
+// The list of versions (chain) is kept short, so a device that was away for more uploads than it holds can't find its
+// own last version in it. That alone doesn't mean its upload was overwritten. So each version also says which device
+// made it (dev) and, for every device, the last upload of that device's it is built on (by): a device that is out of
+// date can then tell "others carried on from my upload" (combine as usual: what was removed stays removed) from "my
+// upload was overwritten" (keep everything from both).
+const SYNC_CHAIN = 40;
+const devId = () => S.meta.dev || (S.meta.dev = uid() + uid());
 function nextSyncMeta() {
-  const r = SYNC.rinfo || {}, pid = uid() + Date.now().toString(36);
-  return { seq: Math.max(+r.seq || 0, +((SYNC.base || {}).seq) || 0) + 1, pid, chain: [...(Array.isArray(r.chain) ? r.chain : []), pid].slice(-40) };
+  const r = SYNC.rinfo || {}, pid = uid() + Date.now().toString(36), dev = devId();
+  const by = Object.assign({}, r.by && typeof r.by === "object" && !Array.isArray(r.by) ? r.by : {}); by[dev] = pid;
+  return { seq: Math.max(+r.seq || 0, +((SYNC.base || {}).seq) || 0) + 1, pid, chain: [...(Array.isArray(r.chain) ? r.chain : []), pid].slice(-SYNC_CHAIN), dev, by };
 }
 const pushRemote = async st => {
   SYNC.prevPush = SYNC.lastPush || 0; SYNC.lastPush = Date.now();
@@ -2672,7 +2757,14 @@ function mergeSync(B, L, R) {
   out.trade = J_(L.trade) === J_(B.trade) ? R.trade : L.trade;
   return done(out);
 }
-async function syncBase() { if (SYNC.base === undefined) { try { SYNC.base = idb.ok ? (await idbGet("syncBase")) || null : null; } catch (e) { SYNC.base = null; } } return SYNC.base; }
+async function syncBase() {
+  if (SYNC.base === undefined) {
+    try { SYNC.base = idb.ok ? (await idbGet("syncBase")) || null : null; } catch (e) { SYNC.base = null; }
+    // saved while there was no database: the record kept in localStorage is the one that goes with these cards
+    if (!(SYNC.base && SYNC.base.id && SYNC.base.id === S.meta.syncId)) { try { const t = localStorage.getItem(BASE_KEY), b = t ? JSON.parse(t) : null; if (b && b.id && b.id === S.meta.syncId && b.state) SYNC.base = b; } catch (e) {} }
+  }
+  return SYNC.base;
+}
 // which synced copy this device uses (the GitHub gist or the Google Drive file)
 const syncTarget = () => { const c = syncCfg() || {}; return isGoogleSync(c) ? c.file || "" : c.gist || ""; };
 // a record from a different synced copy (two copies found and joined, or sync set up again) can't say what was deleted either
@@ -2684,7 +2776,7 @@ const baseTrusted = base => !!(base && base.id && base.id === S.meta.syncId && (
 // upload it also keeps the version the upload was built on (prev), to combine from if another upload replaced it.
 async function setSyncBase(st, prev) {
   const id = uid() + Date.now().toString(36), r = SYNC.rinfo || {};
-  SYNC.base = { state: JSON.parse(JSON.stringify(st)), at: Date.now(), id, target: syncTarget(), pid: r.pid || null, seq: +r.seq || 0 };
+  SYNC.base = { state: JSON.parse(JSON.stringify(st)), at: Date.now(), id, target: syncTarget(), pid: r.pid || null, seq: +r.seq || 0, own: !!(r.pid && r.dev && r.dev === devId()) };      // own: this device made that version
   if (prev && prev.pid) SYNC.base.prev = { pid: prev.pid, state: JSON.parse(JSON.stringify(prev.state)) };
   S.meta.syncId = id; pendingBase = SYNC.base; SYNC.sent = null;
   return flushSave();
@@ -2748,7 +2840,13 @@ async function syncNow(manual) {
           // older than what this device already has: GitHub hasn't caught up yet. Look again shortly, change nothing.
           SYNC.dirty = SYNC.dirty || wasDirty; SYNC.etag = null; GDS.version = null; SYNC.rinfo = before; slog(`saw an older synced copy (version ${ri.seq || 0}); waiting`); scheduleSync(5000); return;
         }
-        replaced = true; prevState = base.prev && has(base.prev.pid) ? base.prev.state : null;
+        // Not in the list. If this device's version is older than everything the list holds, it is simply out of date:
+        // others carried on from it, provided it was a version this device only read, or its own upload that the synced
+        // copy says it is built on. Only otherwise was this device's upload overwritten.
+        const tooOld = chain.length >= SYNC_CHAIN && (+base.seq || 0) <= (+ri.seq || 0) - chain.length;
+        const carriedOn = tooOld && (base.own === false || (base.own === true && !!ri.by && typeof ri.by === "object" && ri.by[devId()] === base.pid));
+        if (carriedOn) slog(`was ${(+ri.seq || 0) - (+base.seq || 0)} versions behind; caught up`);
+        else { replaced = true; prevState = base.prev && has(base.prev.pid) ? base.prev.state : null; }
       }
     }
     SYNC.stale = 0;
@@ -2991,8 +3089,8 @@ async function gd(path, opts = {}) {
   try { r = await fetch(path.startsWith("http") ? path : "https://www.googleapis.com" + path, Object.assign({}, opts, { headers: Object.assign({ Authorization: "Bearer " + GD.tok }, opts.headers || {}) })); }
   catch (e) { throw new Error("Couldn't reach Google Drive. Check your connection."); }
   if (r.status === 401) { GD.tok = null; try { localStorage.removeItem("deckhand.gdtok"); sessionStorage.removeItem("deckhand.gdtok"); } catch (e) {} throw Object.assign(new Error("Sign in to Google again to use Drive."), { needTap: true }); }
-  if (r.status === 403) { const j = await r.json().catch(() => ({})); throw new Error("Google Drive refused: " + ((j.error && j.error.message) || "no permission")); }
-  if (!r.ok) throw new Error("Google Drive returned " + r.status);
+  if (r.status === 403) { const j = await r.json().catch(() => ({})); throw Object.assign(new Error("Google Drive refused: " + ((j.error && j.error.message) || "no permission")), { status: 403 }); }
+  if (!r.ok) throw Object.assign(new Error(r.status === 429 ? "Google Drive is busy (too many requests). Trying again shortly." : "Google Drive returned " + r.status), { status: r.status });
   return r;
 }
 const gdq = q => encodeURIComponent(q);
@@ -7391,6 +7489,7 @@ async function boot() {
   // database write didn't finish then, so the changes are put back; otherwise it is out of date and dropped.
   let note = null; try { const t = localStorage.getItem(LEAVE_KEY); if (t) note = JSON.parse(t); } catch (e) {}
   const useNote = !!(note && note.v === 1 && stored && stored.coll && !useLs && +note.at > dbAt);
+  tabSeen = readStamp();
   if (stored && stored.coll && !useLs) { try { if (typeof structuredClone === "function") savedCopy = structuredClone(stored); } catch (e) {}
     S = useNote ? applyLeaveNote(stored, note) : stored; migrate(); applySearchPrefs(); sc.mode = S.meta.scanMode || "ask"; sc.auto = S.meta.autoCap !== false;
     if (useNote) await flushSave();                                             // into the database now (which also clears the note)
