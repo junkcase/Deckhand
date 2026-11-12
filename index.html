@@ -501,21 +501,68 @@ async function flushSave() {
   if (!idb.ok && idb.failedAt && Date.now() - idb.failedAt > 15000) { idb.ok = true; idb.failedAt = 0; }
   if (idb.ok) {
     try {
-      saving = idbSetMany(base ? [["state", S], ["syncBase", base]] : [["state", S]]); await saving; saving = null;
-      try { if (localStorage.getItem(KEY)) localStorage.removeItem(KEY); } catch (e) {}
+      // what goes into the database is kept as well (savedCopy), so that on leaving the page the few things changed since
+      // can be told apart from it (see saveOnLeave)
+      let snap = S; try { if (typeof structuredClone === "function") snap = structuredClone(S); } catch (e) { snap = S; }
+      const mine = snap !== S ? snap : null; savingCopy = mine;
+      saving = idbSetMany(base ? [["state", snap], ["syncBase", base]] : [["state", snap]]); await saving; saving = null;
+      if (savingCopy === mine) savingCopy = null; savedCopy = mine;
+      try { if (localStorage.getItem(KEY)) localStorage.removeItem(KEY); if (localStorage.getItem(LEAVE_KEY)) localStorage.removeItem(LEAVE_KEY); } catch (e) {}
       saveFailed = false; return true;
-    } catch (e) { saving = null; idb.ok = false; idb.failedAt = Date.now(); }
+    } catch (e) { saving = null; savingCopy = null; savedCopy = null; idb.ok = false; idb.failedAt = Date.now(); }
   }
   if (typeof SYNC !== "undefined" && base) SYNC.base = null;      // no database: the sync record can't be kept with the cards, so the next sync combines instead
   try { localStorage.setItem(KEY, JSON.stringify(S)); saveFailed = false; return true; }
   catch (e) { saveFailed = true; if (!saveWarned) { saveWarned = true; toast("Couldn't save: phone storage is full or blocked. Export a backup from Collection."); } return false; }
 }
 // The page is going away (reload, closed, another site) with a change not saved yet: the database write started here may
-// never finish, so a copy is also written to localStorage, which is done before the page is gone. If the database write
-// does finish it removes that copy again; if not, boot() finds it and uses it (it is the newer one).
+// never finish, so what changed is also written to localStorage, which is done before the page is gone. A whole
+// collection can be too big for localStorage (about 5 MB), so only what differs from the copy in the database is written:
+// a few entries, whatever the collection's size. If the database write does finish it removes the note again; if not,
+// boot() finds it and applies it. (With no database copy to compare with, the whole state is written, if it fits.)
+const LEAVE_KEY = KEY + ".leave";
+let savedCopy = null, savingCopy = null;       // the state as last written to the database / as being written right now
+const sameDeep = (a, b) => {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+  const aa = Array.isArray(a); if (aa !== Array.isArray(b)) return false;
+  if (aa) { if (a.length !== b.length) return false; for (let i = 0; i < a.length; i++) if (!sameDeep(a[i], b[i])) return false; return true; }
+  let n = 0; for (const k in a) { if (a[k] === undefined) continue; n++; if (!sameDeep(a[k], b[k])) return false; }
+  for (const k in b) if (b[k] !== undefined) n--;
+  return n === 0;
+};
+const plainObj = v => !!v && typeof v === "object" && !Array.isArray(v);
+// what differs between the state now and the given saved copies: whole top-level things, and single entries of the big
+// keyed ones (cards, decks, price history…). An entry is listed if it differs from ANY of the copies.
+function leaveNote(now, copies) {
+  const note = { v: 1, at: +(now.meta && now.meta.savedAt) || 0, top: {}, gone: [], set: {}, del: {} };
+  const keys = new Set(Object.keys(now)); for (const c of copies) for (const k of Object.keys(c)) keys.add(k);
+  for (const k of keys) {
+    if (!(k in now) || now[k] === undefined) { note.gone.push(k); continue; }
+    if (!plainObj(now[k]) || !copies.every(c => plainObj(c[k]))) { if (!copies.every(c => sameDeep(now[k], c[k]))) note.top[k] = now[k]; continue; }
+    const subs = new Set(Object.keys(now[k])); for (const c of copies) for (const x of Object.keys(c[k])) subs.add(x);
+    for (const x of subs) {
+      if (!(x in now[k]) || now[k][x] === undefined) (note.del[k] = note.del[k] || []).push(x);
+      else if (!copies.every(c => sameDeep(now[k][x], c[k][x]))) (note.set[k] = note.set[k] || {})[x] = now[k][x];
+    }
+  }
+  return note;
+}
+function applyLeaveNote(st, note) {
+  for (const k of note.gone || []) delete st[k];
+  for (const [k, v] of Object.entries(note.top || {})) st[k] = v;
+  for (const [k, xs] of Object.entries(note.del || {})) if (plainObj(st[k])) for (const x of xs) delete st[k][x];
+  for (const [k, o] of Object.entries(note.set || {})) { if (!plainObj(st[k])) st[k] = {}; Object.assign(st[k], o); }
+  return st;
+}
 function saveOnLeave() {
   if (!saveT && !saving) return;
-  try { if (S.meta) S.meta.savedAt = Math.max(Date.now(), (+S.meta.savedAt || 0) + 1); localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {}
+  try {
+    if (S.meta) S.meta.savedAt = Math.max(Date.now(), (+S.meta.savedAt || 0) + 1);
+    let noted = false;
+    if (idb.ok && savedCopy) { try { localStorage.setItem(LEAVE_KEY, JSON.stringify(leaveNote(S, savingCopy ? [savedCopy, savingCopy] : [savedCopy]))); noted = true; } catch (e) {} }
+    if (!noted) localStorage.setItem(KEY, JSON.stringify(S));
+  } catch (e) {}
   if (saveT) flushSave();
 }
 document.addEventListener("visibilitychange", () => { if (document.hidden && saveT) flushSave(); });
@@ -2320,11 +2367,29 @@ async function readGist() {
   SYNC.etag = r.headers.get("ETag"); SYNC.files = Object.keys(j.files || {});
   return out;
 }
+// GitHub hands back at most about a megabyte of a gist's files in one answer: a file past that comes back cut short
+// (truncated) or with nothing in it, and has to be fetched whole from its own address. That goes for the small info file
+// too (it is listed after the card data). An info file that can't be read must never be taken for "the synced copy is
+// empty": that made each device overwrite the synced copy with its own cards, every time it synced.
+async function gistRaw(x) {
+  if (!x || !x.raw_url) throw new Error("The synced copy couldn't be read in full. Trying again.");
+  const r = await fetch(x.raw_url, { cache: "no-store" });
+  if (!r.ok) throw new Error("The synced copy couldn't be read in full (GitHub returned " + r.status + "). Trying again.");
+  return r.text();
+}
 async function parseGist(j) {
-  const f = j.files || {}, info = f["deckhand-sync.json"] ? JSON.parse(f["deckhand-sync.json"].content || "{}") : {};
-  if (!info.chunks) return { info, state: null };
+  const f = j.files || {}, mf = f["deckhand-sync.json"], hasData = Object.keys(f).some(k => /^deckhand-data-\d+\.txt$/.test(k));
+  let mt = mf ? mf.content || "" : "";
+  if (mf && (mf.truncated || (!mt.trim() && (mf.size > 0 || hasData)))) mt = await gistRaw(mf);
+  let info = {};
+  try { info = mt.trim() ? JSON.parse(mt) : {}; } catch (e) { throw new Error("The synced copy couldn't be read (its info file is damaged or cut short). Trying again."); }
+  if (!info || typeof info !== "object") info = {};
+  if (!info.chunks) {
+    if (hasData || j.truncated) throw new Error("The synced copy couldn't be read in full. Trying again.");      // cards are there, the info isn't: not empty
+    return { info, state: null };
+  }
   let text = "";
-  for (let i = 0; i < info.chunks; i++) { const x = f[`deckhand-data-${i}.txt`]; if (!x) throw new Error("The synced copy is incomplete"); text += x.truncated ? await (await fetch(x.raw_url, { cache: "no-store" })).text() : x.content; }
+  for (let i = 0; i < info.chunks; i++) { const x = f[`deckhand-data-${i}.txt`]; if (!x) throw new Error("The synced copy is incomplete"); text += x.truncated || (!x.content && x.size > 0) ? await gistRaw(x) : x.content; }
   return { info, state: pickSync(await unpackState(text)) };
 }
 // GitHub keeps every earlier version of the gist. Look through them for decks that aren't here any more.
@@ -7322,7 +7387,14 @@ async function boot() {
   // it was written (a successful write removes it), so it is the newer one unless the database copy's stamp says otherwise.
   const lsAt = lsCopy ? +(S.meta && S.meta.savedAt) || 0 : -1, dbAt = stored && stored.coll ? +(stored.meta && stored.meta.savedAt) || 0 : -1;
   const useLs = lsCopy && stored && stored.coll && (lsAt > dbAt || (!lsAt && !dbAt));
-  if (stored && stored.coll && !useLs) { S = stored; migrate(); applySearchPrefs(); sc.mode = S.meta.scanMode || "ask"; sc.auto = S.meta.autoCap !== false; }
+  // A note of what changed just before the page was last left (saveOnLeave): if it is newer than the database copy, the
+  // database write didn't finish then, so the changes are put back; otherwise it is out of date and dropped.
+  let note = null; try { const t = localStorage.getItem(LEAVE_KEY); if (t) note = JSON.parse(t); } catch (e) {}
+  const useNote = !!(note && note.v === 1 && stored && stored.coll && !useLs && +note.at > dbAt);
+  if (stored && stored.coll && !useLs) { try { if (typeof structuredClone === "function") savedCopy = structuredClone(stored); } catch (e) {}
+    S = useNote ? applyLeaveNote(stored, note) : stored; migrate(); applySearchPrefs(); sc.mode = S.meta.scanMode || "ask"; sc.auto = S.meta.autoCap !== false;
+    if (useNote) await flushSave();                                             // into the database now (which also clears the note)
+    else if (note) { try { localStorage.removeItem(LEAVE_KEY); } catch (e) {} } }
   else if (Object.keys(S.coll).length || Object.keys(S.decks).length) { if (useLs) { applySearchPrefs(); sc.mode = S.meta.scanMode || "ask"; sc.auto = S.meta.autoCap !== false; } await flushSave(); }     // move older data (or the newer copy) into the database
   sc.items = Array.isArray(S.scanSession) ? S.scanSession : [];
   Object.assign(stp, S.meta.staples || {});

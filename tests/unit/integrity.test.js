@@ -19,12 +19,12 @@ async function github(u, o = {}) {
   const g = GH.gists[url.pathname.split("/")[2]]; if (!g) return J({}, 404);
   if (m === "PATCH") { const b = JSON.parse(o.body); for (const [k, v] of Object.entries(b.files)) { if (v === null) delete g.files[k]; else g.files[k] = v; } g.etag = '"e' + (++GH.n) + '"'; if (GH.loseReply) throw new TypeError("Failed to fetch (reply lost)"); return J(g); }
   if ((o.headers || {})["If-None-Match"] === g.etag) return new Response(null, { status: 304, headers: { ETag: g.etag } });
-  return J({ id: g.id, files: Object.fromEntries(Object.entries(g.files).map(([k, v]) => [k, GH.truncate && /data/.test(k) ? { content: v.content.slice(0, 50), truncated: true, raw_url: "https://gist.githubusercontent.com/raw/" + g.id + "/" + k } : { content: v.content, truncated: false }])) }, 200, { ETag: g.etag });
+  return J({ id: g.id, files: Object.fromEntries(Object.entries(g.files).map(([k, v]) => [k, GH.metaCut && /sync\.json/.test(k) ? { content: GH.metaCut === "part" ? v.content.slice(0, 20) : "", size: v.content.length, truncated: GH.metaCut !== "blank", raw_url: "https://gist.githubusercontent.com/raw/" + g.id + "/" + k } : GH.truncate && /data/.test(k) ? { content: v.content.slice(0, 50), truncated: true, raw_url: "https://gist.githubusercontent.com/raw/" + g.id + "/" + k } : { content: v.content, truncated: false }])) }, 200, { ETag: g.etag });
 }
 async function device(name, opt = {}) {
   const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: "https://junkcase.github.io/Deckhand/" }); const w = dom.window;
   w.scrollTo = () => {}; w.indexedDB = opt.idb || new IDBFactory(); if (opt.ls) for (const [k, v] of Object.entries(opt.ls)) w.localStorage.setItem(k, v);
-  Object.assign(w, { CompressionStream, DecompressionStream, Response, TextEncoder, TextDecoder }); if (opt.nodeBlob) w.Blob = Blob;
+  Object.assign(w, { CompressionStream, DecompressionStream, Response, TextEncoder, TextDecoder, structuredClone }); if (opt.nodeBlob) w.Blob = Blob;
   w.fetch = async (u, o) => { if (opt.fetch) { const r = await opt.fetch(String(u), o, w); if (r) return r; } return String(u).startsWith("https://api.github.com") ? github(String(u), o) : String(u).startsWith("https://gist.githubusercontent.com") ? raw(String(u)) : { ok: false, status: 404, json: async () => ({}) }; };
   w.eval(fs.readFileSync(require("path").join(__dirname, "../.build/app.js"), "utf8") + ";window.X={GD,setSyncCfg,syncCfg,gdSignedIn};window.T={S:()=>S,addToColl,slim,connectSync,syncNow,SYNC,save,flushSave,restoreBackup,readRemote,idb,ONE,GDS,syncBase,idbOpen,idbGet,idbSet,setSyncBase,gdReadSync,stop:()=>{clearInterval(SYNC.poll);SYNC.poll=null;clearTimeout(SYNC.t);},toasts:()=>document.querySelector('#toastRoot')?.textContent||''};");
   await new Promise(r => setTimeout(r, 300));
@@ -34,7 +34,7 @@ async function device(name, opt = {}) {
   return T;
 }
 
-async function raw(u) { const [, , , , id, k] = u.split("/"); const g = GH.gists[id]; const c = g.files[k].content; if (GH.rawFail === "cut") return new Response(c.slice(0, Math.floor(c.length / 2))); if (GH.rawFail === "error") throw new TypeError("network error"); return new Response(c); }
+async function raw(u) { const [, , , , id, k] = u.split("/"); const g = GH.gists[id]; const c = g.files[k].content; if (GH.rawFail === "cut") return new Response(c.slice(0, Math.floor(c.length / 2))); if (GH.rawFail === "error") throw new TypeError("network error"); if (GH.rawFail === "404") return new Response("Not Found", { status: 404 }); return new Response(c); }
 
 const zlib = require("zlib");
 process.on("unhandledRejection", () => {});
@@ -86,9 +86,37 @@ const lsOf = T => { const o = {}; for (let i = 0; i < T.w.localStorage.length; i
     await breakIdb(A, "abort");                                                       // stands in for "the page was gone before the database write finished"
     A.addToColl(A.slim(sol), "nonfoil", 2, "main"); A.save();
     A.w.dispatchEvent(new A.w.Event("pagehide")); const ls = lsOf(A);
-    ok(!!ls["deckhand.v1"] && qty(JSON.parse(ls["deckhand.v1"]), "Sol Ring") === 5, "leaving: a change not saved yet is written to localStorage as the page goes");
+    ok(!!ls["deckhand.v1.leave"] && Object.values(JSON.parse(ls["deckhand.v1.leave"]).set.coll)[0].qty === 5, "leaving: a change not saved yet is written to localStorage as the page goes");
     await wait(50); A.stop();
     const B = await device("phone", { idb: F, ls }); ok(B.cards() === "Sol×5", "leaving: and it is there when the app is opened again"); B.stop(); }
+
+  // …also when the whole collection is too big for localStorage: only what changed is written
+  { const F = new IDBFactory(); const A = await device("phone", { idb: F });
+    A.addToColl(A.slim(sol), "nonfoil", 3, "main"); A.addToColl(A.slim(path), "nonfoil", 2, "main"); A.addToColl(A.slim(bolt), "nonfoil", 1, "main"); await A.flushSave();
+    const undo = fullLs(A);                                                        // the whole state no longer fits
+    await breakIdb(A, "abort");
+    A.addToColl(A.slim(sol), "nonfoil", 2, "main");                                // an existing card: 3 -> 5
+    for (const k of Object.keys(A.S().coll)) if (A.S().coll[k].name === "Lightning Bolt") delete A.S().coll[k];      // one removed
+    A.S().decks.d1 = { id: "d1", name: "New deck", cards: {} }; A.save();
+    A.w.dispatchEvent(new A.w.Event("pagehide")); const ls = lsOf(A);
+    const note = ls["deckhand.v1.leave"] && JSON.parse(ls["deckhand.v1.leave"]);
+    ok(!ls["deckhand.v1"] && note && Object.keys(note.set.coll).length === 1 && note.del.coll.length === 1 && !!note.set.decks.d1, "leaving, big collection: only the changed entries are written (one card changed, one removed, one deck added)");
+    await wait(50); undo(); A.stop();
+    const B = await device("phone", { idb: F, ls });
+    ok(B.cards() === "Path×2, Sol×5" && !!B.S().decks.d1, `leaving, big collection: the changes are there when the app is opened again (got ${B.cards()})`);
+    await wait(50); ok(!B.w.localStorage.getItem("deckhand.v1.leave") && qty(await B.idbGet("state"), "Sol Ring") === 5, "leaving, big collection: and they are in the database, the note cleared"); B.stop();
+    // a note older than the database copy (the write did finish) is dropped, not applied
+    const C0 = await device("phone", { idb: F, ls: {} }); C0.addToColl(C0.slim(bolt), "nonfoil", 4, "main"); await C0.flushSave(); C0.stop();
+    const C = await device("phone", { idb: F, ls }); ok(C.cards() === "Lightning×4, Path×2, Sol×5" && !C.w.localStorage.getItem("deckhand.v1.leave"), `leaving: an out-of-date note changes nothing (got ${C.cards()})`); C.stop(); }
+  // changed and changed back while a save was on its way: the note still restores what was on screen
+  { const F = new IDBFactory(); const A = await device("phone", { idb: F });
+    A.addToColl(A.slim(sol), "nonfoil", 3, "main"); await A.flushSave();
+    A.addToColl(A.slim(sol), "nonfoil", 1, "main"); const pending = A.flushSave();   // 4 on its way to the database
+    A.addToColl(A.slim(sol), "nonfoil", -1, "main"); A.save();                       // back to 3, not saved yet
+    A.w.dispatchEvent(new A.w.Event("pagehide")); const ls = lsOf(A); await pending; A.stop();
+    // the page was gone right after the 4 landed in the database
+    const F2 = F; const B = await device("phone", { idb: F2, ls: { "deckhand.v1.leave": ls["deckhand.v1.leave"] } });
+    ok(!!ls["deckhand.v1.leave"] && B.cards() === "Sol×3", `leaving while a save is under way: what was on screen comes back (got ${B.cards()})`); B.stop(); }
 
   // ---------- 2. GitHub: a download of the synced copy that fails partway is fetched again
   for (const how of ["cut", "error", "json"]) {
@@ -104,6 +132,35 @@ const lsOf = T => { const o = {}; for (let i = 0; i < T.w.localStorage.length; i
     await A.sync(); ok(!A.SYNC.err && A.cards() === "Path×4, Sol×3", `GitHub (${how}): the next sync downloads it again and gets the other device's cards (got ${A.cards()})`);
     A.stop(); B.stop();
   }
+
+  // GitHub hands the small info file back cut short or empty once the gist is big: it must be fetched whole, and a copy
+  // with cards in it must never be taken for an empty one (each device then overwrote it with its own cards, every sync)
+  for (const how of ["empty", "part", "blank"]) {
+    for (const k in GH.gists) delete GH.gists[k];
+    const A = await device("computer"), B = await device("phone");
+    A.addToColl(A.slim(sol), "nonfoil", 3, "main"); await A.connectSync("ghp_good"); await A.sync(); A.stop();
+    await B.connectSync("ghp_good"); await B.sync(); B.stop();
+    GH.metaCut = how;
+    B.addToColl(B.slim(bolt), "nonfoil", 1, "main"); await B.flushSave(); await B.sync();
+    const p0 = GH.calls.filter(c => c.startsWith("PATCH")).length;
+    await A.sync(); await A.sync(); await A.sync();
+    ok(!A.SYNC.err && A.cards() === "Lightning×1, Sol×3", `GitHub info file ${how}: the other device's card arrives (got ${A.cards()})`);
+    ok(GH.calls.filter(c => c.startsWith("PATCH")).length === p0, `GitHub info file ${how}: syncing with nothing new uploads nothing`);
+    ok(!(A.S().meta.syncLog || []).concat(B.S().meta.syncLog || []).some(e => /was empty/.test(e.what)), `GitHub info file ${how}: the synced copy is never taken for empty`);
+    A.addToColl(A.slim(path), "nonfoil", 2, "main"); await A.flushSave(); await A.sync(); await B.sync();
+    ok(B.cards() === "Lightning×1, Path×2, Sol×3" && A.cards() === B.cards(), `GitHub info file ${how}: and changes go the other way too`);
+    // the whole file can't be fetched either: an error, and nothing is overwritten
+    A.addToColl(A.slim(sol), "nonfoil", 1, "main"); await A.flushSave(); await A.sync();
+    GH.rawFail = "404"; B.addToColl(B.slim(path), "nonfoil", 1, "main"); await B.flushSave(); const p1 = GH.calls.filter(c => c.startsWith("PATCH")).length; await B.sync();
+    ok(!!B.SYNC.err && GH.calls.filter(c => c.startsWith("PATCH")).length === p1, `GitHub info file ${how}, and it can't be fetched whole: reported, nothing uploaded over the synced copy`);
+    GH.rawFail = null; await B.sync(); await A.sync(); ok(!B.SYNC.err && A.cards() === "Lightning×1, Path×3, Sol×4" && B.cards() === A.cards(), `GitHub info file ${how}: fine again once it can be read`);
+    GH.metaCut = null; A.stop(); B.stop();
+  }
+  // a gist that really is empty (just connected, nothing uploaded yet) is still filled
+  { for (const k in GH.gists) delete GH.gists[k];
+    const A = await device("computer"); A.addToColl(A.slim(sol), "nonfoil", 3, "main"); await A.connectSync("ghp_good"); await A.sync(); A.stop();
+    const g = Object.values(GH.gists)[0]; for (const k of Object.keys(g.files)) if (/data/.test(k)) delete g.files[k]; g.files["deckhand-sync.json"].content = "{}"; g.etag = '"emptied"';
+    await A.sync(); ok(!A.SYNC.err && Object.keys(g.files).some(k => /data/.test(k)), "GitHub: a synced copy that really is empty is filled from this device, as before"); A.stop(); }
 
   // ---------- 3. Google Drive: the version is only remembered once the file has been read in full
   { const D = { version: "8", body: null, mode: "ok" };
