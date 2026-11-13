@@ -6,8 +6,8 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 const C = (name, o = {}) => Object.assign({ object: "card", id: "id-" + name.toLowerCase().replace(/\W+/g, "-"), oracle_id: "o-" + name, name, set: "cmm", set_name: "CMM", collector_number: "1", rarity: "rare", type_line: "Instant", cmc: 1, mana_cost: "{R}", colors: ["R"], color_identity: ["R"],
   prices: { usd: "1.00" }, finishes: ["nonfoil"], legalities: { commander: "legal", modern: "legal" }, image_uris: { small: "https://cards.scryfall.io/x.png", normal: "https://cards.scryfall.io/x.png" }, oracle_text: "" }, o);
 const CARDS = [
-  C("Krenko, Mob Boss", { type_line: "Legendary Creature — Goblin Warrior", cmc: 4 }), C("Goblin Warchief", { type_line: "Creature — Goblin Warrior", cmc: 3 }), C("Skirk Prospector", { type_line: "Creature — Goblin" }),
-  C("Sol Ring", { type_line: "Artifact", colors: [], color_identity: [] }), C("Lightning Bolt"), C("Impact Tremors", { type_line: "Enchantment", cmc: 2 }), C("Shock"),
+  C("Krenko, Mob Boss", { type_line: "Legendary Creature — Goblin Warrior", cmc: 4 }), C("Kemba, Kha Regent", { type_line: "Legendary Creature — Cat Cleric", colors: ["W"], color_identity: ["W"], mana_cost: "{1}{W}{W}", cmc: 3 }), C("Goblin Warchief", { type_line: "Creature — Goblin Warrior", cmc: 3 }), C("Skirk Prospector", { type_line: "Creature — Goblin" }),
+  C("Sol Ring", { type_line: "Artifact", colors: [], color_identity: [] }), C("Lightning Bolt"), C("Impact Tremors", { type_line: "Enchantment", cmc: 2 }), C("Shock", { oracle_text: "Destroy target creature." }),
   C("Swords to Plowshares", { colors: ["W"], color_identity: ["W"] }), C("Mana Crypt", { type_line: "Artifact", colors: [], color_identity: [], legalities: { commander: "banned", modern: "not_legal" } }),
   C("Blasphemous Act", { type_line: "Sorcery", cmc: 9 }), C("Mountain", { type_line: "Basic Land — Mountain", colors: [], cmc: 0, mana_cost: "" }), C("Goblin Token", { type_line: "Token Creature — Goblin", layout: "token" }),
   // 60 more red cards nobody plays with Krenko. The last ones are the cheapest, so "lowest price" would pick them if price decided what is shown.
@@ -30,12 +30,15 @@ async function run(opts, label) {
   await p.goto("http://127.0.0.1:8900/app_real.html"); await p.waitForTimeout(500);
   await p.evaluate(CARDS => {
     const by = Object.fromEntries(CARDS.map(c => [c.name, c])); S.binders.wish = { id: "wish", name: "Wishlist", wish: true };
-    for (const c of CARDS) { if (/Krenko|Blasphemous/.test(c.name)) continue; addToColl(slim(c), "nonfoil", c.name === "Sol Ring" ? 2 : 1, "main", true); }
+    for (const c of CARDS) { if (/Krenko|Blasphemous|Kemba/.test(c.name)) continue; addToColl(slim(c), "nonfoil", c.name === "Sol Ring" ? 2 : 1, "main", true); }
     addToColl(slim(by["Sol Ring"]), "nonfoil", 1, "main", true);                                  // a second lot of a card you already own
     addToColl(slim(by["Blasphemous Act"]), "nonfoil", 1, "wish", true);                           // only on the wishlist: not owned
     const k = { id: "k", name: "Goblins!", format: "commander", cmdr: [], cards: {}, themes: ["Goblins"], created: 1, updated: 2 }; S.decks.k = k;
     addToDeck(k, by["Krenko, Mob Boss"], 1, false, true); k.cmdr = [Object.keys(k.cards)[0]]; addToDeck(k, by["Lightning Bolt"], 1, false, true);
     const m = { id: "m", name: "Modern pile", format: "modern", cmdr: [], cards: {}, created: 1, updated: 1 }; S.decks.m = m; addToDeck(m, by["Shock"], 4, false, true);
+    // a white Commander deck that already holds the only cards of yours that could go in it
+    const w = { id: "w", name: "White weenie", format: "commander", cmdr: [], cards: {}, created: 1, updated: 0 }; S.decks.w = w;
+    addToDeck(w, by["Kemba, Kha Regent"], 1, false, true); w.cmdr = [Object.keys(w.cards)[0]]; addToDeck(w, by["Sol Ring"], 1, false, true); addToDeck(w, by["Swords to Plowshares"], 1, false, true);
     save(); go("decks", "k");
   }, CARDS);
   await p.waitForSelector("#dTabs"); const before = await p.evaluate(() => JSON.stringify([S.coll, S.decks]));
@@ -49,9 +52,21 @@ async function run(opts, label) {
   ok(n.slice(0, 5).join(", ") === "Goblin Warchief, Skirk Prospector, Sol Ring, Filler 07, Filler 09", `${label}: the cards in the commander's statistics are the first group, best match first (${n.slice(0, 5).join(", ")})`);
   const sc = await p.evaluate(() => Object.fromEntries(recState.k.data.rows.filter(r => /Filler 09|Impact Tremors/.test(r.name)).map(r => [r.name, [r.score, r.ranked]])));
   ok(sc["Filler 09"][1] === true && sc["Impact Tremors"][1] === false && sc["Filler 09"][0] < sc["Impact Tremors"][0] && n.indexOf("Filler 09") < n.indexOf("Impact Tremors"), `${label}: a card that is in the statistics ranks ahead of one that isn't even when its score is lower (Filler 09 ${sc["Filler 09"][0].toFixed(2)} in statistics, Impact Tremors ${sc["Impact Tremors"][0].toFixed(2)} not)`);
+  // the title, and why each card is there
+  ok(await p.$eval("#rMineTitle", e => e.textContent) === "Suggestions from your collection", `${label}: the list is titled "Suggestions from your collection"`);
+  const why = name => p.$$eval("#rList .item", (a, name) => { const i = a.find(x => x.querySelector(".name").textContent === name); return i ? i.querySelector(".rwhy").textContent : null; }, name);
+  ok(await why("Goblin Warchief") === "Played with Krenko, Mob Boss · a Goblins card", `${label}: a card in the commander's statistics and the deck's theme says both (${await why("Goblin Warchief")})`);
+  ok(await why("Skirk Prospector") === "Played with Krenko, Mob Boss", `${label}: a card in the commander's statistics says so (${await why("Skirk Prospector")})`);
+  ok(await why("Impact Tremors") === "A Goblins card", `${label}: a card known only for the theme says that (${await why("Impact Tremors")})`);
+  ok(await why("Filler 01") === "Only fits the deck's colors; nothing else points to it", `${label}: …and such cards are labelled, not dressed up (${await why("Filler 01")})`);
+  const gapInfo = await p.evaluate(() => ({ low: deckGaps(S.decks.k).low, roles: rolesOf(Object.values(S.coll).find(e => e.name === "Shock")) }));
+  const fills = gapInfo.roles.filter(r => gapInfo.low.includes(r));
+  ok(fills.length > 0 && await why("Shock") === "Fills a gap: " + fills.join(", "), `${label}: a card that does a job the deck is short of says which (${await why("Shock")})`);
+  const whys = await p.$$eval("#rList .rwhy", a => a.map(x => x.textContent));
+  ok(whys.length === 50 && whys.every(Boolean), `${label}: every suggestion has a reason line`);
   const flags = await p.$$eval("#rList .item", a => a.map(x => /Not in these statistics/.test(x.textContent)));
   ok(flags.indexOf(true) === 5 && flags.slice(5).every(Boolean), `${label}: every card in the statistics comes before every card that isn't`);
-  ok(n[5] === "Impact Tremors", `${label}: within the second group the existing scoring still decides (the theme's card leads it: ${n[5]})`);
+  ok(["Shock", "Impact Tremors"].includes(n[5]) && ["Shock", "Impact Tremors"].includes(n[6]), `${label}: within the second group the existing scoring still decides (the gap-filler and the theme's card lead it: ${n[5]}, ${n[6]})`);
   const want = await p.evaluate(() => { const rows = recState.k.data.rows, ord = g => rows.filter(r => r.ranked === g).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)).map(r => r.name); return { listed: ord(true), unlisted: ord(false) }; });
   ok(n.slice(0, 5).join("|") === want.listed.join("|"), `${label}: the listed cards are in score order within their group`);
   ok(n.slice(5).join("|") === want.unlisted.slice(0, 45).join("|") && want.unlisted.length === 60, `${label}: the unlisted cards are in score order within theirs, and the best 45 of the 60 fill the remaining places`);
@@ -100,6 +115,11 @@ async function run(opts, label) {
   ok(n.length === 50 && !n.includes("Shock") && !n.includes("Mana Crypt") && /cards you own aren't in this deck\. Showing the 50 best matches for this deck, chosen by what the deck is short of\./.test(note.replace(/\s+/g, " ")) && /Add a theme|Choose a commander/.test(note), `${label}: a deck without a commander: no color filter, its own format's legality, and it says why nothing is ranked`);
   await p.selectOption("#rType", "Instant"); await p.waitForTimeout(150);
   ok((await names()).includes("Swords to Plowshares"), `${label}: …so a white card you own can be suggested there`);
+  // a deck nothing of yours fits: says so, with no invented suggestions
+  await p.evaluate(() => go("decks", "w")); await p.waitForSelector("#dTabs"); await p.click('#dTabs [data-t="suggest"]'); await p.waitForSelector("#rPool"); await p.click('#rPool [data-p="mine"]'); await p.waitForTimeout(800);
+  const none = (await p.$eval("#rList", e => e.textContent)).replace(/\s+/g, " ");
+  ok((await names()).length === 0 && /Nothing in your collection fits this deck that isn't already in it\./.test(none) && !/No suggestions\./.test(none) && !(await p.$("#rList .item")), `${label}: a deck that none of your other cards fit: it says so and suggests nothing`);
+  ok(await p.evaluate(() => { const r = recState.w.data; return r.pool === "mine" && r.rows.length === 0 && r.fits === 0; }), `${label}: …because nothing is eligible (off-color, banned, basic lands, tokens and cards already in it are all excluded)`);
   // EDHREC can't be reached and nothing is saved: still a list, and it says how it is ranked
   await p.evaluate(async () => { EDH.mem.clear(); for (const k of ["edh:commanders/krenko-mob-boss", "edh:tags/goblins"]) await idbSet(k, null).catch(() => {}); for (const k in recState) delete recState[k]; }); M.edhDown = true;
   await p.evaluate(() => go("decks", "k")); await p.waitForSelector("#dTabs"); await p.click('#dTabs [data-t="suggest"]'); await p.waitForSelector("#rPool"); await p.click('#rPool [data-p="mine"]'); await p.waitForTimeout(900);

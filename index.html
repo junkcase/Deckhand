@@ -6062,7 +6062,7 @@ function themeSlugOf(d, t) { return (d.themeSlugs && d.themeSlugs[t]) || EDH_THE
 // beyond the statistics themselves: the card details are the ones already in the collection.
 async function loadOwnedRecs(d, which) {
   const cmd = deckCommanderName(d), theme = (recState[d.id] || {}).theme || (d.themes || [])[0] || null, ci = deckCI(d);
-  const res = { which, pool: "mine", source: "", note: "", rows: [], at: null };
+  const res = { which, pool: "mine", source: "", note: "", rows: [], at: null, cmd, theme };
   let edh = null;
   try {
     if (which === "commander") { if (!cmd) throw Object.assign(new Error("Choose a commander to rank these by how often they are played with it."), { need: true }); edh = await edhGet("commanders/" + edhSlug(cmd)); }
@@ -6080,7 +6080,7 @@ async function loadOwnedRecs(d, which) {
     if (ci && (c.ci || []).some(x => !ci.includes(x))) continue;                                                 // outside the commander's colors
     if (d.format !== "casual" && c.leg && c.leg[d.format] && c.leg[d.format] !== "l") continue;                  // banned / not legal
     const st = stats.get(c.name), al = allocFor(c.name, d.id), roles = rolesOf(c);
-    const r = { card: c, name: c.name, num: st ? st.num ?? null : null, pot: st ? st.pot ?? null : null, incl: st && st.num != null && st.pot ? st.num / st.pot : null, syn: st ? st.syn ?? null : null, ranked: !!st,
+    const r = { card: c, name: c.name, themed: !!(themeSet && themeSet.has(c.name)), num: st ? st.num ?? null : null, pot: st ? st.pot ?? null : null, incl: st && st.num != null && st.pot ? st.num / st.pot : null, syn: st ? st.syn ?? null : null, ranked: !!st,
       own: al.own, free: shareCopies() ? al.own : al.free, roles, price: priceOf(c, c.finish),
       gap: roles.some(x => gaps.low.includes(x)), curveFit: typeOf(c.type) === "Land" ? 1 : 1 - Math.min(1, (curveN[Math.min(7, Math.floor(c.cmc || 0))] || 0) / 18) };
     // with statistics loaded, a card they don't mention counts as unplayed there (not as "unknown"), so it ranks below the ones they do
@@ -6290,6 +6290,17 @@ async function drawSuggest(d) {
   if (!rs.data || rs.key !== key) { rs.key = key; rs.data = await (rs.pool === "mine" ? loadOwnedRecs(d, rs.which) : loadRecs(d, rs.which)); }
   drawRecList(d);
 }
+// Why a card from the collection is suggested, in words, from what is actually known about it: that it is in the
+// statistics loaded for this commander / theme, that it is a card of the deck's theme, that it does a job the deck is
+// short of. A card with none of these says so plainly: it only fits the deck's colors (or format).
+function whySuggested(r, R, gaps) {
+  const why = [];
+  if (r.ranked) why.push(R.which === "commander" ? `Played with ${R.cmd}` : R.which === "theme" ? `Played in ${R.theme} decks` : `Played with ${R.cmd} in ${R.theme} decks`);
+  if (r.themed && R.which !== "theme") why.push(`${why.length ? "a" : "A"} ${R.theme} card`);
+  const fill = r.roles.filter(x => gaps.low.includes(x));
+  if (fill.length) why.push(`${why.length ? "f" : "F"}ills a gap: ${fill.join(", ")}`);
+  return why.length ? why.join(" · ") : `Only fits the deck's ${R.cmd ? "colors" : "format"}; nothing else points to it`;
+}
 function drawRecList(d) {
   const el = $("#rList"), rs = recState[d.id]; if (!el || !rs || !rs.data) return;
   const R = rs.data, pct = x => x == null ? "—" : Math.round(x * 100) + "%";
@@ -6312,7 +6323,7 @@ function drawRecList(d) {
   const gaps = deckGaps(d);
   el.innerHTML = `${R.note ? `<p class="small ${R.source === "Scryfall" ? "gold" : "muted"}">${esc(R.note)}</p>` : ""}
     ${R.source === "EDHREC" ? `<p class="small muted">EDHREC data${R.decks ? ` from ${R.decks.toLocaleString()} decks` : ""}, saved ${esc(dayLabel(R.at))}. <button class="linkbtn" id="rRefresh">Refresh</button></p>` : ""}
-    ${R.pool === "mine" ? `<p class="small" id="rMine">${(() => {
+    ${R.pool === "mine" ? `<span class="label" id="rMineTitle">Suggestions from your collection</span><p class="small" id="rMine" style="margin-top:2px">${(() => {
       if (!R.fits) return "Nothing in your collection fits this deck that isn't already in it.";
       const filtered = fitN !== R.fits, shown = rows.length, sortName = { syn: "highest synergy", incl: "highest inclusion rate", pop: "most decks", own: "owned first", free: "free copies first", cheap: "lowest price", dear: "highest price" }[rs.sort];
       const inStats = rows.filter(r => r.ranked).length, stats = R.source === "EDHREC";
@@ -6325,9 +6336,10 @@ function drawRecList(d) {
       <button class="tap" data-rinfo="${i}"><div class="name">${esc(c.name)}</div>
         <div class="meta"><span>${pips(c.mana)}</span><span class="small muted">${esc(typeOf(c.type))}</span><span>${ciPips(c.ci)}</span><span class="num">${money(r.price)}</span>
           ${r.own ? `<span class="chip ok">own ${r.own}${!shareCopies() && r.free < r.own ? `, ${r.free} free` : ""}</span>` : ""}${r.roles.filter(x => x !== "Creature" && x !== "Land").slice(0, 2).map(x => `<span class="chip ${r.gap && gaps.low.includes(x) ? "acc" : ""}">${esc(x)}</span>`).join("")}</div>
+        ${R.pool === "mine" ? `<div class="small rwhy">${esc(whySuggested(r, R, gaps))}</div>` : ""}
         ${R.source === "EDHREC" ? `<div class="small muted num">${R.pool === "mine" && !r.ranked ? "Not in these statistics" : `In ${pct(r.incl)} of ${r.pot ? r.pot.toLocaleString() : "?"} decks${r.syn != null ? ` · synergy ${r.syn >= 0 ? "+" : ""}${Math.round(r.syn * 100)}%` : ""}`}</div>` : ""}</button>
       <div class="right"><button class="btn sm primary" data-radd="${i}" aria-label="Add ${esc(c.name)} to the deck">＋</button></div></div>`; }).join("")}</div>`
-      : `<p class="small muted">${R.rows.length ? "No suggestions match these filters." : R.note ? "" : "No suggestions."}</p>`}`;
+      : `<p class="small muted">${R.rows.length ? "No suggestions match these filters." : R.note || R.pool === "mine" ? "" : "No suggestions."}</p>`}`;
   el.querySelectorAll("[data-radd]").forEach(b => b.onclick = () => {
     const r = rows[+b.dataset.radd]; addToDeck(d, r.card, 1, false); R.rows = R.rows.filter(x => x !== r);
     const al = allocFor(r.name, d.id); toast(`Added ${r.name} · ${al.own ? `you own ${al.own}` : "not in your collection"}`); renderDeck(d);
