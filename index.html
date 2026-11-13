@@ -236,6 +236,8 @@ ol.welcome{text-align:left;max-width:460px;margin:8px auto 14px;padding-left:20p
 .sc{display:flex;gap:6px;align-items:flex-start;text-align:left;border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer;min-width:0}.sc img{width:44px;aspect-ratio:63/88;object-fit:cover;border-radius:4px;flex:none;background:var(--sunk)}.sc span{min-width:0;overflow-wrap:anywhere}
 .cmpgrid{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(150px,1fr);gap:8px;overflow-x:auto;padding-bottom:4px}.cmpcol{display:flex;flex-direction:column;gap:3px;min-width:0}.cmpcol img{width:100%;border-radius:8px;aspect-ratio:63/88;object-fit:cover;background:var(--sunk)}
 details>summary{cursor:pointer}.seg.wide button{flex:1 1 auto;min-width:0;white-space:nowrap}
+.an-sum{grid-template-columns:repeat(2,minmax(0,1fr))}@media (min-width:560px){.an-sum{grid-template-columns:repeat(4,minmax(0,1fr))}}
+.an-group>summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:8px}.an-group>summary::-webkit-details-marker{display:none}.an-group>summary .label::after{content:" ▾"}.an-group[open]>summary .label::after{content:" ▴"}
 .t50-noimg{width:44px;aspect-ratio:5/7;border-radius:4px;background:var(--line);flex:none;display:block}
 #sMode{display:flex;max-width:100%;overflow-x:auto;scrollbar-width:none}#sMode::-webkit-scrollbar{display:none}#sMode button{flex:1 1 auto;padding:6px 8px;white-space:nowrap}@media(max-width:380px){#sMode button{padding:6px 5px;font-size:13px}}
 @media (max-width:520px){.seg.wide button{padding:6px 5px;font-size:13px}}
@@ -6430,6 +6432,97 @@ function roleSheet(d, c) {
    balance and your collection. Every change is recorded in the deck's history and can be undone. */
 const UPG_W = { synergy: 25, theme: 20, gap: 20, community: 15, curve: 10, owned: 10 };
 const upgState = {};
+/* ---------- Top 50 analyzer: the deck held against the 50 cards most played with its commander ----------
+   A second view of the Upgrade tab, beside the swap suggestions and separate from them. It uses the Top 50 browser's
+   list for the deck's commander (loadTop50: EDHREC's statistics in Deckhand's order) and sorts the deck and the
+   collection into four groups: Top 50 cards already in the deck, ones you own but haven't put in, ones you don't own,
+   and deck cards that aren't in the list. It reads; the only thing it can change is adding one owned card to this
+   deck, through addToDeck(). It never suggests removing anything: not being in a Top 50 says nothing about a card. */
+const upgMode = {}, anState = {};          // per deck, for this visit only: which Upgrade view; the analyzer's list, sort and open groups
+function analyzeTop50(d, R) {
+  const inDeck = new Map();
+  for (const [k, c] of Object.entries(d.cards)) { const m = inDeck.get(c.name) || { main: 0, side: 0, card: c, cmdr: false }; if (c.side) m.side += c.qty; else m.main += c.qty; if (d.cmdr.includes(k)) m.cmdr = true; inDeck.set(c.name, m); }
+  // every card of the list lands in exactly one of four places: in the deck, owned and addable, not owned, or unable to go
+  // in this deck at all (colors / legality), so the four counts always add up to the list
+  const top = new Set(R.rows.map(r => r.name)), have = [], owned = [], missing = [], blocked = [];
+  for (const r of R.rows) {
+    const dk = inDeck.get(r.name), al = allocFor(r.name, d.id), entry = t50Owned(r.name), card = (dk && dk.card) || entry || r.looked;
+    const row = Object.assign({}, r, { card, entry, own: al.own, other: al.other, free: al.free, main: dk ? dk.main : 0, side: dk ? dk.side : 0, why: "", legUnknown: false });
+    if (dk) { have.push(row); continue; }
+    row.why = card ? t50Blocked(card, d) : "";                                                   // outside the commander's colors / not legal in the format
+    row.legUnknown = !row.why && d.format !== "casual" && !(card && card.leg && card.leg[d.format]);      // no legality on record: allowed, as elsewhere, but said
+    (row.why ? blocked : al.own > 0 ? owned : missing).push(row);
+  }
+  // deck cards that aren't in the list; basic lands are counted apart so they don't crowd it
+  const isBasic = c => !!(c.basic || /^Basic /.test(c.type || ""));
+  const rest = [...inDeck].filter(([n, m]) => !top.has(n) && !m.cmdr).map(([name, m]) => ({ name, main: m.main, side: m.side, card: m.card })).sort((a, b) => a.name.localeCompare(b.name));
+  return { have, owned, missing, blocked, outside: rest.filter(r => !isBasic(r.card)), basics: rest.filter(r => isBasic(r.card)) };
+}
+async function drawAnalyzer(d) {
+  const el = $("#dPane"); if (!el) return;
+  const st = anState[d.id] = anState[d.id] || { sort: "best", open: new Set(["owned"]) };
+  const cmd = d.format === "commander" ? deckCommanderName(d) : null;
+  if (!cmd) { el.innerHTML = `<div class="box" id="anNeed"><b>This needs a commander.</b><p class="small muted" style="margin:4px 0 0">The Top 50 analyzer compares a deck with the cards most played with its commander. ${d.format === "commander" ? "Choose this deck's commander on the Cards tab, then come back." : "This deck isn't a Commander deck, so there is no commander to compare it with."}</p></div>`; return; }
+  if (!st.data || st.cmd !== cmd) {
+    st.cmd = cmd; st.data = null; const my = st.seq = (st.seq || 0) + 1;
+    el.innerHTML = `<p class="small muted" id="anLoad">Loading the cards most played with ${esc(cmd)}…</p>`;
+    const R = await loadTop50({ kind: "commander", cmd, theme: "" });
+    if (st.seq !== my) return; st.data = R;
+    if (!$("#dPane") || tab !== "decks" || deckOpen !== d.id || deckTab[d.id] !== "upgrade" || upgMode[d.id] !== "analyze") return;
+  }
+  const R = st.data, again = async () => { const p = "commanders/" + edhSlug(cmd); EDH.mem.delete("edh:" + p); if (idb.ok) await idbSet("edh:" + p, null).catch(() => {}); st.data = null; drawAnalyzer(d); };
+  if (R.err) {
+    el.innerHTML = `<div class="box" id="anErr"><b>${R.err.notFound ? `EDHREC has no page for ${esc(cmd)}.` : "EDHREC's statistics couldn't be loaded."}</b>
+      <p class="small muted" style="margin:4px 0 8px">${R.err.notFound ? "It may be too new. Without its list there is nothing to compare the deck with; no other list is used in its place." : "This is a connection problem, not an empty list: nothing is saved on this device for this commander yet. " + esc(R.err.message)}</p><button class="btn sm" id="anRetry">Try again</button></div>`;
+    $("#anRetry").onclick = again; return;
+  }
+  if (!R.rows.length) { el.innerHTML = `<div class="box" id="anEmpty"><b>EDHREC's page for ${esc(cmd)} lists no cards.</b><p class="small muted" style="margin:4px 0 8px">The page loaded, but it is empty, so there is nothing to compare the deck with.</p><button class="btn sm" id="anRetry">Check again</button></div>`; $("#anRetry").onclick = again; return; }
+  const A = analyzeTop50(d, R), n = R.rows.length, listName = n < 50 ? `the ${n} cards EDHREC lists` : "the Top 50";
+  const cand = [...A.owned, ...A.missing], blocked = A.blocked.length, basicN = A.basics.reduce((a, r) => a + r.main + r.side, 0);
+  // the strongest additions: the list's own order (synergy, then decks) unless another order is asked for; never changes the list
+  const by = { syn: r => -(r.syn ?? -2), pop: r => -(r.num ?? -1), owned: r => (r.own > 0 ? 0 : 1) }[st.sort];
+  const strongest = cand.slice().sort((a, b) => (by ? by(a) - by(b) : 0) || a.rank - b.rank).slice(0, 5), noSyn = cand.filter(r => r.syn == null).length;
+  const pct = x => Math.round(x * 100) + "%";
+  const stats = r => [r.syn != null ? `Synergy ${r.syn >= 0 ? "+" : ""}${Math.round(r.syn * 100)}%` : "", r.incl != null ? `in ${pct(r.incl)} of decks` : "", r.num != null ? `${r.num.toLocaleString()} deck${r.num === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ") || "No statistics given for this card";
+  const where = r => [r.main ? `${r.main} in the main deck` : "", r.side ? `${r.side} in the sideboard` : ""].filter(Boolean).join(", ");
+  const rows = [];                                     // every row drawn, so a tap finds its card
+  const rowHTML = (r, kind) => { const c = r.card, i = rows.push(r) - 1;
+    const chips = kind === "have" || kind === "outside" ? `<span class="chip">${esc(where(r))}</span>`
+      : (r.own ? `<span class="chip ok">Owned ×${r.own}</span>${r.other ? `<span class="chip">${r.other} in other decks</span>` : ""}${!shareCopies() ? `<span class="chip ${r.free ? "" : "warn"}">${r.free} free</span>` : ""}` : `<span class="chip warn">Not owned</span>`)
+        + (r.why ? `<span class="chip warn an-flag">${esc(r.why)}</span>` : r.legUnknown ? `<span class="chip">Legality not known</span>` : "");
+    return `<div class="item" data-name="${esc(r.name)}">${c && c.img ? `<img loading="lazy" src="${esc(c.img)}" alt="">` : `<span class="t50-noimg" aria-hidden="true"></span>`}
+      <button class="tap" data-aninfo="${i}" ${c ? "" : "disabled"}><div class="name">${r.rank != null ? `<span class="num muted">#${r.rank + 1}</span> ` : ""}${esc(r.name)}</div>
+        <div class="meta">${c ? `<span>${pips(c.mana)}</span><span class="small muted">${esc(typeOf(c.type))}</span>` : `<span class="small muted">Details not loaded</span>`}${chips}</div>
+        ${kind === "outside" ? "" : `<div class="small muted num">${stats(r)}</div>`}</button>
+      <div class="right">${(kind === "owned" || kind === "cand") && r.own ? `<button class="btn sm primary" data-anadd="${i}" title="Add one copy to this deck's main deck" aria-label="Add ${esc(r.name)} to this deck">＋</button>` : ""}</div></div>`; };
+  const group = (id, title, list, kind, blurb, none) => `<details class="box an-group" id="an-${id}" data-g="${id}" ${st.open.has(id) ? "open" : ""}><summary><span class="label">${title}</span> <b class="num">${list.length}</b></summary>
+      ${blurb ? `<p class="small muted" style="margin:6px 0">${blurb}</p>` : ""}${list.length ? `<div class="list">${list.map(r => rowHTML(r, kind)).join("")}</div>` : `<p class="small muted" style="margin:6px 0 0">${none}</p>`}</details>`;
+  el.innerHTML = `<div class="stack" id="an">
+    <div class="row" style="justify-content:space-between;gap:8px;align-items:flex-start"><div style="min-width:0"><span class="label">Compared with</span><div id="anCmd"><b>${esc(cmd)}</b></div></div><button class="btn sm" id="anRefresh">Refresh</button></div>
+    ${d.cmdr.length > 1 ? `<p class="small gold" id="anPartner">This deck has two commanders. The comparison uses ${esc(cmd)}'s list only.</p>` : ""}
+    ${R.note ? `<p class="small gold" id="anNote">${esc(R.note)}</p>` : ""}
+    <div class="summary an-sum" id="anSum"><div><span class="label">In your deck</span><b class="num">${A.have.length}<span class="small muted">/${n}</span></b></div><div><span class="label">Owned, not in it</span><b class="num up">${A.owned.length}</b></div><div><span class="label">Not owned</span><b class="num">${A.missing.length}</b></div><div><span class="label">Deck cards outside it</span><b class="num">${A.outside.length}</b></div></div>
+    <p class="small muted" id="anSource">${n < 50 ? `EDHREC lists ${n} card${n === 1 ? "" : "s"} for this commander, fewer than 50; all of them are used. ` : `The Top 50 of ${R.total.toLocaleString()} cards on EDHREC's page for this commander. `}Deckhand's ranking of EDHREC's statistics${R.decks ? ` from ${R.decks.toLocaleString()} decks` : ""} (highest synergy first, then most decks), saved ${esc(dayLabel(R.at))}; not an official EDHREC list.${R.lookupFailed ? " Details for some cards you don't own couldn't be loaded just now." : ""}</p>
+    <p class="small num" id="anAdds">${A.have.length} in the deck + ${A.owned.length} owned + ${A.missing.length} not owned${blocked ? ` + ${blocked} that can't go in this deck` : ""} = ${n} card${n === 1 ? "" : "s"} in the list.</p>
+    <div class="box stack" id="anStrong" style="gap:6px"><div class="row wrap" style="justify-content:space-between;gap:8px"><span class="label">Strongest cards not in the deck yet</span>
+        <label class="small row" style="gap:6px">Order <select id="anSort">${[["best", "Best recommendation"], ["syn", "Highest synergy"], ["pop", "Most decks"], ["owned", "Cards you own first"]].map(([k, l]) => `<option value="${k}" ${st.sort === k ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
+      ${strongest.length ? `<div class="list">${strongest.map(r => rowHTML(r, "cand")).join("")}</div>${cand.length > strongest.length ? `<span class="small muted">The first ${strongest.length} of ${cand.length}; the rest are in the groups below. The order here doesn't change the list or its positions (#).</span>` : ""}${noSyn && (st.sort === "best" || st.sort === "syn") ? `<span class="small muted">EDHREC gives no synergy figure for ${noSyn} of these; ${noSyn === 1 ? "it comes" : "they come"} after the cards that have one.</span>` : ""}`
+        : `<span class="small muted">${A.have.length === n ? `Every card in ${listName} is already in this deck.` : "None of the remaining cards can go in this deck."}</span>`}</div>
+    ${group("have", `Already in your deck`, A.have, "have", "", `None of ${listName} are in this deck yet.`)}
+    ${group("owned", `Owned upgrades`, A.owned, "owned", `Cards from ${listName} that you own and haven't put in this deck. ＋ adds one copy to the main deck; your collection isn't changed.${shareCopies() ? "" : " Sharing copies between decks is off, so “free” is what your other decks leave over."}`, A.have.length === n ? "Nothing to add: they are all in the deck." : `You don't own any of the cards from ${listName} that aren't in this deck.`)}
+    ${group("missing", `Missing upgrades`, A.missing, "missing", `Cards from ${listName} that you don't own. Nothing is added to a wishlist or a deck from here.`, `You own every card in ${listName}.`)}
+    ${blocked ? group("blocked", `Can't go in this deck`, A.blocked, "blocked", `Cards from ${listName} that are outside this deck's colors or not legal in its format. They aren't counted as upgrades.`, "") : ""}
+    ${group("outside", `Outside ${n < 50 ? "the list" : "the Top 50"}`, A.outside, "outside", `Cards in this deck that aren't among ${listName}. That is all this means: the list counts how often cards are played with ${esc(cmd)}, not how good they are, and it is not a list of cards to take out.${basicN ? ` The deck's ${basicN} basic land${basicN === 1 ? "" : "s"} (${A.basics.map(r => `${esc(r.name)} ×${r.main + r.side}`).join(", ")}) ${basicN === 1 ? "is" : "are"} not listed here.` : ""}`, `Every ${basicN ? "non-basic " : ""}card in this deck is in ${listName}.`)}
+  </div>`;
+  $("#anRefresh").onclick = again;
+  $("#anSort").onchange = e => { st.sort = e.target.value; drawAnalyzer(d); };
+  el.querySelectorAll("details[data-g]").forEach(x => x.addEventListener("toggle", () => { if (x.open) st.open.add(x.dataset.g); else st.open.delete(x.dataset.g); }));
+  el.querySelectorAll("[data-anadd]").forEach(b => b.onclick = () => { const r = rows[+b.dataset.anadd]; if (!r || !r.entry || t50Blocked(r.entry, d)) return;
+    addToDeck(d, r.entry, 1, false); toast(`Added ${r.name} · you own ${r.own}`); renderDeck(d); });
+  const ais = [...el.querySelectorAll("[data-aninfo]:not([disabled])")];
+  ais.forEach(b => b.onclick = () => openFromList(ais, b, x => rows[+x.dataset.aninfo], r => r.entry && !(r.main || r.side) ? openCard(r.entry, r.entry.finish, r.entry.binder) : openCard(r.card)));
+}
+
 const pct0 = x => x == null ? "—" : Math.round(x * 100) + "%";
 const sgn = x => x == null ? "—" : (x >= 0 ? "+" : "") + Math.round(x * 100) + "%";
 async function upgradeData(d) {
@@ -6555,6 +6648,7 @@ function upgGroup(sw, d) {
 }
 async function drawUpgrade(d) {
   const el = $("#dPane"); if (!el) return;
+  if (upgMode[d.id] === "analyze") return drawAnalyzer(d);                 // the Top 50 analyzer view of this tab
   const st = upgState[d.id] = upgState[d.id] || {};
   d.upg = d.upg || {};
   const key = deckCommanderName(d) + "|" + ((d.themes || [])[0] || null);
@@ -6868,6 +6962,7 @@ function renderDeck_(d) {
       <div id="dThemeSug" class="chips"></div>
       <div class="row" id="dThemeBox" hidden><input type="text" id="dThemeIn" class="grow" list="themeList" placeholder="Pick or type a theme, e.g. Tokens" maxlength="30"><datalist id="themeList">${THEMES.map(t => `<option value="${esc(t)}">`).join("")}</datalist><button class="btn sm primary" id="dThemeGo">Add</button></div></div>
     ${(() => { const dt = deckTab[d.id] || "cards"; return `<div class="seg wide" id="dTabs"><button data-t="cards" aria-pressed="${dt === "cards"}">Cards</button><button data-t="suggest" aria-pressed="${dt === "suggest"}">Suggestions</button><button data-t="balance" aria-pressed="${dt === "balance"}">Balance</button><button data-t="upgrade" aria-pressed="${dt === "upgrade"}">Upgrade</button><button data-t="combos" aria-pressed="${dt === "combos"}">Combos</button></div>
+    ${dt === "upgrade" ? `<div class="seg wide" id="uMode" role="group" aria-label="Upgrade view"><button data-u="swaps" aria-pressed="${upgMode[d.id] !== "analyze"}">Swap suggestions</button><button data-u="analyze" aria-pressed="${upgMode[d.id] === "analyze"}">Top 50 analyzer</button></div>` : ""}
     <div id="dPane" class="stack" ${dt === "cards" ? "hidden" : ""}></div>`; })()}
     <div id="dCards" class="stack" ${(deckTab[d.id] || "cards") !== "cards" ? "hidden" : ""}>
     ${cmd && !d.cmdr.length ? `<div class="box stack" id="dPick" style="gap:8px"></div>` : cmd && d.cmdr.length === 1 && (d.cards[d.cmdr[0]] || {}).partner && !d.noPartner ? `<div class="box stack" id="dPick2" style="gap:8px"></div>` : ""}
@@ -6932,6 +7027,7 @@ function renderDeck_(d) {
     showPrints({ name, id: pref ? pref.id : mine ? mine.id : "" }, picked => { rememberPrinting(picked); addToDeck(d, picked, qty, false); closeSheet(); renderDeck(d); addedMsg(name, qty, slim(picked)); }, $("#addPrBox"));
   } });
   $("#dTabs").onclick = e => { const b = e.target.closest("button"); if (!b) return; deckTab[d.id] = b.dataset.t; renderDeck(d); };
+  const um = $("#uMode"); if (um) um.onclick = e => { const b = e.target.closest("button"); if (!b) return; upgMode[d.id] = b.dataset.u; renderDeck(d); };
   if (deckRefocus && !$("#sheetRoot").children.length) { deckRefocus = false; $("#dAdd").focus(); }      // card added: the box is empty and ready for the next one
   const dt = deckTab[d.id] || "cards";
   if (dt === "suggest") drawSuggest(d); else if (dt === "balance") drawBalance(d); else if (dt === "upgrade") drawUpgrade(d); else if (dt === "combos") drawCombos(d);
