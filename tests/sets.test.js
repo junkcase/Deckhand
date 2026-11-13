@@ -149,7 +149,7 @@ async function run(opts, shot) {
     ok(JSON.stringify(R.newGrid) === '[true,"New"]' && R.oldNotNew === 1, `${label}: a card added today gets the gold "New" mark; ones added days ago don't ${JSON.stringify([R.newGrid, R.oldNotNew])}`);
     ok(R.text.length === 10 && R.text[0] === "+#1AAA Card 1 2M $0.50×1" && R.text[1] === "-#2AAA Card 2 2M $1.00" && /^\+#3.*×3✦$/.test(R.text[2]) && /^\+N#5AAA Card 5 New 2R \$2\.50×1$/.test(R.text[4]) && R.textSaved === "text", `${label}: Text view: one line per card (number, name, cost, rarity, price, copies), missing faded, new marked; remembered ${JSON.stringify(R.text.slice(0, 5))}`);
     ok(R.onPage === "Sets", `${label}: the set opens on the Search page itself, not a pop-up (${R.onPage})`);
-    ok(JSON.stringify(R.tabs) === '["Search cards","Sets","Sealed","Staples","Lists"]', `${label}: Search page tabs ${JSON.stringify(R.tabs)}`);
+    ok(JSON.stringify(R.tabs) === '["Search cards","Sets","Sealed","Staples","Top 50","Lists"]', `${label}: Search page tabs ${JSON.stringify(R.tabs)}`);
     ok(R.dropIcons >= 2, `${label}: the dropdown shows each set's symbol (${R.dropIcons})`);
     ok(R.clip.split("\n")[0] === "1 AAA Card 2 (AAA) 2" && R.clip.split("\n").length === 6, `${label}: copy list with set and number ${JSON.stringify(R.clip.split("\n")[0])}`);
     ok(R.wish === "2,4,5,8,9,10" && /already/.test(R.wishToast), `${label}: wishlist gets the missing cards once (the #9 already wanted isn't doubled) (${R.wish})`);

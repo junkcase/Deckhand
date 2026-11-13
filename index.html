@@ -236,7 +236,8 @@ ol.welcome{text-align:left;max-width:460px;margin:8px auto 14px;padding-left:20p
 .sc{display:flex;gap:6px;align-items:flex-start;text-align:left;border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer;min-width:0}.sc img{width:44px;aspect-ratio:63/88;object-fit:cover;border-radius:4px;flex:none;background:var(--sunk)}.sc span{min-width:0;overflow-wrap:anywhere}
 .cmpgrid{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(150px,1fr);gap:8px;overflow-x:auto;padding-bottom:4px}.cmpcol{display:flex;flex-direction:column;gap:3px;min-width:0}.cmpcol img{width:100%;border-radius:8px;aspect-ratio:63/88;object-fit:cover;background:var(--sunk)}
 details>summary{cursor:pointer}.seg.wide button{flex:1 1 auto;min-width:0;white-space:nowrap}
-#sMode{display:flex;max-width:100%}#sMode button{flex:1 1 auto;padding:6px 8px;white-space:nowrap}@media(max-width:380px){#sMode button{padding:6px 5px;font-size:13px}}
+.t50-noimg{width:44px;aspect-ratio:5/7;border-radius:4px;background:var(--line);flex:none;display:block}
+#sMode{display:flex;max-width:100%;overflow-x:auto;scrollbar-width:none}#sMode::-webkit-scrollbar{display:none}#sMode button{flex:1 1 auto;padding:6px 8px;white-space:nowrap}@media(max-width:380px){#sMode button{padding:6px 5px;font-size:13px}}
 @media (max-width:520px){.seg.wide button{padding:6px 5px;font-size:13px}}
 .cgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}
 .ctile{display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--surface);cursor:pointer;font:inherit;color:inherit}
@@ -3973,8 +3974,152 @@ function drawList(v, L) {
     try { await navigator.clipboard.writeText(t); toast(`Copied ${items.length} line${items.length === 1 ? "" : "s"}`); } catch (e) { toast("Couldn't copy here"); } };
   $("#lDel").onclick = () => { const back = L; delete S.lists[L.id]; save(); lv.open = null; renderLists(); toast(`Deleted “${back.name}”`, { label: "Undo", fn: () => { S.lists[back.id] = back; save(); if (tab === "search" && sv.mode === "lists") renderLists(); } }); };
 }
+/* ---------- Top 50: browse the cards most played with a commander, in a theme, or both ----------
+   The same EDHREC statistics the deck Suggestions use (edhGet: one page per choice, kept on the device for a week), not
+   tied to a deck. The order is Deckhand's own, of EDHREC's data: highest synergy first, then most decks; the first 50.
+   Nothing is left out of the page's cards and nothing is made up: a figure EDHREC doesn't give isn't shown. What you
+   own is matched by card name, as everywhere else (wishlist binders don't count). The choices live in memory only. */
+const t50 = { kind: "commander", cmd: "", theme: "", slugs: {}, cmdThemes: [], show: "all", sort: "best", deck: "", pick: false, q: "", res: [], serr: "", sbusy: false, seq: 0, data: null, key: "", busy: false };
+const t50Sel = () => t50.kind === "theme" ? (t50.theme ? "t|" + t50.theme : "") : (t50.cmd ? "c|" + t50.cmd + "|" + t50.theme : "");
+const t50Slug = t => themeSlugOf({ themeSlugs: t50.slugs }, t);
+// the first copy of a card you own (not on a wishlist): its details are used, and it is the printing that gets added
+const t50Owned = name => { for (const k in S.coll) { const e = S.coll[k]; if (e.name === name && e.qty > 0 && !isWish(e.binder)) return e; } return null; };
+async function loadTop50(sel) {
+  const res = { rows: [], total: 0, at: null, decks: null, note: "", err: null, label: "", lookupFailed: false };
+  const cmdPath = sel.cmd ? "commanders/" + edhSlug(sel.cmd) : "", themed = sel.theme ? t50Slug(sel.theme) : "";
+  let edh = null;
+  try {
+    if (sel.kind === "theme") { res.label = sel.theme; edh = await edhGet("tags/" + themed); }
+    else if (sel.theme) {
+      res.label = `${sel.cmd} · ${sel.theme}`;
+      try { edh = await edhGet(`${cmdPath}/${themed}`); }
+      catch (e) { if (!e.notFound) throw e; edh = await edhGet(cmdPath); res.label = sel.cmd; res.note = `EDHREC has no page for ${sel.cmd} with the theme “${sel.theme}”, so this is ${sel.cmd}'s own list.`; }
+    } else { res.label = sel.cmd; edh = await edhGet(cmdPath); }
+  } catch (e) { res.err = { notFound: !!e.notFound, blocked: !!e.blocked, message: e.message || String(e) }; return res; }
+  res.at = edh.at; res.decks = edh.data.decks; if (edh.stale) res.note = (res.note ? res.note + " " : "") + "Showing statistics saved earlier; EDHREC couldn't be reached just now.";
+  // Deckhand's order of EDHREC's cards: synergy (highest first; a card without one after those with one), then decks, then name
+  const list = edh.data.cards.slice().sort((a, b) => (b.syn ?? -2) - (a.syn ?? -2) || (b.num || 0) - (a.num || 0) || a.name.localeCompare(b.name));
+  res.total = list.length;
+  const top = list.slice(0, 50), need = top.filter(c => !t50Owned(c.name)).map(c => ({ name: c.name }));
+  let got = {};
+  if (need.length) { try { got = await lookupCards(need); } catch (e) { res.lookupFailed = true; } }
+  top.forEach((c, i) => res.rows.push({ name: c.name, rank: i, num: c.num ?? null, pot: c.pot ?? null, incl: c.num != null && c.pot ? c.num / c.pot : null, syn: c.syn ?? null, list: c.list || "", looked: got[identKey({ name: c.name })] || null }));
+  return res;
+}
+// may this card go into that deck? (its commander's colors, its format's legality, and one copy of a card in Commander)
+function t50Blocked(card, d) {
+  if (!d) return "Choose a deck";
+  if (Object.values(d.cards).some(c => c.name === card.name) && d.format === "commander" && !card.basic) return "Already in this deck";
+  const ci = deckCI(d); if (ci && (card.ci || []).some(x => !ci.includes(x))) return "Outside this deck's colors";
+  if (d.format !== "casual" && card.leg && card.leg[d.format] && card.leg[d.format] !== "l" && !card.basic) return `Not legal in ${FORMATS[d.format] || d.format}`;
+  return "";
+}
+function drawTop50() {
+  const el = $("#tList"); if (!el) return;
+  const R = t50.data, pct = x => Math.round(x * 100) + "%";
+  if (t50.busy) { el.innerHTML = `<p class="small muted">Loading EDHREC's statistics…</p>`; return; }
+  if (!R) { el.innerHTML = `<p class="small muted">${t50.kind === "theme" ? "Pick a theme to see its 50 most-played cards." : "Pick a commander to see the 50 cards most played with it."}</p>`; return; }
+  if (R.err) {
+    el.innerHTML = `<div class="box" id="tErr"><b>${R.err.notFound ? "EDHREC has no page for this." : "EDHREC's statistics couldn't be loaded."}</b>
+      <p class="small muted" style="margin:4px 0 8px">${R.err.notFound ? (t50.kind === "theme" || t50.theme ? "Check the theme's spelling or pick one from the list. " : "It may be too new, or not a commander. ") + "This is a missing page, not an empty list." : "This is a connection problem, not an empty list: nothing is saved on this device for this choice yet. " + esc(R.err.message)}</p>
+      <button class="btn sm" id="tRetry">Try again</button></div>`;
+    $("#tRetry").onclick = () => { t50.key = ""; renderTop50(); }; return;
+  }
+  const rows = R.rows.map(r => { const e = t50Owned(r.name); return Object.assign({}, r, { own: ownedByName(r.name), card: e || r.looked, entry: e }); });
+  const ownN = rows.filter(r => r.own > 0).length, dest = S.decks[t50.deck] || null;
+  let shown = t50.show === "owned" ? rows.filter(r => r.own > 0) : t50.show === "missing" ? rows.filter(r => !r.own) : rows.slice();
+  // the display sort only reorders the 50; which cards they are was settled above
+  const by = { syn: r => -(r.syn ?? -2), incl: r => -(r.incl ?? -1), pop: r => -(r.num ?? -1) }[t50.sort];
+  if (by) shown.sort((a, b) => by(a) - by(b) || a.rank - b.rank);
+  const decks = Object.values(S.decks).sort((a, b) => (b.updated || 0) - (a.updated || 0));
+  el.innerHTML = `${R.note ? `<p class="small gold" id="tNote">${esc(R.note)}</p>` : ""}
+    <p class="small muted" id="tSource">Deckhand's ranking of EDHREC's statistics${R.decks ? ` from ${R.decks.toLocaleString()} decks` : ""}: highest synergy first, then most decks. It is not an official EDHREC Top 50. Saved ${esc(dayLabel(R.at))}. <button class="linkbtn" id="tRefresh">Refresh</button></p>
+    ${!rows.length ? `<div class="box" id="tEmpty"><b>EDHREC's page for ${esc(R.label)} lists no cards.</b><p class="small muted" style="margin:4px 0 0">The page loaded, but it is empty.</p></div>` : `
+    <p class="small" id="tSum"><b>${rows.length < 50 ? `All ${rows.length}` : `Top ${rows.length} of ${R.total.toLocaleString()}`}</b> card${rows.length === 1 ? "" : "s"} for ${esc(R.label)}: <b class="up">${ownN} owned</b> · <b class="${rows.length - ownN ? "down" : "muted"}">${rows.length - ownN} missing</b>${rows.length < 50 ? ` <span class="muted">(EDHREC lists fewer than 50 here)</span>` : ""}${shown.length !== rows.length ? ` · showing ${shown.length}` : ""}</p>
+    ${R.lookupFailed ? `<p class="small gold" id="tLookup">Pictures and details for cards you don't own couldn't be loaded just now; their names and statistics are shown.</p>` : ""}
+    <div class="row wrap" style="gap:8px;align-items:center">
+      <span class="seg" id="tShow">${[["all", "All"], ["owned", "Owned"], ["missing", "Missing"]].map(([k, l]) => `<button data-s="${k}" aria-pressed="${t50.show === k}">${l}</button>`).join("")}</span>
+      <label class="small row" style="gap:6px">Sort <select id="tSort">${[["best", "Best match"], ["syn", "Highest synergy"], ["incl", "Highest inclusion"], ["pop", "Most decks"]].map(([k, l]) => `<option value="${k}" ${t50.sort === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      ${decks.length ? `<label class="small row" style="gap:6px">Add owned cards to <select id="tDeck"><option value="">Choose a deck…</option>${decks.map(d => `<option value="${esc(d.id)}" ${d.id === t50.deck ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select></label>` : `<span class="small muted" id="tNoDecks">Make a deck in the Decks tab to add cards from here.</span>`}
+    </div>
+    ${shown.length ? `<div class="list" id="tRows">${shown.map((r, i) => { const c = r.card, why = r.own && dest && c ? t50Blocked(c, dest) : "", inDeck = dest ? Object.values(dest.cards).reduce((a, x) => a + (x.name === r.name ? x.qty : 0), 0) : 0;
+      const stats = [r.syn != null ? `Synergy ${r.syn >= 0 ? "+" : ""}${Math.round(r.syn * 100)}%` : "", r.incl != null ? `in ${pct(r.incl)} of decks` : "", r.num != null ? `${r.num.toLocaleString()} deck${r.num === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
+      return `<div class="item" data-name="${esc(r.name)}">${c && c.img ? `<img loading="lazy" src="${esc(c.img)}" alt="">` : `<span class="t50-noimg" aria-hidden="true"></span>`}
+      <button class="tap" data-tinfo="${i}" ${c ? "" : "disabled"}><div class="name"><span class="num muted">${r.rank + 1}.</span> ${esc(r.name)}</div>
+        <div class="meta">${c ? `<span>${pips(c.mana)}</span><span class="small muted">${esc(typeOf(c.type))}</span>` : `<span class="small muted">Details not loaded</span>`}${r.list ? `<span class="small muted">${esc(r.list)}</span>` : ""}
+          ${r.own ? `<span class="chip ok">Owned ×${r.own}</span>` : `<span class="chip warn">Missing</span>`}${inDeck ? `<span class="chip">in deck ×${inDeck}</span>` : ""}${why && why !== "Already in this deck" && why !== "Choose a deck" ? `<span class="chip warn t50-flag">${esc(why)}</span>` : ""}</div>
+        ${stats ? `<div class="small muted num">${stats}</div>` : `<div class="small muted">No statistics given for this card</div>`}</button>
+      <div class="right">${r.own ? `<button class="btn sm primary" data-tadd="${i}" ${!dest || why ? "disabled" : ""} title="${esc(!dest ? "Choose a deck above first" : why || "Add one copy to " + dest.name)}" aria-label="Add ${esc(r.name)} to ${esc(dest ? dest.name : "a deck")}">＋</button>` : ""}</div></div>`; }).join("")}</div>`
+      : `<p class="small muted" id="tNone">${t50.show === "owned" ? "You don't own any of these cards." : "You own every one of these cards."}</p>`}`}`;
+  const rf = $("#tRefresh"); if (rf) rf.onclick = async () => { const sel = { kind: t50.kind, cmd: t50.cmd, theme: t50.theme }, cp = sel.cmd ? "commanders/" + edhSlug(sel.cmd) : "", ts = sel.theme ? t50Slug(sel.theme) : "";
+    for (const p of [cp, ts && "tags/" + ts, cp && ts && `${cp}/${ts}`]) if (p) { EDH.mem.delete("edh:" + p); if (idb.ok) await idbSet("edh:" + p, null).catch(() => {}); }
+    t50.key = ""; renderTop50(); };
+  if (!rows.length) return;
+  $("#tShow").onclick = e => { const b = e.target.closest("button"); if (b) { t50.show = b.dataset.s; drawTop50(); } };
+  $("#tSort").onchange = e => { t50.sort = e.target.value; drawTop50(); };
+  const ds = $("#tDeck"); if (ds) ds.onchange = () => { t50.deck = ds.value; drawTop50(); };
+  el.querySelectorAll("[data-tadd]").forEach(b => b.onclick = () => {
+    const r = shown[+b.dataset.tadd], d = S.decks[t50.deck]; if (!r || !r.entry || !d || t50Blocked(r.entry, d)) return;
+    addToDeck(d, r.entry, 1, false); toast(`Added ${r.name} to ${d.name} · you own ${r.own}`); drawTop50();
+  });
+  const tis = [...el.querySelectorAll("[data-tinfo]:not([disabled])")];
+  tis.forEach(b => b.onclick = () => openFromList(tis, b, x => shown[+x.dataset.tinfo], r => r.entry ? openCard(r.entry, r.entry.finish, r.entry.binder) : openCard(r.card)));
+}
+function renderTop50() {
+  const el = $("#sres"); if (!el) return;
+  const isCmd = c => !!(c.canCmdr || (c.canCmdr === undefined && /Legendary/.test(c.type || "") && /Creature/.test(c.type || "")));
+  const mine = [...new Set(Object.values(S.decks).filter(d => d.format === "commander").flatMap(d => (d.cmdr || []).map(k => d.cards[k]).filter(Boolean).map(c => c.name)))].sort();
+  const owned = [...new Set(Object.values(S.coll).filter(e => e.qty > 0 && !isWish(e.binder) && isCmd(e)).map(e => e.name))].sort();
+  const picking = t50.kind === "commander" && (t50.pick || !t50.cmd);
+  const themeOpts = t50.cmdThemes.slice(); for (const n of THEMES) if (!themeOpts.some(t => t.name === n)) themeOpts.push({ name: n });      // this commander's themes first, then the app's own list
+  if (t50.theme && !themeOpts.some(t => t.name === t50.theme)) themeOpts.unshift({ name: t50.theme });
+  el.innerHTML = `<div class="stack" id="t50">
+    <div class="seg wide" id="tKind" role="group" aria-label="Browse by"><button data-k="commander" aria-pressed="${t50.kind === "commander"}">Commander</button><button data-k="theme" aria-pressed="${t50.kind === "theme"}">Theme</button></div>
+    ${t50.kind === "commander" ? (picking ? `<div class="box stack" id="tPick" style="gap:8px">
+        <span class="label">Choose a commander</span>
+        ${mine.length ? `<div><span class="small muted">From your decks</span><div class="chips" id="tMine">${mine.map(n => `<button class="chip deck" data-cmd="${esc(n)}">${esc(n)}</button>`).join("")}</div></div>` : ""}
+        ${owned.length ? `<label class="small stack" style="gap:3px">Legendary creatures you own<select id="tOwn"><option value="">Choose one of ${owned.length}…</option>${owned.map(n => `<option>${esc(n)}</option>`).join("")}</select></label>` : ""}
+        <form id="tFind" class="row"><input type="search" id="tQ" class="grow" placeholder="Search any commander by name" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(t50.q)}"><button class="btn">Search</button></form>
+        <div id="tFound">${t50.sbusy ? `<span class="small muted">Searching…</span>` : t50.serr ? `<span class="small down">${esc(t50.serr)}</span>` : t50.res.length ? `<div class="chips">${t50.res.map(c => `<button class="chip deck" data-cmd="${esc(c.name)}">${esc(c.name)}</button>`).join("")}</div>` : ""}</div>
+        ${t50.cmd ? `<button class="linkbtn" id="tPickNo">Keep ${esc(t50.cmd)}</button>` : ""}</div>`
+      : `<div class="row" style="justify-content:space-between;gap:8px"><div style="min-width:0"><span class="label">Commander</span><div id="tCmd"><b>${esc(t50.cmd)}</b></div></div><button class="btn sm" id="tChange">Change</button></div>`) : ""}
+    ${t50.kind === "theme" || (t50.cmd && !picking) ? `<div class="row wrap" style="gap:8px;align-items:flex-end">
+        <label class="small stack" style="gap:3px">${t50.kind === "theme" ? "Theme" : "Narrow to a theme (optional)"}<select id="tTheme"><option value="">${t50.kind === "theme" ? "Choose a theme…" : "Any theme"}</option>${themeOpts.map(t => `<option value="${esc(t.name)}" ${t.name === t50.theme ? "selected" : ""}>${esc(t.name)}${t.count ? ` (${t.count.toLocaleString()} decks)` : ""}</option>`).join("")}</select></label>
+        <form id="tThemeForm" class="row" style="gap:6px"><input type="search" id="tThemeIn" placeholder="or type a theme" autocomplete="off" style="max-width:150px" aria-label="Type a theme name"><button class="btn sm">Use</button></form></div>` : ""}
+    <div id="tList"></div></div>`;
+  $("#tKind").onclick = e => { const b = e.target.closest("button"); if (b && b.dataset.k !== t50.kind) { t50.kind = b.dataset.k; t50.pick = false; renderTop50(); } };
+  const choose = n => { if (!n) return; if (n !== t50.cmd) { t50.cmdThemes = []; t50.slugs = {}; t50.theme = ""; } t50.cmd = n; t50.pick = false; renderTop50(); };
+  el.querySelectorAll("[data-cmd]").forEach(b => b.onclick = () => choose(b.dataset.cmd));
+  const own = $("#tOwn"); if (own) own.onchange = () => choose(own.value);
+  const ch = $("#tChange"); if (ch) ch.onclick = () => { t50.pick = true; renderTop50(); };
+  const no = $("#tPickNo"); if (no) no.onclick = () => { t50.pick = false; renderTop50(); };
+  const ff = $("#tFind"); if (ff) ff.onsubmit = async e => { e.preventDefault(); const q = $("#tQ").value.trim(); t50.q = q; if (!q) return; const my = ++t50.seq; t50.sbusy = true; t50.serr = ""; t50.res = []; renderTop50();
+    // the search the deck's own commander picker makes: Scryfall, commanders only, most played first
+    try { const r = await sf(`/cards/search?q=${encodeURIComponent("is:commander " + q.split(/\s+/).map(w => `name:${JSON.stringify(w)}`).join(" "))}&order=edhrec&unique=cards`, null, { now: true }); if (my !== t50.seq) return; t50.res = (r.data || []).slice(0, 12).map(slim); t50.res.forEach(cacheSlim); }
+    catch (er) { if (my !== t50.seq) return; t50.serr = er.status === 404 ? "No commanders found with that name." : "The search couldn't be run: " + er.message; }
+    t50.sbusy = false; if (tab === "search" && sv.mode === "top50") renderTop50(); };
+  const ts = $("#tTheme"); if (ts) ts.onchange = () => { t50.theme = ts.value; renderTop50(); };
+  const tf = $("#tThemeForm"); if (tf) tf.onsubmit = e => { e.preventDefault(); const v = $("#tThemeIn").value.trim(); if (v) { t50.theme = v; renderTop50(); } };
+  // load (or reuse) the list for what is chosen
+  const key = picking ? "" : t50Sel();
+  if (!key) { t50.data = null; t50.busy = false; t50.key = ""; drawTop50(); return; }
+  if (t50.key === key && (t50.data || t50.busy)) { drawTop50(); return; }
+  t50.key = key; t50.data = null; t50.busy = true; drawTop50();
+  const sel = { kind: t50.kind, cmd: t50.cmd, theme: t50.theme };
+  (async () => {
+    // the commander's own themes (for the theme list), from its page: the one the list itself needs, or already saved
+    let gotThemes = false;
+    if (sel.kind === "commander" && !t50.cmdThemes.length) { try { const e = await edhGet("commanders/" + edhSlug(sel.cmd)); t50.cmdThemes = e.data.themes || []; for (const t of t50.cmdThemes) if (t.slug) t50.slugs[t.name] = t.slug; gotThemes = t50.cmdThemes.length > 0; } catch (e) {} }
+    const res = await loadTop50(sel);
+    if (t50.key !== key) return;                              // something else was chosen meanwhile
+    t50.data = res; t50.busy = false;
+    if (tab === "search" && sv.mode === "top50" && $("#t50")) { if (gotThemes) renderTop50(); else drawTop50(); }      // (the theme list now has this commander's themes)
+  })();
+}
+// on a narrow screen the row of modes scrolls sideways: keep the chosen one in sight
+const modeInView = () => { try { const b = $('#sMode [aria-pressed="true"]'), m = $("#sMode"); if (b && m && m.scrollWidth > m.clientWidth) m.scrollLeft = Math.max(0, b.offsetLeft - (m.clientWidth - b.offsetWidth) / 2); } catch (e) {} };
 const searchModes = () => { const n = onTheWay().reduce((a, l) => a + listLeft(l), 0);
-  return `<span class="seg" id="sMode">${[["search", "Search cards"], ["sets", "Sets"], ["sealed", "Sealed"], ["staples", "Staples"], ["lists", "Lists" + (n ? ` <span class="num small">· ${n} incoming</span>` : "")]].map(([k, l]) => `<button data-m="${k}" aria-pressed="${sv.mode === k || (k === "search" && !["sets", "sealed", "staples", "lists"].includes(sv.mode))}">${l}</button>`).join("")}</span>`; };
+  return `<span class="seg" id="sMode">${[["search", "Search cards"], ["sets", "Sets"], ["sealed", "Sealed"], ["staples", "Staples"], ["top50", "Top 50"], ["lists", "Lists" + (n ? ` <span class="num small">· ${n} incoming</span>` : "")]].map(([k, l]) => `<button data-m="${k}" aria-pressed="${sv.mode === k || (k === "search" && !["sets", "sealed", "staples", "top50", "lists"].includes(sv.mode))}">${l}</button>`).join("")}</span>`; };
 function renderSearch() {
   if (sv.mode === "sets") {
     setHead("Sets", "");
@@ -3992,7 +4137,13 @@ function renderSearch() {
     setHead("Lists", "");
     $("#view").innerHTML = `<div class="stack">${searchModes()}<div id="sres"></div></div>`;
     $("#sMode").onclick = e => { const b = e.target.closest("button"); if (b) { sv.mode = b.dataset.m; renderSearch(); } };
-    renderLists(); return;
+    modeInView(); renderLists(); return;
+  }
+  if (sv.mode === "top50") {
+    setHead("Top 50", "");
+    $("#view").innerHTML = `<div class="stack">${searchModes()}<div id="sres"></div></div>`;
+    $("#sMode").onclick = e => { const b = e.target.closest("button"); if (b) { sv.mode = b.dataset.m; renderSearch(); } };
+    modeInView(); renderTop50(); return;
   }
   if (sv.mode === "staples") {
     setHead("Staples", "");
