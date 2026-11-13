@@ -104,7 +104,7 @@ const SOL = { object: "card", id: "sol", oracle_id: "o-sol", name: "Sol Ring", s
   R.newHist = await p.evaluate(async () => { SEALED.hist = { "bloomburrow bundle": [[today(), 4000]] }; SEALED.hp = Promise.resolve(SEALED.hist); openSealed("bloomburrow bundle"); await new Promise(r => setTimeout(r, 300)); const t = ($("#spNoHist") || {}).textContent || ""; closeSheet(); return [t, !!$("#spC")]; });
   R.errs = errs; R.imgs = imgs;
   console.log(JSON.stringify(R, null, 1));
-  ok(R.modes.join() === "Search cards,Sets,Sealed,Staples,Top 50,Lists", "Search has a Sealed tab: " + R.modes.join());
+  ok(R.modes.join() === "Search cards,Sets,Sealed,Staples,Top 50,Orders", "Search has a Sealed tab: " + R.modes.join());
   ok(/16 sealed products/.test(R.intro), "it says how many sealed products there are: " + R.intro.slice(0, 90));
   ok(R.hits.length === 3 && /Play Booster Box Case/.test(R.hits[0]) && R.hits.includes("Bloomburrow Play Booster Box | $202.41") && R.hits.every(h => /Play Booster/.test(h)), "searching by name finds the products, most valuable first, with the Mana Pool market price: " + R.hits.join(" / "));
   ok(/No sealed products match/.test(R.none), "no match says so");

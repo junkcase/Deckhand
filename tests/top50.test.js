@@ -49,7 +49,7 @@ async function run(opts, label) {
 
   // the mode switch: six modes, all still there, usable at this width
   const modes = await p.$$eval("#sMode button", a => a.map(x => x.textContent.trim().replace(/\s*·.*$/, "")));
-  ok(modes.join("|") === "Search cards|Sets|Sealed|Staples|Top 50|Lists", `${label}: Top 50 sits among the Search modes, and every existing mode is still there (${modes.join(", ")})`);
+  ok(modes.join("|") === "Search cards|Sets|Sealed|Staples|Top 50|Orders", `${label}: Top 50 sits among the Search modes, and every existing mode is still there (${modes.join(", ")})`);
   await p.click('#sMode [data-m="top50"]'); await p.waitForSelector("#tKind");
   ok(await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1) && await p.$eval('#sMode [data-m="top50"]', e => e.getAttribute("aria-pressed") === "true" && e.getBoundingClientRect().width > 30), `${label}: the mode switch fits the screen and Top 50 is selected`);
   ok(await p.$$eval("#sMode button", a => { const m = document.querySelector("#sMode").getBoundingClientRect(), on = a.find(x => x.getAttribute("aria-pressed") === "true").getBoundingClientRect(); return on.left >= m.left - 1 && on.right <= m.right + 1; }), `${label}: the chosen mode is fully in view in the switch`);
