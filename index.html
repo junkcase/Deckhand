@@ -325,6 +325,17 @@ img.hero{display:block;width:100%;height:auto;aspect-ratio:1672/941;object-fit:c
 .deck-card .dc-cmdr img{width:58px;aspect-ratio:5/7;object-fit:cover;border-radius:4px;display:block;background:var(--line);box-shadow:0 1px 4px rgba(0,0,0,.35)}
 .deck-card .dc-cmdr img + img{margin-left:-30px;margin-top:10px}
 .deck-card .dc-body{min-width:0;flex:1}
+.deck-wrap{display:flex;flex-direction:column}
+.deck-wrap .deck-card{width:100%;border-bottom-left-radius:0;border-bottom-right-radius:0}
+.deck-ov{border:1px solid var(--line);border-top:0;border-radius:0 0 12px 12px;background:var(--surface)}
+.deck-ov>summary{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 14px;font-size:13px;font-weight:600;color:var(--accent);list-style:none;min-height:36px}
+.deck-ov>summary::-webkit-details-marker{display:none}
+.deck-ov>summary>span:first-child::after{content:" ▾"} .deck-ov[open]>summary>span:first-child::after{content:" ▴"}
+.deck-ov .ov-body{padding:4px 14px 12px}
+.deck-ov .ov-sum{grid-template-columns:repeat(3,minmax(0,1fr))} .deck-ov .ov-sum.n4{grid-template-columns:repeat(2,minmax(0,1fr))} @media (min-width:560px){.deck-ov .ov-sum.n4{grid-template-columns:repeat(4,minmax(0,1fr))}} .deck-ov .ov-sum div{background:var(--bg,var(--surface));padding:8px 10px} .deck-ov .ov-sum b{font-size:19px}
+.ov-miss>summary{color:var(--accent);font-weight:600;padding:4px 0}
+.ov-tbl{width:100%;border-collapse:collapse;margin-top:4px} .ov-tbl th{text-align:right;font-weight:600;color:var(--muted);padding:3px 0 3px 8px;white-space:nowrap} .ov-tbl td{text-align:right;padding:4px 0 4px 8px;border-top:1px solid var(--line);white-space:nowrap}
+.ov-tbl th:first-child,.ov-tbl td:first-child{text-align:left;padding-left:0;white-space:normal;overflow-wrap:anywhere}
 .curve{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;align-items:end;height:110px;padding-top:14px}
 .curve .bar{background:var(--accent);border-radius:3px 3px 0 0;position:relative;min-height:2px}
 .curve .bar span{position:absolute;top:-16px;left:0;right:0;text-align:center;font-size:11px;color:var(--muted)}
@@ -5724,15 +5735,55 @@ function addToDeck(d, card, qty, side, noSave) {
   if (d.cards[k].qty <= 0) { delete d.cards[k]; d.cmdr = d.cmdr.filter(x => x !== k); }
   d.updated = Date.now(); if (!noSave) save();
 }
+// What a deck needs against the collection, card by card (by name, any printing; main deck and sideboard together).
+// A copy counts once: of the copies a card needs, as many are "owned" as the collection can supply, the rest missing.
+// What the collection can supply follows the "share copies between decks" setting: with it on, every copy you own;
+// with it off, only the copies other decks don't already use.
+function deckOwnership(d) {
+  const need = {}, rows = []; let required = 0, owned = 0;
+  for (const c of Object.values(d.cards)) need[c.name] = (need[c.name] || 0) + c.qty;
+  for (const name in need) {
+    const own = ownedByName(name), avail = shareCopies() ? own : allocFor(name, d.id).free, have = Math.min(need[name], avail);
+    required += need[name]; owned += have;
+    rows.push({ name, need: need[name], own, avail, have, missing: need[name] - have });
+  }
+  return { required, owned, missing: required - owned, pct: required ? Math.floor(owned / required * 100) : null, rows };
+}
+// The overview under a deck in the decks list (drawn when it is opened): who leads it, what it is made of, how much of
+// it you own, and which cards are still missing. Reads the deck and the collection; changes nothing.
+const deckOvOpen = new Set();           // which overviews are open, for this visit only
+function deckOverviewHTML(d) {
+  const st = deckStats(d), o = deckOwnership(d), cmd = d.format === "commander";
+  const cmdrs = cmd ? (d.cmdr || []).map(k => d.cards[k]).filter(Boolean) : [];
+  const cols = cmd && cmdrs.length ? cmdrCI(d) : "WUBRG".split("").filter(c => st.colors[c]);
+  const colHTML = cmd && cmdrs.length ? ciPips(cols) : cols.length ? cols.map(c => `<i class="pip p${c}">${c}</i>`).join("") : st.mainN + st.sideN ? `<i class="pip pC">C</i> <span class="small muted">Colorless</span>` : `<span class="muted">—</span>`;
+  const miss = o.rows.filter(r => r.missing > 0).sort((a, b) => b.missing - a.missing || a.name.localeCompare(b.name));
+  const kv = (l, v) => `<div class="kv"><span class="muted">${l}</span><span class="num">${v}</span></div>`;
+  return `<div class="stack" style="gap:8px">
+    <div class="stack" style="gap:3px">
+      ${kv("Format", esc(FORMATS[d.format] || "Casual"))}
+      ${cmd ? kv(cmdrs.length > 1 ? "Commanders" : "Commander", cmdrs.length ? cmdrs.map(c => esc(c.name)).join(" + ") : `<span class="muted">Not chosen yet</span>`) : ""}
+      ${kv(cmd && cmdrs.length ? "Color identity" : "Colors", colHTML)}
+    </div>
+    <div class="summary ov-sum${st.sideN || !cmd ? " n4" : ""}"><div><span class="label">Cards</span><b class="num">${st.mainN + st.sideN}</b></div><div><span class="label">Main deck</span><b class="num">${st.mainN}${st.target ? `<span class="small muted">/${st.target}</span>` : ""}</b></div>
+      ${st.sideN || !cmd ? `<div><span class="label">Sideboard</span><b class="num">${st.sideN}</b></div>` : ""}<div><span class="label">Different cards</span><b class="num">${o.rows.length}</b></div></div>
+    ${o.required ? `<div class="stack" style="gap:3px"><div class="kv"><span class="label">${shareCopies() ? "In your collection" : "In your collection and free"}</span><b class="num ${o.missing ? "" : "up"}">${o.pct}%</b></div>
+      <div class="meter" role="img" aria-label="${o.pct}% owned"><div style="width:${o.pct}%"></div></div>
+      <div class="small num"><span>${o.required} needed</span> · <span>${o.owned} owned</span> · <span class="${o.missing ? "down" : "muted"}">${o.missing} missing</span></div>
+      ${shareCopies() ? "" : `<span class="small muted">Copies used by your other decks aren't counted (sharing copies between decks is off).</span>`}</div>` : `<span class="small muted">No cards in this deck yet.</span>`}
+    ${miss.length ? `<details class="ov-miss"><summary class="small">${miss.length} card${miss.length > 1 ? "s" : ""} still needed (${o.missing} cop${o.missing > 1 ? "ies" : "y"})</summary>
+      <table class="ov-tbl small num"><thead><tr><th>Card</th><th>Needed</th><th>Owned</th><th>Missing</th></tr></thead><tbody>
+      ${miss.map(r => `<tr><td>${esc(r.name)}</td><td>${r.need}</td><td class="${r.own ? "" : "down"}">${r.own === 0 ? "0 (none)" : r.avail < r.own ? `${r.own} (${r.avail} free)` : r.own}</td><td class="down">${r.missing}</td></tr>`).join("")}</tbody></table></details>`
+      : o.required ? `<span class="small up">You own every card in this deck.</span>` : ""}
+  </div>`;
+}
 function deckStats(d) {
   const main = Object.values(d.cards).filter(c => !c.side), side = Object.values(d.cards).filter(c => c.side);
   const n = a => a.reduce((s, c) => s + c.qty, 0);
   const value = Object.values(d.cards).reduce((s, c) => s + (priceOf(c) || 0) * c.qty, 0);
   const curve = new Array(8).fill(0), colors = {};
   for (const c of main) { if (typeOf(c.type) !== "Land") curve[Math.min(7, Math.floor(c.cmc))] += c.qty; for (const col of c.colors || []) colors[col] = (colors[col] || 0) + c.qty; }
-  let missing = 0; const need = {};
-  for (const c of Object.values(d.cards)) need[c.name] = (need[c.name] || 0) + c.qty;
-  for (const nm in need) missing += Math.max(0, need[nm] - (shareCopies() ? ownedByName(nm) : allocFor(nm, d.id).free));
+  const missing = deckOwnership(d).missing;
   const target = d.format === "commander" ? 100 : d.format === "casual" ? 0 : 60;
   return { main, side, mainN: n(main), sideN: n(side), value, curve, colors, missing, target, done: target ? Math.min(1, n(main) / target) : null };
 }
@@ -6538,15 +6589,19 @@ function renderDecks() {
     <div class="row wrap"><button class="btn sm" id="ndImp">Import a deck file (CSV or text)</button>${(S.meta.deckTrash || []).filter(x => !S.decks[x.deck.id] && Date.now() - x.at < 30 * 864e5).length ? `<button class="btn sm" id="ndTrash">Recently deleted</button>` : ""}${Object.keys(S.decks).length > 1 ? `<button class="btn sm" id="ndCmp">Compare decks</button>` : ""}${syncOn() ? `<button class="btn sm ghost" id="ndOld">Missing a deck?</button>` : ""}</div>
     ${decks.length ? decks.map(d => { const st = deckStats(d), ck = checkDeck(d); // a Commander deck shows its commander's card (both, for partners), so decks can be told apart at a glance
       const cm = d.format === "commander" ? (d.cmdr || []).map(k => d.cards[k]).filter(c => c && c.img) : [];
-      return `<button class="deck-card" data-d="${esc(d.id)}">${cm.length ? `<span class="dc-cmdr">${cm.map(c => `<img loading="lazy" src="${esc(c.img)}" alt="${esc(c.name)}" title="${esc(c.name)}" onerror="this.remove()">`).join("")}</span>` : ""}<div class="dc-body"><h3>${esc(d.name)}</h3>
+      const ow = deckOwnership(d), ovOpen = deckOvOpen.has(d.id);
+      return `<div class="deck-wrap"><button class="deck-card" data-d="${esc(d.id)}">${cm.length ? `<span class="dc-cmdr">${cm.map(c => `<img loading="lazy" src="${esc(c.img)}" alt="${esc(c.name)}" title="${esc(c.name)}" onerror="this.remove()">`).join("")}</span>` : ""}<div class="dc-body"><h3>${esc(d.name)}</h3>
       <div class="small muted num">${FORMATS[d.format] || "Casual"} · ${st.mainN}${st.target ? "/" + st.target : ""} cards · ${money(st.value)}${st.missing ? ` · <span class="down">${st.missing} not owned</span>` : ""}</div>
       ${(d.themes || []).length ? `<div class="small" style="margin-top:2px">${d.themes.map(esc).join(" · ")}</div>` : ""}
       ${st.target ? `<div class="meter sm"><div style="width:${Math.round(st.done * 100)}%"></div></div>` : ""}<div class="small muted">Changed ${esc(dayLabel(d.updated))}</div>
       ${ck.checked && !ck.pending ? `<div style="margin-top:4px">${ck.issues.length ? `<span class="chip warn">${ck.issues.length} problem${ck.issues.length > 1 ? "s" : ""}</span>` : `<span class="chip ok">Legal</span>`}</div>` : ""}</div>
-      <span style="flex:none">${d.format === "commander" && d.cmdr.length ? ciPips(cmdrCI(d)) : "WUBRG".split("").filter(c => st.colors[c]).map(c => `<i class="pip p${c}">${c}</i>`).join("")}</span></button>`; }).join("")
+      <span style="flex:none">${d.format === "commander" && d.cmdr.length ? ciPips(cmdrCI(d)) : "WUBRG".split("").filter(c => st.colors[c]).map(c => `<i class="pip p${c}">${c}</i>`).join("")}</span></button>
+      <details class="deck-ov" data-ov="${esc(d.id)}"${ovOpen ? " open" : ""}><summary><span>Overview</span><span class="small muted num">${ow.required ? `${ow.owned} of ${ow.required} owned · ${ow.pct}%` : "no cards yet"}</span></summary><div class="ov-body">${ovOpen ? deckOverviewHTML(d) : ""}</div></details></div>`; }).join("")
     : `<div class="empty"><h2>No decks yet</h2><p>Name a deck and pick its format above, then add cards from Search or paste a list from Moxfield, Archidekt or MTG Arena.</p></div>`}</div>`;
   $("#nd").onsubmit = e => { e.preventDefault(); const nm = $("#ndName").value.trim(); if (!nm) { $("#ndName").focus(); return; } const id = uid(); S.decks[id] = { id, name: nm, format: $("#ndFmt").value, cmdr: [], cards: {}, created: Date.now(), updated: Date.now() }; save(); go("decks", id); };
   $("#view").querySelectorAll("[data-d]").forEach(b => b.onclick = () => go("decks", b.dataset.d));
+  $("#view").querySelectorAll("details[data-ov]").forEach(el => el.addEventListener("toggle", () => { const id = el.dataset.ov, d = S.decks[id]; if (!d) return;
+    if (el.open) { deckOvOpen.add(id); el.querySelector(".ov-body").innerHTML = deckOverviewHTML(d); } else deckOvOpen.delete(id); }));
   $("#ndImp").onclick = () => pickCSV({ kind: "deck", id: "__new" });
   const ncm = $("#ndCmp"); if (ncm) ncm.onclick = () => compareSheet();
   const ndo = $("#ndOld"); if (ndo) ndo.onclick = oldDecksSheet;
