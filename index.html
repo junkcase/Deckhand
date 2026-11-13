@@ -6148,12 +6148,27 @@ function drawRecList(d) {
   if (rs.role) rows = rows.filter(r => r.roles.includes(rs.role));
   if (rs.mv !== "") rows = rows.filter(r => rs.mv === "7" ? (r.card.cmc || 0) >= 7 : Math.floor(r.card.cmc || 0) === +rs.mv);
   const by = { best: r => -r.score, syn: r => -(r.syn ?? -2), incl: r => -(r.incl ?? -1), pop: r => -(r.num ?? -1), own: r => -(r.own > 0) * 10 - r.score, free: r => -(r.free > 0) * 10 - r.score, cheap: r => r.price ?? 1e9, dear: r => -(r.price ?? -1) }[rs.sort];
-  rows.sort((a, b) => by(a) - by(b));
-  const fitN = rows.length; if (R.pool === "mine") rows = rows.slice(0, 50);              // the best 50 of everything you own that fits
+  const fitN = rows.length;
+  if (R.pool === "mine") {
+    // From my collection: first WHICH cards are shown is settled, by relevance alone: cards that are in the loaded
+    // statistics before cards that aren't (when statistics are loaded at all), each group by its score. The best 50.
+    // Only then does the chosen sort put those 50 in order; it never changes which cards they are.
+    const grouped = R.source === "EDHREC";
+    rows.sort((a, b) => (grouped ? (b.ranked ? 1 : 0) - (a.ranked ? 1 : 0) : 0) || b.score - a.score || a.name.localeCompare(b.name));
+    rows = rows.slice(0, 50); rows.forEach((r, i) => r.rank = i);
+    if (rs.sort !== "best") rows.sort((a, b) => by(a) - by(b) || a.rank - b.rank);
+  } else rows.sort((a, b) => by(a) - by(b));
   const gaps = deckGaps(d);
   el.innerHTML = `${R.note ? `<p class="small ${R.source === "Scryfall" ? "gold" : "muted"}">${esc(R.note)}</p>` : ""}
     ${R.source === "EDHREC" ? `<p class="small muted">EDHREC data${R.decks ? ` from ${R.decks.toLocaleString()} decks` : ""}, saved ${esc(dayLabel(R.at))}. <button class="linkbtn" id="rRefresh">Refresh</button></p>` : ""}
-    ${R.pool === "mine" ? `<p class="small" id="rMine">${R.fits ? `<b>${fitN > 50 ? "Top 50 of " + fitN.toLocaleString() : fitN.toLocaleString()}</b> card${fitN === 1 ? "" : "s"} you own that ${fitN === 1 ? "isn't" : "aren't"} in this deck${deckCI(d) ? " and fit" + (fitN === 1 ? "s" : "") + " its commander's colors" : ""}${R.source === "EDHREC" && R.rankedN ? `. ${R.rankedN.toLocaleString()} of your ${R.fits.toLocaleString()} appear in the statistics and rank first.` : "."}` : "Nothing in your collection fits this deck that isn't already in it."}</p>` : ""}
+    ${R.pool === "mine" ? `<p class="small" id="rMine">${(() => {
+      if (!R.fits) return "Nothing in your collection fits this deck that isn't already in it.";
+      const filtered = fitN !== R.fits, shown = rows.length, sortName = { syn: "highest synergy", incl: "highest inclusion rate", pop: "most decks", own: "owned first", free: "free copies first", cheap: "lowest price", dear: "highest price" }[rs.sort];
+      const inStats = rows.filter(r => r.ranked).length, stats = R.source === "EDHREC";
+      return `<b>${R.fits.toLocaleString()}</b> card${R.fits === 1 ? "" : "s"} you own ${R.fits === 1 ? "isn't" : "aren't"} in this deck${deckCI(d) ? " and fit" + (R.fits === 1 ? "s" : "") + " its commander's colors" : ""}${filtered ? `; <b>${fitN.toLocaleString()}</b> match${fitN === 1 ? "es" : ""} your filters` : ""}.`
+        + (!shown ? "" : fitN > shown ? ` Showing the <b>${shown} best matches</b> for this deck${stats ? `, chosen with cards in the EDHREC statistics (${inStats} of these) ahead of cards that aren't in them` : ", chosen by what the deck is short of"}.`
+          : ` Showing ${shown === 1 ? "it" : "all " + shown}${stats && shown > 1 && !sortName ? `, cards in the EDHREC statistics (${inStats}) first` : ""}.`)
+        + (shown > 1 && sortName ? ` Sorted by ${sortName}: that only changes the order shown, not which cards are chosen.` : ""); })()}</p>` : ""}
     ${gaps.low.length ? `<p class="small">Cards that fill a gap in this deck (${gaps.low.map(esc).join(", ")}) rank higher.</p>` : ""}
     ${rows.length ? `<div class="list">${rows.map((r, i) => { const c = r.card; return `<div class="item"><img loading="lazy" src="${esc(c.img)}" alt="">
       <button class="tap" data-rinfo="${i}"><div class="name">${esc(c.name)}</div>
