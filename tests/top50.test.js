@@ -7,7 +7,9 @@ const C = (name, o = {}) => Object.assign({ object: "card", id: "id-" + name.toL
   prices: { usd: "1.00" }, finishes: ["nonfoil"], legalities: { commander: "legal", modern: "legal" }, image_uris: { small: "https://cards.scryfall.io/x.png", normal: "https://cards.scryfall.io/x.png" }, oracle_text: "" }, o);
 const nn = i => "Card " + String(i).padStart(2, "0");
 const SPECIAL = { [nn(4)]: { colors: ["U"], color_identity: ["U"], mana_cost: "{U}" }, [nn(6)]: { legalities: { commander: "banned", modern: "legal" } }, [nn(8)]: { type_line: "Basic Land — Mountain", colors: [], color_identity: ["R"], mana_cost: "", cmc: 0 } };
-const CARDS = [C("Krenko, Mob Boss", { type_line: "Legendary Creature — Goblin Warrior", cmc: 4 }), C("Krenko, Tin Street Kingpin", { type_line: "Legendary Creature — Goblin", cmc: 3 }), C("Ezuri, Renegade Leader", { type_line: "Legendary Creature — Elf Druid", colors: ["G"], color_identity: ["G"], mana_cost: "{1}{G}{G}", cmc: 3 }),
+const LAND = i => "Land " + String(i).padStart(2, "0");
+const CARDS = [C("Squee, Goblin Nabob", { type_line: "Legendary Creature — Goblin", cmc: 3 }), ...Array.from({ length: 27 }, (_, i) => C(LAND(i + 1), { type_line: "Land", colors: [], color_identity: i === 6 ? ["U"] : [], mana_cost: "", cmc: 0 })), ...Array.from({ length: 55 }, (_, i) => C("Sq " + String(i + 1).padStart(2, "0"))),
+  C("Krenko, Mob Boss", { type_line: "Legendary Creature — Goblin Warrior", cmc: 4 }), C("Krenko, Tin Street Kingpin", { type_line: "Legendary Creature — Goblin", cmc: 3 }), C("Ezuri, Renegade Leader", { type_line: "Legendary Creature — Elf Druid", colors: ["G"], color_identity: ["G"], mana_cost: "{1}{G}{G}", cmc: 3 }),
   ...Array.from({ length: 60 }, (_, i) => C(nn(i + 1), SPECIAL[nn(i + 1)] || {})), ...Array.from({ length: 12 }, (_, i) => C("Combo " + (i + 1))), ...Array.from({ length: 55 }, (_, i) => C("Gob " + String(i + 1).padStart(2, "0")))];
 const view = (n, num, pot, syn) => Object.assign({ name: n, sanitized: n.toLowerCase(), num_decks: num, potential_decks: pot }, syn === null ? {} : { synergy: syn });
 // Krenko's page: 60 cards. Synergy falls from Card 01; Card 10 has no synergy figure (but the most decks); Cards 20 and 21 tie on synergy.
@@ -18,6 +20,9 @@ const EDH = {
   "tags/goblins": page([{ header: "Top Commanders", tag: "topcommanders", cardviews: [view("Krenko, Mob Boss", 4118, 9839, null)] }, { header: "Creatures", tag: "creatures", cardviews: Array.from({ length: 55 }, (_, i) => view("Gob " + String(i + 1).padStart(2, "0"), 5000 - i * 10, 9839, 0.8 - i * 0.01)) }]),
   "commanders/krenko-mob-boss/goblins": page([{ header: "Top Cards", tag: "topcards", cardviews: Array.from({ length: 12 }, (_, i) => view("Combo " + (i + 1), 900 - i, 1000, 0.5 - i * 0.01)) }]),
   "commanders/krenko-mob-boss/weird-slug-9": page([{ header: "Top Cards", tag: "topcards", cardviews: [view("Combo 1", 5, 7, 0.4)] }]),
+  // Squee's page: 55 spells, and 27 lands whose synergy is too low to reach the 50. Land 03 is in more decks than Land 01; Land 26 sits in "Utility Lands".
+  "commanders/squee-goblin-nabob": page([{ header: "Instants", tag: "instants", cardviews: Array.from({ length: 55 }, (_, i) => view("Sq " + String(i + 1).padStart(2, "0"), 3000 - i * 10, 9000, 0.8 - i * 0.01)) },
+    { header: "Lands", tag: "lands", cardviews: Array.from({ length: 25 }, (_, i) => view(LAND(i + 1), i === 2 ? 8900 : 8000 - i * 100, 9000, 0.02)) }, { header: "Utility Lands", tag: "utilitylands", cardviews: [view(LAND(26), 8950, 9000, -0.01), view(LAND(27), 10, 9000, 0.05)] }]),
   "tags/empty-theme": page([]),
   "commanders/krenko-tin-street-kingpin": page([{ header: "Top Cards", tag: "topcards", cardviews: [view("Card 01", 10, 20, 0.3)] }]),
 };
@@ -35,6 +40,7 @@ async function run(opts, label) {
   await p.evaluate(CARDS => {
     const by = Object.fromEntries(CARDS.map(c => [c.name, c])); S.binders.wish = { id: "wish", name: "Wishlist", wish: true };
     addToColl(slim(by["Card 01"]), "nonfoil", 1, "main", true); addToColl(slim(Object.assign({}, by["Card 01"], { id: "card-01-alt", set: "ltc" })), "foil", 2, "main", true);       // two printings: 3 copies
+    addToColl(slim(by["Land 03"]), "nonfoil", 2, "main", true); addToColl(slim(by["Land 07"]), "nonfoil", 1, "main", true); addToColl(slim(by["Land 26"]), "nonfoil", 1, "wish", true);      // two lands owned (one blue), one only wished for
     for (const n of ["Card 03", "Card 04", "Card 06", "Card 08", "Card 20", "Gob 02", "Combo 3"]) addToColl(slim(by[n]), "nonfoil", 1, "main", true);
     addToColl(slim(by["Card 05"]), "nonfoil", 4, "wish", true);                                // only on the wishlist
     addToColl(slim(by["Ezuri, Renegade Leader"]), "nonfoil", 1, "main", true);                 // a legendary creature you own
@@ -79,6 +85,7 @@ async function run(opts, label) {
   ok(/Missing/.test(await row("Card 05")) && !/Owned/.test(await row("Card 05")) && !(await p.$('#tRows .item[data-name="Card 05"] [data-tadd]')), `${label}: a card that is only on your wishlist is Missing, with no Add button`);
   ok(/Missing/.test(await row("Card 02")) && /Instant/.test(await row("Card 02")) && M.sf === 1, `${label}: missing cards get their details from one Scryfall lookup`);
   ok(await p.evaluate(b => JSON.stringify([S.coll, S.decks, S.binders, S.settings || null, S.meta.staples || null]) === b, before), `${label}: browsing changes nothing in the collection, decks, binders or settings`);
+  ok(/has no land category, so there are no lands to list/.test(await txt("#tNoLands")) && !(await p.$("#tLands")), `${label}: a page with no land category says there are no lands to list, and invents none`);
   // filters and sorting
   await p.click('#tShow [data-s="owned"]'); await p.waitForTimeout(100); ok((await names()).join("|") === "Card 01|Card 03|Card 04|Card 06|Card 08|Card 20", `${label}: Owned shows the 6 you own (${(await names()).join(", ")})`);
   await p.click('#tShow [data-s="missing"]'); await p.waitForTimeout(100); const miss = await names(); ok(miss.length === 44 && miss.includes("Card 05") && !miss.includes("Card 01") && /showing 44/.test(await txt("#tSum")), `${label}: Missing shows the other 44`);
@@ -110,6 +117,26 @@ async function run(opts, label) {
   ok(!a1.dis && !a6.dis && !/Outside/.test((await st("Card 04")).t), `${label}: another deck has its own rules: no color limit in a deck without a commander, and what is legal there can be added`);
   await p.selectOption("#tDeck", "e"); await p.waitForTimeout(150); ok((await st("Card 01")).dis && /Outside this deck's colors/.test((await st("Card 01")).t), `${label}: for a green Commander deck the red cards are flagged`);
 
+  // ---- lands: listed apart, ranked among lands
+  await p.click("#tChange"); await p.fill("#tQ", "squee"); await p.click("#tFind button"); await p.waitForSelector('#tFound [data-cmd="Squee, Goblin Nabob"]'); await p.click('#tFound [data-cmd="Squee, Goblin Nabob"]'); await p.waitForSelector("#tLands");
+  const lnames = () => p.$$eval("#tLands .item", a => a.map(x => x.dataset.name));
+  n = await names(); let ln = await lnames();
+  ok(n.length === 50 && n.every(x => /^Sq /.test(x)) && /^Top 50 of 82 cards for Squee, Goblin Nabob/.test(await txt("#tSum")), `${label}: lands' synergy is too low for the 50: the Top 50 holds none of them (the page has 82 cards)`);
+  ok(ln.length === 20 && ln.slice(0, 4).join("|") === "Land 26|Land 03|Land 01|Land 02" && !ln.includes("Land 27") && !ln.includes("Land 25"), `${label}: the Lands section lists the 20 most-played lands, by decks, from both of EDHREC's land categories (${ln.slice(0, 4).join(", ")}…)`);
+  ok(/^Top 20 of 27 lands for Squee, Goblin Nabob, by how many decks play them: 2 owned · 18 missing$/.test(await txt("#tLandSum")) && /Lands are listed apart/.test(await txt("#tLandWhy")), `${label}: with its own count of owned and missing, and why lands are apart (${await txt("#tLandSum")})`);
+  const lrow = name => p.$eval(`#tLands .item[data-name="${name}"]`, e => e.textContent.replace(/\s+/g, " ").trim());
+  ok(/^2\. Land 03 .*Land.*Owned ×2.*in 99% of decks · 8,900 decks/.test(await lrow("Land 03")) && /Missing/.test(await lrow("Land 26")) && !(await p.$('#tLands .item[data-name="Land 26"] [data-tadd]')), `${label}: a land row shows its place among lands, ownership and figures; a wishlist-only land is Missing (${(await lrow("Land 03")).slice(0, 80)})`);
+  await p.click('#tShow [data-s="owned"]'); await p.waitForTimeout(100); ok((await lnames()).join("|") === "Land 03|Land 07" && /showing 2/.test(await txt("#tLandSum")), `${label}: Owned filters the lands too`);
+  await p.click('#tShow [data-s="all"]'); await p.waitForTimeout(100);
+  await p.selectOption("#tSort", "syn"); await p.waitForTimeout(100); const ls = await lnames();
+  ok(ls.length === 20 && ls.slice().sort().join() === ln.slice().sort().join() && ls[ls.length - 1] === "Land 26", `${label}: sorting reorders the same 20 lands (lowest synergy last)`);
+  await p.selectOption("#tSort", "best"); await p.waitForTimeout(100);
+  await p.selectOption("#tDeck", "k"); await p.waitForTimeout(150);
+  ok(await p.$eval('#tLands .item[data-name="Land 07"]', e => e.querySelector("[data-tadd]").disabled && /Outside this deck's colors/.test(e.textContent)), `${label}: an off-color land is flagged and can't be added`);
+  await p.click('#tLands .item[data-name="Land 03"] [data-tadd]'); await p.waitForTimeout(250);
+  ok(await p.evaluate(() => Object.values(S.decks.k.cards).some(c => c.name === "Land 03" && c.qty === 1 && !c.side) && Object.values(S.coll).find(e => e.name === "Land 03").qty === 2) && /in deck ×1/.test(await lrow("Land 03")), `${label}: an owned land is added to the chosen deck with ＋, and the row shows it; the collection is unchanged`);
+  await p.selectOption("#tDeck", "e"); await p.waitForTimeout(100);
+  await p.click("#tChange"); await p.click('#tMine [data-cmd="Krenko, Mob Boss"]'); await p.waitForSelector("#tRows");
   // themes: the commander's own themes are offered, with the page's address for them
   const topts = await p.$$eval("#tTheme option", a => a.map(x => x.textContent));
   ok(topts[1] === "Goblins (4,118 decks)" && topts.includes("Typal Madness (7 decks)") && topts.includes("Voltron"), `${label}: the theme list has this commander's EDHREC themes and the app's own themes (${topts.slice(0, 5).join(" | ")})`);

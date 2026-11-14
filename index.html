@@ -4062,7 +4062,7 @@ const t50Slug = t => themeSlugOf({ themeSlugs: t50.slugs }, t);
 // the first copy of a card you own (not on a wishlist): its details are used, and it is the printing that gets added
 const t50Owned = name => { for (const k in S.coll) { const e = S.coll[k]; if (e.name === name && e.qty > 0 && !isWish(e.binder)) return e; } return null; };
 async function loadTop50(sel) {
-  const res = { rows: [], total: 0, at: null, decks: null, note: "", err: null, label: "", lookupFailed: false };
+  const res = { rows: [], lands: [], landTotal: 0, landsInTop: 0, total: 0, at: null, decks: null, note: "", err: null, label: "", lookupFailed: false };
   const cmdPath = sel.cmd ? "commanders/" + edhSlug(sel.cmd) : "", themed = sel.theme ? t50Slug(sel.theme) : "";
   let edh = null;
   try {
@@ -4077,10 +4077,19 @@ async function loadTop50(sel) {
   // Deckhand's order of EDHREC's cards: synergy (highest first; a card without one after those with one), then decks, then name
   const list = edh.data.cards.slice().sort((a, b) => (b.syn ?? -2) - (a.syn ?? -2) || (b.num || 0) - (a.num || 0) || a.name.localeCompare(b.name));
   res.total = list.length;
-  const top = list.slice(0, 50), need = top.filter(c => !t50Owned(c.name)).map(c => ({ name: c.name }));
+  const top = list.slice(0, 50);
+  // Lands, apart: the same lands are played with nearly every commander, so their synergy is low and they almost never
+  // reach the 50. The cards in EDHREC's own land categories ("Lands", "Utility Lands") that aren't in the 50 are ranked
+  // among themselves by how many decks play them (then synergy, then name); the first 20.
+  const isLand = c => /\blands?\b/i.test(c.list || ""), inTop = new Set(top.map(c => c.name));
+  const landList = edh.data.cards.filter(c => isLand(c) && !inTop.has(c.name)).sort((a, b) => (b.num || 0) - (a.num || 0) || (b.syn ?? -2) - (a.syn ?? -2) || a.name.localeCompare(b.name));
+  res.landTotal = landList.length; res.landsInTop = top.filter(isLand).length;
+  const lands = landList.slice(0, 20), need = [...top, ...lands].filter(c => !t50Owned(c.name)).map(c => ({ name: c.name }));
   let got = {};
   if (need.length) { try { got = await lookupCards(need); } catch (e) { res.lookupFailed = true; } }
-  top.forEach((c, i) => res.rows.push({ name: c.name, rank: i, num: c.num ?? null, pot: c.pot ?? null, incl: c.num != null && c.pot ? c.num / c.pot : null, syn: c.syn ?? null, list: c.list || "", looked: got[identKey({ name: c.name })] || null }));
+  const row = (c, i) => ({ name: c.name, rank: i, num: c.num ?? null, pot: c.pot ?? null, incl: c.num != null && c.pot ? c.num / c.pot : null, syn: c.syn ?? null, list: c.list || "", looked: got[identKey({ name: c.name })] || null });
+  top.forEach((c, i) => res.rows.push(row(c, i)));
+  lands.forEach((c, i) => res.lands.push(Object.assign(row(c, i), { land: true })));
   return res;
 }
 // may this card go into that deck? (its commander's colors, its format's legality, and one copy of a card in Commander)
@@ -4104,10 +4113,21 @@ function drawTop50() {
   }
   const rows = R.rows.map(r => { const e = t50Owned(r.name); return Object.assign({}, r, { own: ownedByName(r.name), card: e || r.looked, entry: e }); });
   const ownN = rows.filter(r => r.own > 0).length, dest = S.decks[t50.deck] || null;
-  let shown = t50.show === "owned" ? rows.filter(r => r.own > 0) : t50.show === "missing" ? rows.filter(r => !r.own) : rows.slice();
-  // the display sort only reorders the 50; which cards they are was settled above
+  const lrows = (R.lands || []).map(r => { const e = t50Owned(r.name); return Object.assign({}, r, { own: ownedByName(r.name), card: e || r.looked, entry: e }); }), lOwn = lrows.filter(r => r.own > 0).length;
+  const pickShown = a => t50.show === "owned" ? a.filter(r => r.own > 0) : t50.show === "missing" ? a.filter(r => !r.own) : a.slice();
+  let shown = pickShown(rows); const lshown = pickShown(lrows);
+  // the display sort only reorders the 50 (and the lands); which cards they are was settled above
   const by = { syn: r => -(r.syn ?? -2), incl: r => -(r.incl ?? -1), pop: r => -(r.num ?? -1) }[t50.sort];
-  if (by) shown.sort((a, b) => by(a) - by(b) || a.rank - b.rank);
+  if (by) { shown.sort((a, b) => by(a) - by(b) || a.rank - b.rank); lshown.sort((a, b) => by(a) - by(b) || a.rank - b.rank); }
+  const nTop = shown.length; shown = shown.concat(lshown);                 // one run of rows, so a tap or ＋ finds its card: the 50 first, then the lands
+  const tRow = (r, i) => { const c = r.card, why = r.own && dest && c ? t50Blocked(c, dest) : "", inDeck = dest ? Object.values(dest.cards).reduce((a, x) => a + (x.name === r.name ? x.qty : 0), 0) : 0;
+      const stats = [r.syn != null ? `Synergy ${r.syn >= 0 ? "+" : ""}${Math.round(r.syn * 100)}%` : "", r.incl != null ? `in ${pct(r.incl)} of decks` : "", r.num != null ? `${r.num.toLocaleString()} deck${r.num === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
+      return `<div class="item" data-name="${esc(r.name)}">${c && c.img ? `<img loading="lazy" src="${esc(c.img)}" alt="">` : `<span class="t50-noimg" aria-hidden="true"></span>`}
+      <button class="tap" data-tinfo="${i}" ${c ? "" : "disabled"}><div class="name"><span class="num muted">${r.rank + 1}.</span> ${esc(r.name)}</div>
+        <div class="meta">${c ? `<span>${pips(c.mana)}</span><span class="small muted">${esc(typeOf(c.type))}</span>` : `<span class="small muted">Details not loaded</span>`}${r.list ? `<span class="small muted">${esc(r.list)}</span>` : ""}
+          ${r.own ? `<span class="chip ok">Owned ×${r.own}</span>` : `<span class="chip warn">Missing</span>`}${inDeck ? `<span class="chip">in deck ×${inDeck}</span>` : ""}${why && why !== "Already in this deck" && why !== "Choose a deck" ? `<span class="chip warn t50-flag">${esc(why)}</span>` : ""}</div>
+        ${stats ? `<div class="small muted num">${stats}</div>` : `<div class="small muted">No statistics given for this card</div>`}</button>
+      <div class="right">${r.own ? `<button class="btn sm primary" data-tadd="${i}" ${!dest || why ? "disabled" : ""} title="${esc(!dest ? "Choose a deck above first" : why || "Add one copy to " + dest.name)}" aria-label="Add ${esc(r.name)} to ${esc(dest ? dest.name : "a deck")}">＋</button>` : ""}</div></div>`; };
   const decks = Object.values(S.decks).sort((a, b) => (b.updated || 0) - (a.updated || 0));
   el.innerHTML = `${R.note ? `<p class="small gold" id="tNote">${esc(R.note)}</p>` : ""}
     <p class="small muted" id="tSource">Deckhand's ranking of EDHREC's statistics${R.decks ? ` from ${R.decks.toLocaleString()} decks` : ""}: highest synergy first, then most decks. It is not an official EDHREC Top 50. Saved ${esc(dayLabel(R.at))}. <button class="linkbtn" id="tRefresh">Refresh</button></p>
@@ -4119,15 +4139,13 @@ function drawTop50() {
       <label class="small row" style="gap:6px">Sort <select id="tSort">${[["best", "Best match"], ["syn", "Highest synergy"], ["incl", "Highest inclusion"], ["pop", "Most decks"]].map(([k, l]) => `<option value="${k}" ${t50.sort === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
       ${decks.length ? `<label class="small row" style="gap:6px">Add owned cards to <select id="tDeck"><option value="">Choose a deck…</option>${decks.map(d => `<option value="${esc(d.id)}" ${d.id === t50.deck ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select></label>` : `<span class="small muted" id="tNoDecks">Make a deck in the Decks tab to add cards from here.</span>`}
     </div>
-    ${shown.length ? `<div class="list" id="tRows">${shown.map((r, i) => { const c = r.card, why = r.own && dest && c ? t50Blocked(c, dest) : "", inDeck = dest ? Object.values(dest.cards).reduce((a, x) => a + (x.name === r.name ? x.qty : 0), 0) : 0;
-      const stats = [r.syn != null ? `Synergy ${r.syn >= 0 ? "+" : ""}${Math.round(r.syn * 100)}%` : "", r.incl != null ? `in ${pct(r.incl)} of decks` : "", r.num != null ? `${r.num.toLocaleString()} deck${r.num === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
-      return `<div class="item" data-name="${esc(r.name)}">${c && c.img ? `<img loading="lazy" src="${esc(c.img)}" alt="">` : `<span class="t50-noimg" aria-hidden="true"></span>`}
-      <button class="tap" data-tinfo="${i}" ${c ? "" : "disabled"}><div class="name"><span class="num muted">${r.rank + 1}.</span> ${esc(r.name)}</div>
-        <div class="meta">${c ? `<span>${pips(c.mana)}</span><span class="small muted">${esc(typeOf(c.type))}</span>` : `<span class="small muted">Details not loaded</span>`}${r.list ? `<span class="small muted">${esc(r.list)}</span>` : ""}
-          ${r.own ? `<span class="chip ok">Owned ×${r.own}</span>` : `<span class="chip warn">Missing</span>`}${inDeck ? `<span class="chip">in deck ×${inDeck}</span>` : ""}${why && why !== "Already in this deck" && why !== "Choose a deck" ? `<span class="chip warn t50-flag">${esc(why)}</span>` : ""}</div>
-        ${stats ? `<div class="small muted num">${stats}</div>` : `<div class="small muted">No statistics given for this card</div>`}</button>
-      <div class="right">${r.own ? `<button class="btn sm primary" data-tadd="${i}" ${!dest || why ? "disabled" : ""} title="${esc(!dest ? "Choose a deck above first" : why || "Add one copy to " + dest.name)}" aria-label="Add ${esc(r.name)} to ${esc(dest ? dest.name : "a deck")}">＋</button>` : ""}</div></div>`; }).join("")}</div>`
-      : `<p class="small muted" id="tNone">${t50.show === "owned" ? "You don't own any of these cards." : "You own every one of these cards."}</p>`}`}`;
+    ${nTop ? `<div class="list" id="tRows">${shown.slice(0, nTop).map((r, i) => tRow(r, i)).join("")}</div>`
+      : `<p class="small muted" id="tNone">${t50.show === "owned" ? "You don't own any of these cards." : "You own every one of these cards."}</p>`}
+    <h2 class="sec" id="tLandsHead">Lands</h2>
+    ${lrows.length ? `<p class="small" id="tLandSum"><b>${lrows.length < 20 || R.landTotal === lrows.length ? `All ${lrows.length}` : `Top ${lrows.length} of ${R.landTotal.toLocaleString()}`}</b> land${lrows.length === 1 ? "" : "s"} for ${esc(R.label)}, by how many decks play them: <b class="up">${lOwn} owned</b> · <b class="${lrows.length - lOwn ? "down" : "muted"}">${lrows.length - lOwn} missing</b>${lshown.length !== lrows.length ? ` · showing ${lshown.length}` : ""}</p>
+      <p class="small muted" id="tLandWhy">Lands are listed apart because the same ones are played with nearly every commander: their synergy is low, so they rarely reach the 50 above${R.landsInTop ? ` (${R.landsInTop} did, and ${R.landsInTop === 1 ? "is" : "are"} listed there)` : ""}. These are the cards in EDHREC's land categories, ranked among themselves.</p>
+      ${lshown.length ? `<div class="list" id="tLands">${lshown.map((r, i) => tRow(r, nTop + i)).join("")}</div>` : `<p class="small muted" id="tLandNone">${t50.show === "owned" ? "You don't own any of these lands." : "You own every one of these lands."}</p>`}`
+      : `<p class="small muted" id="tNoLands">${R.landsInTop ? `EDHREC lists no lands for ${esc(R.label)} beyond the ${R.landsInTop} already in the list above.` : `EDHREC's page for ${esc(R.label)} has no land category, so there are no lands to list.`}</p>`}`}`;
   const rf = $("#tRefresh"); if (rf) rf.onclick = async () => { const sel = { kind: t50.kind, cmd: t50.cmd, theme: t50.theme }, cp = sel.cmd ? "commanders/" + edhSlug(sel.cmd) : "", ts = sel.theme ? t50Slug(sel.theme) : "";
     for (const p of [cp, ts && "tags/" + ts, cp && ts && `${cp}/${ts}`]) if (p) { EDH.mem.delete("edh:" + p); if (idb.ok) await idbSet("edh:" + p, null).catch(() => {}); }
     t50.key = ""; renderTop50(); };
@@ -6519,19 +6537,23 @@ function analyzeTop50(d, R) {
   for (const [k, c] of Object.entries(d.cards)) { const m = inDeck.get(c.name) || { main: 0, side: 0, card: c, cmdr: false }; if (c.side) m.side += c.qty; else m.main += c.qty; if (d.cmdr.includes(k)) m.cmdr = true; inDeck.set(c.name, m); }
   // every card of the list lands in exactly one of four places: in the deck, owned and addable, not owned, or unable to go
   // in this deck at all (colors / legality), so the four counts always add up to the list
-  const top = new Set(R.rows.map(r => r.name)), have = [], owned = [], missing = [], blocked = [];
-  for (const r of R.rows) {
+  const landRows = R.lands || [], top = new Set([...R.rows, ...landRows].map(r => r.name)), have = [], owned = [], missing = [], blocked = [], lands = [];
+  // where a card of the list stands for this deck: in it, owned and addable, not owned, or unable to go in it
+  const place = r => {
     const dk = inDeck.get(r.name), al = allocFor(r.name, d.id), entry = t50Owned(r.name), card = (dk && dk.card) || entry || r.looked;
-    const row = Object.assign({}, r, { card, entry, own: al.own, other: al.other, free: al.free, main: dk ? dk.main : 0, side: dk ? dk.side : 0, why: "", legUnknown: false });
-    if (dk) { have.push(row); continue; }
+    const row = Object.assign({}, r, { card, entry, own: al.own, other: al.other, free: al.free, main: dk ? dk.main : 0, side: dk ? dk.side : 0, why: "", legUnknown: false, at: "have" });
+    if (dk) return row;
     row.why = card ? t50Blocked(card, d) : "";                                                   // outside the commander's colors / not legal in the format
     row.legUnknown = !row.why && d.format !== "casual" && !(card && card.leg && card.leg[d.format]);      // no legality on record: allowed, as elsewhere, but said
-    (row.why ? blocked : al.own > 0 ? owned : missing).push(row);
-  }
+    row.at = row.why ? "blocked" : al.own > 0 ? "owned" : "missing";
+    return row;
+  };
+  for (const r of R.rows) { const row = place(r); ({ have, owned, missing, blocked })[row.at].push(row); }
+  for (const r of landRows) lands.push(place(r));                                                 // the most-played lands, kept apart from the 50
   // deck cards that aren't in the list; basic lands are counted apart so they don't crowd it
   const isBasic = c => !!(c.basic || /^Basic /.test(c.type || ""));
   const rest = [...inDeck].filter(([n, m]) => !top.has(n) && !m.cmdr).map(([name, m]) => ({ name, main: m.main, side: m.side, card: m.card })).sort((a, b) => a.name.localeCompare(b.name));
-  return { have, owned, missing, blocked, outside: rest.filter(r => !isBasic(r.card)), basics: rest.filter(r => isBasic(r.card)) };
+  return { have, owned, missing, blocked, lands, outside: rest.filter(r => !isBasic(r.card)), basics: rest.filter(r => isBasic(r.card)) };
 }
 async function drawAnalyzer(d) {
   const el = $("#dPane"); if (!el) return;
@@ -6566,12 +6588,12 @@ async function drawAnalyzer(d) {
       : (r.own ? `<span class="chip ok">Owned ×${r.own}</span>${r.other ? `<span class="chip">${r.other} in other decks</span>` : ""}${!shareCopies() ? `<span class="chip ${r.free ? "" : "warn"}">${r.free} free</span>` : ""}` : `<span class="chip warn">Not owned</span>`)
         + (r.why ? `<span class="chip warn an-flag">${esc(r.why)}</span>` : r.legUnknown ? `<span class="chip">Legality not known</span>` : "");
     return `<div class="item" data-name="${esc(r.name)}">${c && c.img ? `<img loading="lazy" src="${esc(c.img)}" alt="">` : `<span class="t50-noimg" aria-hidden="true"></span>`}
-      <button class="tap" data-aninfo="${i}" ${c ? "" : "disabled"}><div class="name">${r.rank != null ? `<span class="num muted">#${r.rank + 1}</span> ` : ""}${esc(r.name)}</div>
+      <button class="tap" data-aninfo="${i}" ${c ? "" : "disabled"}><div class="name">${r.rank != null ? `<span class="num muted">${r.land ? "Land " : ""}#${r.rank + 1}</span> ` : ""}${esc(r.name)}</div>
         <div class="meta">${c ? `<span>${pips(c.mana)}</span><span class="small muted">${esc(typeOf(c.type))}</span>` : `<span class="small muted">Details not loaded</span>`}${chips}</div>
         ${kind === "outside" ? "" : `<div class="small muted num">${stats(r)}</div>`}</button>
       <div class="right">${(kind === "owned" || kind === "cand") && r.own ? `<button class="btn sm primary" data-anadd="${i}" title="Add one copy to this deck's main deck" aria-label="Add ${esc(r.name)} to this deck">＋</button>` : ""}</div></div>`; };
   const group = (id, title, list, kind, blurb, none) => `<details class="box an-group" id="an-${id}" data-g="${id}" ${st.open.has(id) ? "open" : ""}><summary><span class="label">${title}</span> <b class="num">${list.length}</b></summary>
-      ${blurb ? `<p class="small muted" style="margin:6px 0">${blurb}</p>` : ""}${list.length ? `<div class="list">${list.map(r => rowHTML(r, kind)).join("")}</div>` : `<p class="small muted" style="margin:6px 0 0">${none}</p>`}</details>`;
+      ${blurb ? `<p class="small muted" style="margin:6px 0">${blurb}</p>` : ""}${list.length ? `<div class="list">${list.map(r => rowHTML(r, kind || r.at)).join("")}</div>` : `<p class="small muted" style="margin:6px 0 0">${none}</p>`}</details>`;
   el.innerHTML = `<div class="stack" id="an">
     <div class="row" style="justify-content:space-between;gap:8px;align-items:flex-start"><div style="min-width:0"><span class="label">Compared with</span><div id="anCmd"><b>${esc(cmd)}</b></div></div><button class="btn sm" id="anRefresh">Refresh</button></div>
     ${d.cmdr.length > 1 ? `<p class="small gold" id="anPartner">This deck has two commanders. The comparison uses ${esc(cmd)}'s list only.</p>` : ""}
@@ -6586,8 +6608,10 @@ async function drawAnalyzer(d) {
     ${group("have", `Already in your deck`, A.have, "have", "", `None of ${listName} are in this deck yet.`)}
     ${group("owned", `Owned upgrades`, A.owned, "owned", `Cards from ${listName} that you own and haven't put in this deck. ＋ adds one copy to the main deck; your collection isn't changed.${shareCopies() ? "" : " Sharing copies between decks is off, so “free” is what your other decks leave over."}`, A.have.length === n ? "Nothing to add: they are all in the deck." : `You don't own any of the cards from ${listName} that aren't in this deck.`)}
     ${group("missing", `Missing upgrades`, A.missing, "missing", `Cards from ${listName} that you don't own. Nothing is added to a wishlist or a deck from here.`, `You own every card in ${listName}.`)}
+    ${(() => { const L = A.lands; if (!L.length) return ""; const c = k => L.filter(r => r.at === k).length;
+      return group("lands", "Most-played lands", L, null, `The ${L.length} lands most played with ${esc(cmd)} that aren't in ${listName}, ranked among lands by how many decks play them. Lands are kept apart because the same ones are played with nearly every commander, so their synergy is too low to reach the list. <span class="num" id="anLandAdds">${c("have")} in the deck + ${c("owned")} owned + ${c("missing")} not owned${c("blocked") ? ` + ${c("blocked")} that can't go in this deck` : ""} = ${L.length} land${L.length === 1 ? "" : "s"}.</span>`, ""); })()}
     ${blocked ? group("blocked", `Can't go in this deck`, A.blocked, "blocked", `Cards from ${listName} that are outside this deck's colors or not legal in its format. They aren't counted as upgrades.`, "") : ""}
-    ${group("outside", `Outside ${n < 50 ? "the list" : "the Top 50"}`, A.outside, "outside", `Cards in this deck that aren't among ${listName}. That is all this means: the list counts how often cards are played with ${esc(cmd)}, not how good they are, and it is not a list of cards to take out.${basicN ? ` The deck's ${basicN} basic land${basicN === 1 ? "" : "s"} (${A.basics.map(r => `${esc(r.name)} ×${r.main + r.side}`).join(", ")}) ${basicN === 1 ? "is" : "are"} not listed here.` : ""}`, `Every ${basicN ? "non-basic " : ""}card in this deck is in ${listName}.`)}
+    ${group("outside", `Outside ${n < 50 ? "the list" : "the Top 50"}`, A.outside, "outside", `Cards in this deck that aren't among ${listName}${A.lands.length ? " or the most-played lands above" : ""}. That is all this means: the list counts how often cards are played with ${esc(cmd)}, not how good they are, and it is not a list of cards to take out.${basicN ? ` The deck's ${basicN} basic land${basicN === 1 ? "" : "s"} (${A.basics.map(r => `${esc(r.name)} ×${r.main + r.side}`).join(", ")}) ${basicN === 1 ? "is" : "are"} not listed here.` : ""}`, `Every ${basicN ? "non-basic " : ""}card in this deck is in ${listName}${A.lands.length ? " or among the most-played lands" : ""}.`)}
   </div>`;
   $("#anRefresh").onclick = again;
   $("#anSort").onchange = e => { st.sort = e.target.value; drawAnalyzer(d); };

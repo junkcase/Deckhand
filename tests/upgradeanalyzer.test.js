@@ -9,6 +9,8 @@ const nn = i => "Card " + String(i).padStart(2, "0");
 const SPECIAL = { [nn(4)]: { colors: ["U"], color_identity: ["U"], mana_cost: "{U}" }, [nn(6)]: { legalities: { commander: "banned", modern: "legal" } } };
 const CARDS = [C("Krenko, Mob Boss", { type_line: "Legendary Creature — Goblin Warrior", cmc: 4 }), C("Krenko, Tin Street Kingpin", { type_line: "Legendary Creature — Goblin", cmc: 3 }), C("Ezuri, Renegade Leader", { type_line: "Legendary Creature — Elf Druid", colors: ["G"], color_identity: ["G"], mana_cost: "{1}{G}{G}", cmc: 3 }),
   C("Neheb, the Eternal", { type_line: "Legendary Creature — Zombie Minotaur", cmc: 5 }), C("Purphoros, God of the Forge", { type_line: "Legendary Enchantment Creature — God", cmc: 4 }), C("Zada, Hedron Grinder", { type_line: "Legendary Creature — Goblin Ally", cmc: 4 }), C("Squee, Goblin Nabob", { type_line: "Legendary Creature — Goblin", cmc: 3 }),
+  ...Array.from({ length: 24 }, (_, i) => C("Land " + String(i + 1).padStart(2, "0"), { type_line: "Land", colors: [], color_identity: i === 6 ? ["U"] : [], mana_cost: "", cmc: 0 })), C("Stray Land", { type_line: "Land", colors: [], color_identity: [], mana_cost: "", cmc: 0 }),
+  ...Array.from({ length: 55 }, (_, i) => C("Sq " + String(i + 1).padStart(2, "0"))),
   C("Stray A"), C("Stray B"), C("Mountain", { type_line: "Basic Land — Mountain", colors: [], mana_cost: "", cmc: 0 }), C("Elf Thing", { colors: ["G"], color_identity: ["G"], mana_cost: "{G}" }),
   ...Array.from({ length: 60 }, (_, i) => C(nn(i + 1), SPECIAL[nn(i + 1)] || {}))];
 const view = (n, num, pot, syn) => Object.assign({ name: n, sanitized: n.toLowerCase(), num_decks: num, potential_decks: pot }, syn === null ? {} : { synergy: syn });
@@ -19,6 +21,9 @@ const EDH = {
   "commanders/krenko-mob-boss": page([{ header: "High Synergy Cards", tag: "highsynergycards", cardviews: KRENKO }]),
   "commanders/krenko-tin-street-kingpin": page([{ header: "Top Cards", tag: "topcards", cardviews: [view("Card 01", 10, 20, 0.3), view("Card 03", 8, 20, 0.2)] }]),      // fewer than 50; this deck holds both
   "commanders/ezuri-renegade-leader": page([{ header: "Top Cards", tag: "topcards", cardviews: [view("Elf Thing", 9, 10, 0.5), view("Card 30", 5, 10, 0.1)] }]),          // none owned
+  // Squee's page: 55 spells and 24 lands (low synergy; Land 03 in the most decks)
+  "commanders/squee-goblin-nabob": page([{ header: "Instants", tag: "instants", cardviews: Array.from({ length: 55 }, (_, i) => view("Sq " + String(i + 1).padStart(2, "0"), 3000 - i * 10, 9000, 0.8 - i * 0.01)) },
+    { header: "Lands", tag: "lands", cardviews: Array.from({ length: 24 }, (_, i) => view("Land " + String(i + 1).padStart(2, "0"), i === 2 ? 8900 : 8000 - i * 100, 9000, 0.02)) }]),
   "commanders/neheb-the-eternal": page([]),                                                                                                                       // a page with no cards
   "commanders/purphoros-god-of-the-forge": { something: "else entirely" },                                                                                       // not the shape expected
   "commanders/zada-hedron-grinder": "<<<not json>>>",                                                                                                             // not JSON at all
@@ -49,6 +54,8 @@ async function run(opts, label) {
     addToDeck(k, by["Card 55"], 1, false, true);                                           // on EDHREC's page, but not in its Top 50
     addToDeck(k, by["Stray A"], 1, false, true); addToDeck(k, by["Stray B"], 1, true, true); addToDeck(k, by["Mountain"], 20, false, true);
     const o = deck("o", "Other deck", "commander", "Squee, Goblin Nabob", 8); addToDeck(o, by["Card 02"], 1, false, true);      // uses your only Card 02
+    addToDeck(o, by["Land 04"], 1, false, true); addToDeck(o, by["Stray Land"], 1, false, true); addToDeck(o, by["Mountain"], 30, false, true); addToDeck(o, by["Sq 02"], 1, false, true);
+    addToColl(slim(by["Land 05"]), "nonfoil", 2, "main", true); addToColl(slim(by["Land 07"]), "nonfoil", 1, "main", true); addToColl(slim(by["Sq 01"]), "nonfoil", 1, "main", true);
     const t = deck("t", "Tin Street", "commander", "Krenko, Tin Street Kingpin", 7); addToDeck(t, by["Card 01"], 1, false, true); addToDeck(t, by["Card 03"], 1, false, true);
     deck("e", "Elves", "commander", "Ezuri, Renegade Leader", 6); deck("n", "Neheb", "commander", "Neheb, the Eternal", 5); deck("pu", "Purphoros", "commander", "Purphoros, God of the Forge", 4); deck("z", "Zada", "commander", "Zada, Hedron Grinder", 3);
     deck("x", "No commander yet", "commander", null, 2); const m = deck("m", "Modern pile", "modern", null, 1); addToDeck(m, by["Card 20"], 2, false, true);
@@ -141,6 +148,22 @@ async function run(opts, label) {
   const n0 = M.edh.filter(x => x === "commanders/krenko-mob-boss").length; await p.click("#anRefresh"); await p.waitForTimeout(700); await p.waitForSelector("#anSum");
   ok(M.edh.filter(x => x === "commanders/krenko-mob-boss").length === n0 + 1 && /^In your deck 5\/50/.test(await sum()), `${label}: Refresh fetches EDHREC's page again and reruns the comparison`);
 
+  // ---- lands: a group of their own, each land in exactly one place
+  await openAn("o"); await p.waitForSelector("#anSum"); await openAll();
+  ok(/^In your deck 1\/50 \| Owned, not in it 1 \| Not owned 48 \| Deck cards outside it 2$/.test(await sum()) && await txt("#anAdds") === "1 in the deck + 1 owned + 48 not owned = 50 cards in the list.", `${label}: a commander whose lands all fall outside the 50: the Top 50 counts hold no lands (${await sum()})`);
+  const lg = await grp("lands");
+  ok(lg.length === 20 && lg.slice(0, 3).join("|") === "Land 03|Land 01|Land 02" && !lg.includes("Land 24"), `${label}: "Most-played lands" lists the 20 lands in the most decks (${lg.slice(0, 3).join(", ")}…)`);
+  ok(await txt("#anLandAdds") === "1 in the deck + 1 owned + 17 not owned + 1 that can't go in this deck = 20 lands.", `${label}: the lands add up on their own line (${await txt("#anLandAdds")})`);
+  ok(/^Land #4 Land 04 .*1 in the main deck/.test(await rowT("lands", "Land 04")) && /^Land #5 Land 05 .*Owned ×2/.test(await rowT("lands", "Land 05")) && /Not owned/.test(await rowT("lands", "Land 01")) && /Owned ×1.*Outside this deck's colors/.test(await rowT("lands", "Land 07")), `${label}: each land shows where it stands: in the deck, owned, not owned, or unable to go in (${(await rowT("lands", "Land 04")).slice(0, 60)})`);
+  ok(await p.$$eval("#an-lands [data-anadd]", a => a.length) === 1 && !!(await p.$('#an-lands .item[data-name="Land 05"] [data-anadd]')), `${label}: only the owned land that fits has an Add button`);
+  const landRc = await p.evaluate(() => { const A = analyzeTop50(S.decks.o, anState.o.data), names = A.lands.map(r => r.name), top = [...A.have, ...A.owned, ...A.missing, ...A.blocked].map(r => r.name);
+    return { once: new Set(names).size === names.length, apart: !names.some(n => top.includes(n)), outside: !A.outside.concat(A.basics).some(r => names.includes(r.name) || top.includes(r.name)), places: A.lands.every(r => ["have", "owned", "missing", "blocked"].includes(r.at)) }; });
+  ok(landRc.once && landRc.apart && landRc.outside && landRc.places, `${label}: no land is counted twice, none is also in the Top 50 groups, and none is also listed as "outside"`);
+  ok((await grp("outside")).join("|") === "Card 02|Stray Land" && /or the most-played lands above/.test(await txt("#an-outside")) && /The deck's 30 basic lands \(Mountain ×30\) are not listed here\./.test(await txt("#an-outside")), `${label}: a land in the deck that isn't among the most-played lands is "outside"; one that is isn't; basics are one line (${(await grp("outside")).join(", ")})`);
+  await p.click('#an-lands .item[data-name="Land 05"] [data-anadd]'); await p.waitForTimeout(350); await openAll();
+  ok(await txt("#anLandAdds") === "2 in the deck + 0 owned + 17 not owned + 1 that can't go in this deck = 20 lands." && /1 in the main deck/.test(await rowT("lands", "Land 05")) && await p.evaluate(() => Object.values(S.coll).find(e => e.name === "Land 05").qty === 2), `${label}: adding an owned land moves it to "in the deck" and leaves the collection alone (${await txt("#anLandAdds")})`);
+  await openAn("k"); await p.waitForSelector("#anSum");
+  ok(!(await p.$("#an-lands")), `${label}: a commander page with no land category gets no lands group`);
   // ---- decks it can't analyze, and short or empty lists
   await openAn("x"); await p.waitForSelector("#anNeed");
   ok(/This needs a commander\./.test(await txt("#anNeed")) && /Choose this deck's commander/.test(await txt("#anNeed")) && !M.edh.some(x => /undefined|null/.test(x)), `${label}: a Commander deck with no commander: it says one is needed and loads nothing`);
