@@ -243,7 +243,7 @@ details>summary{cursor:pointer}.seg.wide button{flex:1 1 auto;min-width:0;white-
 .op-bar{background:var(--accent);border-radius:3px 3px 0 0;position:relative;min-height:2px}.op-bar span{position:absolute;top:-17px;left:0;right:0;text-align:center;font-size:12px;color:var(--ink)}.op-list{display:flex;flex-direction:column}
 .op-card{display:flex;flex-wrap:wrap;gap:2px 10px;align-items:center;width:100%;text-align:left;padding:7px 2px;border:0;border-top:1px solid var(--line);background:none;font:inherit;color:inherit;cursor:pointer}
 .op-card .name{font-weight:600;min-width:0;overflow-wrap:anywhere}.op-card .meta{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;margin-left:auto;justify-content:flex-end}
-.op-note{border-top:1px solid var(--line);padding-top:6px}.op-weak{border-top:1px solid var(--line);padding-top:4px}.op-sec>summary,.op-weak>summary,.op-strat>summary{min-height:36px}.op-strat>summary{flex-wrap:wrap}.op-strat{border-top:1px solid var(--line);padding-top:4px}.op-syw{flex-basis:100%;text-align:right}.op-weak>summary{flex-wrap:wrap}.op-why{margin-top:2px}.op-sec .kv,.op-weak .kv{gap:10px}
+.op-note{border-top:1px solid var(--line);padding-top:6px}.op-weak{border-top:1px solid var(--line);padding-top:4px}.op-sec>summary,.op-weak>summary,.op-strat>summary,.op-imb>summary{min-height:36px}.op-imb>summary{flex-wrap:wrap;gap:4px 8px}.op-imb{border-top:1px solid var(--line);padding-top:4px}.op-strat>summary{flex-wrap:wrap}.op-strat{border-top:1px solid var(--line);padding-top:4px}.op-syw{flex-basis:100%;text-align:right}.op-weak>summary{flex-wrap:wrap}.op-why{margin-top:2px}.op-sec .kv,.op-weak .kv{gap:10px}
 .t50-noimg{width:44px;aspect-ratio:5/7;border-radius:4px;background:var(--line);flex:none;display:block}
 #sMode{display:flex;max-width:100%;overflow-x:auto;scrollbar-width:none}#sMode::-webkit-scrollbar{display:none}#sMode button{flex:1 1 auto;padding:6px 8px;white-space:nowrap}@media(max-width:380px){#sMode button{padding:6px 5px;font-size:13px}}
 @media (max-width:520px){.seg.wide button{padding:6px 5px;font-size:13px}}
@@ -6801,9 +6801,11 @@ function optAnalyze(d, E, X) {
   const cats = new Map(), cat = k => cats.get(k) || cats.set(k, { key: k, label: k.startsWith("type:") ? "Creature type: " + k.slice(5) : SYN_CAT[k], on: [], inc: [], pot: [] }).get(k);
   for (const r of deck) for (const e of r.sy) { const g = cat(e.cat); (e.active ? g.on : e.potential && e.direct ? g.pot : g.inc).push({ r, e }); }
   for (const g of cats.values()) { const u = l => [...new Set(l.map(x => x.r))];
-    g.cards = u(g.on); g.copies = sum(g.cards); g.en = u(g.on.filter(x => x.e.side !== "payoff")); g.pay = u(g.on.filter(x => x.e.side === "payoff")); }
+    g.cards = u(g.on); g.copies = sum(g.cards); g.en = u(g.on.filter(x => x.e.side === "enabler")); g.pay = u(g.on.filter(x => x.e.side === "payoff"));
+    g.amp = u(g.on.filter(x => x.e.side === "amplifier")); g.fod = u(g.on.filter(x => x.e.side === "fodder")); }
   const strat = { cats: [...cats.values()].sort((a, b) => b.cards.length - a.cards.length || a.label.localeCompare(b.label)), blinkOn, types: new Set(synTypes), combos: X ? X.combos : undefined,
     cmd: cmdrs.flatMap(r => r.sy.filter(e => e.active).map(e => ({ r, e }))), multi: deck.filter(r => new Set(r.sy.filter(e => e.active).map(e => e.cat)).size > 1) };
+  strat.imb = optImbalance(d, deck, cmdrs);
   const cost = deck.filter(r => r.cost), cmdCost = cmdrs.filter(r => r.cost), costN = sum(cost);
   // possible weaknesses: the role table's own ranges, plus a few specific checks. Nothing is flagged for a deck that is far from finished.
   const ranges = g.ranges ? Object.fromEntries(g.ranges.map(([x, lo, hi]) => [x, [lo, hi]])) : null, full = d.format === "commander" ? 100 : 60, unfinished = total < full * 0.6;
@@ -6877,6 +6879,90 @@ function optWhy(x, w, E, A) {
     : r === "Land" ? "A land" : r;
   const also = roles.filter(y => y !== r && y !== "Creature" && y !== "Land"), s = E.stat.get(c.name), t = E.tstat.get(c.name), tribe = A.syn.tribes.find(y => new RegExp("\\b" + y + "\\b", "i").test(((c.type || "").split("//")[0].split("—")[1] || "")));
   return what + "." + (also.length ? ` Also: ${also.join(", ").toLowerCase()}.` : "") + (s && s.num && s.pot ? ` In ${Math.round(s.num / s.pot * 100)}% of ${E.cmd} decks on EDHREC.` : s ? ` On EDHREC's page for ${E.cmd}.` : t && t.syn != null && t.syn > 0 ? ` Played more in ${E.theme} decks than elsewhere (EDHREC synergy +${Math.round(t.syn * 100)}%).` : "") + (tribe ? ` A ${tribe}, which your deck is built around.` : "");
+}
+/* ---------- Strategies, step 2: enablers and payoffs out of balance ----------
+   Worked out from the classifier's findings (optSynergy) each time; nothing stored. Only for strategies where one side
+   needs the other: tokens, sacrifice, blink, instants and sorceries, artifacts, counters, landfall, lifegain.
+   The commander counts (it is always available) and is marked. Incidental findings never count; blink payoffs and
+   sacrifice fodder count as what they are ("potential", "fodder"). Every number is a count of this deck's cards.
+   There are no targets or ratios. An observation is made only in two cases, each a plain fact about the deck:
+     · one side has two or more different cards and the other side has none;
+     · one side has three or more different cards and all of them rest on a single card on the other side.
+   A strategy with one card on each side, or with cards on both sides, gets no observation. */
+function optImbalance(d, deck, cmdrs) {
+  const all = deck.concat(cmdrs), take = (f, lab) => { const l = []; for (const r of all) { const es = r.sy.filter(e => f(e, r)); if (es.length) l.push({ r, es, lab }); } return l; };
+  const ent = (cat, side, opt = {}) => take(e => e.cat === cat && e.side === side && e.direct && (opt.any || e.active || opt.pot));
+  const merge = (...ls) => { const m = new Map(); for (const l of ls) for (const x of l) { const y = m.get(x.r); if (y) y.es.push(...x.es.filter(e => !y.es.includes(e))); else m.set(x.r, { r: x.r, es: x.es.slice() }); } return [...m.values()]; };
+  const typed = re => deck.filter(r => re.test((r.c.type || "").split("//")[0])).map(r => ({ r, es: [{ cat: "", side: "fuel", why: "", quote: "", member: true }] }));
+  const themes = (d.themes || []).map(t => themeSyn(t, new Set()));
+  const out = [], obs = (key, label, sides, text) => out.push({ key, label, sides, text });
+  const side = (name, l, verb) => ({ name, l, verb, n: l.length, copies: l.reduce((a, x) => a + x.r.qty, 0), cmd: l.some(x => x.r.cmdr) });
+  // the two cases; A is the side that has cards, B the side it needs
+  const check = (key, label, A, B, none, one) => {
+    if (A.n >= 2 && B.n === 0) obs(key, label, [A, B], none);
+    else if (A.n >= 3 && B.n === 1 && !A.l.every(x => x.r === B.l[0].r)) obs(key, label, [A, B], one(B.l[0].r.name));
+  };
+  const n = (x, w, pl) => `${x} ${x === 1 ? w : (pl || w + "s")}`;
+  // tokens
+  // Token makers with nothing that rewards tokens get no observation: tokens are often side value of another plan
+  // (Talrand's Drakes in a spells deck), and Deckhand can't tell that apart from an unfinished token deck.
+  const tPay = merge(ent("tokens", "payoff"), ent("tokens", "amplifier")), tMake = ent("tokens", "enabler");
+  check("tokens", "Tokens", side("Token payoffs and amplifiers", tPay, "reward tokens or make more of them"), side("Token makers", tMake, "make creature tokens"),
+    `This deck has ${n(tPay.length, "card")} that reward tokens or make more of them, but no card that makes creature tokens. Tokens your opponents give you don't count here. You may want cards that make tokens.`,
+    one => `This deck has ${n(tPay.length, "card")} that reward tokens or make more of them, and only one card that makes them (${one}). If it is removed or not drawn, they do nothing.`);
+  // sacrifice
+  const sOut = ent("sacrifice", "enabler"), sPay = ent("sacrifice", "payoff"), sFod = ent("sacrifice", "fodder", { pot: true });
+  check("sacrifice", "Sacrifice", side("Sacrifice payoffs", sPay, "reward creatures dying"), side("Sacrifice outlets", sOut, "let you sacrifice"),
+    `This deck has ${n(sPay.length, "card")} that reward creatures dying, but no way to sacrifice them. They will trigger only when creatures die in combat or to removal. You may want ways to sacrifice your creatures.`,
+    one => `This deck has ${n(sPay.length, "card")} that reward creatures dying, and only one way to sacrifice (${one}). You may want more ways to sacrifice your creatures.`);
+  if (sFod.length >= 2 && !sOut.length && !out.some(o => o.key === "sacrifice")) obs("sacrifice-fodder", "Sacrifice", [side("Sacrifice fodder", sFod, "do something when they die"), side("Sacrifice outlets", sOut, "let you sacrifice")],
+    `This deck has ${n(sFod.length, "creature")} that do something when they die, but no way to sacrifice them, so that happens only in combat or to removal.`);
+  const sFuel = merge(sFod, ent("tokens", "enabler"));
+  if (sOut.length >= 2 && !sPay.length && !sFuel.length) obs("sacrifice-outlets", "Sacrifice", [side("Sacrifice outlets", sOut, "let you sacrifice"), side("Fodder and payoffs", merge(sPay, sFuel), "die usefully, make tokens, or reward dying")],
+    `This deck has ${n(sOut.length, "way")} to sacrifice permanents, but no token makers, no creatures that do something when they die, and no card that rewards dying. Each sacrifice costs a real card.`);
+  // blink
+  const bEn = ent("blink", "enabler"), bPay = ent("blink", "payoff", { pot: true });
+  if (bEn.length >= 2 && !bPay.length) obs("blink", "Blink", [side("Blink enablers", bEn, "exile and return your permanents"), side("Enters-the-battlefield abilities", bPay, "do something when they enter")],
+    `This deck has ${n(bEn.length, "card")} that exile and return your permanents, but no permanent with an enters-the-battlefield ability to reuse.`);
+  if (bPay.length >= 2 && !bEn.length && themes.includes("blink")) obs("blink-theme", "Blink", [side("Possible blink payoffs", bPay, "do something when they enter"), side("Blink enablers", bEn, "exile and return your permanents")],
+    `Your theme is Blink, and ${n(bPay.length, "permanent")} here do something when they enter, but no card exiles and returns them. You may want blink cards.`);
+  // instants and sorceries
+  const spPay = ent("spells", "payoff"), spFuel = typed(/\b(Instant|Sorcery)\b/);
+  check("spells", "Instants and sorceries", side("Spell payoffs", spPay, "reward casting instants and sorceries"), side("Instants and sorceries", spFuel, "are instants or sorceries"),
+    `This deck has ${n(spPay.length, "card")} that reward casting instants and sorceries, but no instants or sorceries.`,
+    one => `This deck has ${n(spPay.length, "card")} that reward casting instants and sorceries, and only one instant or sorcery (${one}).`);
+  // artifacts
+  const aPay = ent("artifacts", "payoff"), aMake = ent("artifacts", "enabler"), aFuel = merge(typed(/\bArtifact\b/), aMake);
+  check("artifacts", "Artifacts", side("Artifact payoffs", aPay, "reward artifacts"), side("Artifacts and artifact makers", aFuel, "are artifacts or make them"),
+    `This deck has ${n(aPay.length, "card")} that reward artifacts, but no artifacts and no card that makes them.`,
+    one => `This deck has ${n(aPay.length, "card")} that reward artifacts, and only one artifact or artifact maker (${one}).`);
+  // Treasure has its own job (mana), so makers whose only artifact tokens are Treasure don't count toward "makers without payoffs".
+  // Read from the card's whole rules text: a card that also makes Food, Clues, Thopters… still counts. Treasure still counts as
+  // artifact support for artifact payoffs (above).
+  const tokKinds = r => { const t = ((r.T && r.T.text) || "").toLowerCase().replace(/\([^)]*\)/g, ""), k = new Set(); let m; const re = /\bcreates? [^.]{0,60}?\b(treasure|clue|food|blood|map|powerstone|gold|incubator|junk|artifact)\b/g;
+    while ((m = re.exec(t))) k.add(m[1]); return k; };
+  const treasureOnly = r => { const k = tokKinds(r); return k.size === 1 && k.has("treasure"); };
+  const aTok = aMake.filter(x => x.es.some(e => /artifact tokens/i.test(e.why)) && !treasureOnly(x.r));
+  if (aTok.length >= 2 && !aPay.length) obs("artifacts-makers", "Artifacts", [side("Artifact token makers (not Treasure)", aTok, "make Food, Clues, Thopters or other artifact tokens"), side("Artifact payoffs", aPay, "reward artifacts")],
+    `This deck has ${n(aTok.length, "card")} that make artifact tokens other than Treasure, but no card that rewards artifacts. That's fine if the tokens are there for what they do themselves; nothing else uses them.`);
+  // counters
+  const cEn = ent("counters", "enabler"), cPay = ent("counters", "payoff");
+  check("counters", "Counters", side("Counter payoffs", cPay, "reward counters"), side("Counter makers", cEn, "put counters on things"),
+    `This deck has ${n(cPay.length, "card")} that reward counters, but no card that puts counters on things.`,
+    one => `This deck has ${n(cPay.length, "card")} that reward counters, and only one card that puts counters on things (${one}).`);
+  check("counters-makers", "Counters", side("Counter makers", cEn, "put counters on things"), side("Counter payoffs", cPay, "reward counters"),
+    `This deck has ${n(cEn.length, "card")} that put counters on things, but no card that rewards counters. The counters still do what they do; nothing makes more of them.`, () => "");
+  // landfall
+  const lPay = ent("landfall", "payoff"), lEn = ent("landfall", "enabler");
+  check("landfall", "Landfall", side("Landfall payoffs", lPay, "reward lands entering"), side("Extra land drops", lEn, "put extra lands onto the battlefield"),
+    `This deck has ${n(lPay.length, "card")} that reward lands entering, but nothing that puts extra lands onto the battlefield, so they trigger about once a turn, from your land drop.`,
+    one => `This deck has ${n(lPay.length, "card")} that reward lands entering, and only one card that puts extra lands onto the battlefield (${one}).`);
+  // lifegain
+  const gPay = ent("lifegain", "payoff"), gEn = ent("lifegain", "enabler");
+  check("lifegain", "Lifegain", side("Lifegain payoffs", gPay, "reward gaining life"), side("Ways to gain life", gEn, "gain you life"),
+    `This deck has ${n(gPay.length, "card")} that reward gaining life, but no card that reliably gains life (incidental life gain isn't counted).`,
+    one => `This deck has ${n(gPay.length, "card")} that reward gaining life, and only one card that reliably gains life (${one}).`);
+  return out.filter(o => o.text);
 }
 /* ---------- updating saved roles after the role rules change ----------
    Each card saved in the collection or a deck carries "roles", worked out from its rules text when it was added
@@ -6954,10 +7040,11 @@ const OPP = /\b(its controller|target opponent|an opponent|each opponent|that pl
 // rules: [category, side, pattern, reason, enabler that is only a side effect on a spell with another job]
 const SYN_RULES = [
   ["tokens", "enabler", /\bcreates? [^.]{0,80}?\bcreature tokens?\b|token that's a copy/, "Creates creature tokens", true],
-  ["tokens", "payoff", /\btokens? you control\b|whenever (you create|one or more [^.]{0,20}tokens?|a token)|for each (creature )?token|sacrifice (a|an|two) tokens?/, "Rewards tokens"],
+  ["tokens", "payoff", /\btokens? you control\b|whenever (you create|one or more [^.]{0,20}tokens?|a token)|whenever (a|one or more) (creature |nontoken )?tokens? (you control )?(leaves|leave|dies|die|is put into)|for each (creature )?token|sacrifice (a|an|two) tokens?|if you('ve)? created a token/, "Rewards tokens"],
+  ["tokens", "amplifier", /would create (one or more|a|an|any number of|\w+) [^.]{0,40}tokens? under your control|tokens? would be created under your control/, "Makes your token makers make more (or better) tokens"],
   ["gowide", "payoff", /for each (other )?(attacking )?creatures? (you control|on the battlefield)|for each other attacking creature|number of creatures you control|\bcreatures you control (get|gets) \+\d|whenever (a|another) (nontoken )?creature (you control )?enters( the battlefield)? under your control|whenever (a|another) creature you control enters|whenever one or more (other )?creatures (you control )?(enter|attack)|whenever a creature you control (with power \d or less )?attacks|attacked with creatures with total power|\bcreatures you control have haste/, "Gets better with more creatures"],
   ["sacrifice", "enabler", /\bsacrifice (a|an|another|two|three|x|any number of) (other )?(?!this\b)[^.:,]{0,30}:|as an additional cost to cast this spell, sacrifice (a|an) /, "A way to sacrifice permanents", true],
-  ["sacrifice", "payoff", /whenever (a|another|one or more|this or another) (other )?[^.]{0,40}\b(dies|die)\b|whenever equipped creature dies|whenever you sacrifice|is put into (a|your) graveyard from the battlefield/, "Rewards creatures dying or being sacrificed"],
+  ["sacrifice", "payoff", /whenever (a|another|one or more|this( creature| artifact| enchantment| permanent)? or (another|a|one or more)) (other )?(?![^.]{0,40}\b(an opponent controls|you don't control|your opponents control)\b)[^.]{0,40}\b(dies|die)\b|whenever equipped creature dies|whenever you sacrifice|is put into (a|your) graveyard from the battlefield/, "Rewards creatures dying or being sacrificed"],
   ["spells", "payoff", /whenever (you|a player) casts? (or copy |or copies )?(an? )?(instant or sorcery|instant|sorcery|noncreature)( spell)?|magecraft|when(ever)? you cast your (first|second|next) (instant|sorcery|noncreature)/, "Rewards casting instants and sorceries"],
   ["spells", "payoff", /instant (and|or) sorcery cards?|instant or sorcery card/, "Finds or reuses instant and sorcery cards"],
   ["artifacts", "payoff", /whenever (you cast an? |an? |another |one or more )(nontoken )?artifacts?\b[^.]{0,40}(spells?|enters?|you control)|for each artifact you control|number of artifacts you control|\bmetalcraft\b|affinity for artifacts|\bimprovise\b|artifact spells as though|(other |noncreature )?artifacts?( creatures)? you control (have|gain|get|has|gets)|target (noncreature )?artifact you control|whenever you cast an? (aura|equipment|vehicle)|untap (another )?target artifact|untap all artifacts|vehicles? you control|artifact cards? in your graveyard/, "Rewards artifacts"],
@@ -6968,7 +7055,7 @@ const SYN_RULES = [
   ["graveyard", "enabler", /\bmill (a|one|two|three|four|five|six|x|\w+) cards?|\bsurveil \w+|put the top [^.]{0,30}cards? of your library into your graveyard|\bdiscards? (a|two|three|x|\w+) cards?|then discard|discard (a|your) (card|hand)/, "Fills your graveyard", true],
   ["graveyard", "payoff", /\b(delve|threshold|escape|unearth|embalm|eternalize|disturb|retrace|jump-start|dredge)\b|cards? in your graveyard|from your graveyard|gains? flashback/, "Uses your graveyard"],
   ["counters", "enabler", /\bput (a|an|one|two|three|x|that many|\w+) \+1\/\+1 counters? on (target|each|up to|another|a creature)|\bproliferate\b|you get (a|an|one) \w+ counters?|put [^.]{0,15}\b\w+ counters? on (each|target|up to)/, "Puts counters on things", true],
-  ["counters", "payoff", /for each (\w+ )?counter(?! on (it|this))|number of (\w+ )?counters(?! on (it|this))|whenever (one or more )?(\+1\/\+1 )?counters? (is|are) put|creatures? (you control )?with (\+1\/\+1 )?counters/, "Rewards counters"],
+  ["counters", "payoff", /for each (\w+ )?counter(?! on (it|this))|number of (\w+ )?counters(?! on (it|this))|whenever (a |an |one or more )?(\+1\/\+1 |\w+ )?counters? (is|are) (put|placed)|(creatures?|permanents?|artifacts?) (you control )?with (a |an |one or more )?(\+1\/\+1 )?counters? on (it|them)|counters? would be (put|placed) on|creatures? (you control )?with (\+1\/\+1 )?counters/, "Rewards counters"],
   ["blink", "enabler", /exile (up to \w+ )?(another )?(target|each|one or more|any number of) [^.]{0,60}(you control|you own)[^.]{0,30}(, then|\. return|then) return|exile [^.]{0,60}then return (it|that card|them|those cards) to the battlefield/, "Exiles and returns your permanents (blink)"],
   ["blink", "payoff", /\bwhen(ever)? this (creature |permanent )?enters( the battlefield)?\b/, "Has an enters-the-battlefield ability (a blink payoff)"],
   ["copy", "enabler", /\bcopy (target|that|it|those|each|the next)\b|token that's a copy|enters?( the battlefield)? as a copy|creates? [^.]{0,20}cop(y|ies) of/, "Copies a spell, ability or permanent"],
@@ -6976,7 +7063,7 @@ const SYN_RULES = [
   ["landfall", "payoff", /\blandfall\b|whenever (a|one or more) (\w+ )?lands? (you control )?enters?( the battlefield)? under your control|whenever (a|one or more) lands? you control enters?/, "Rewards lands entering"],
   ["landfall", "enabler", /play (an|two) additional lands?|additional land|search your library for [^.]{0,50}lands? cards?[^.]{0,40}onto the battlefield|put (a|up to \w+|that|those|any number of) (basic )?land cards? [^.]{0,30}onto the battlefield/, "Puts extra lands onto the battlefield", true],
   ["lifegain", "payoff", /whenever you gain life|if you('ve)? gained life this turn|for each (1 )?life you('ve)? gained|life you gained/, "Rewards gaining life"],
-  ["lifegain", "enabler", /\byou gain (\d+|x|that much|\w+) life|\blifelink\b/, "Gains you life", true],
+  ["lifegain", "enabler", /(?<!(whenever|if|each time) )\byou gain (\d+ life|x life|that much life|life equal|\w+ life)|\blifelink\b/, "Gains you life", true],
   ["voltron", "payoff", /whenever you cast an? (aura|equipment)|for each (aura|equipment)|(equipped|enchanted) creature you control|whenever (an? )?(equipped|enchanted) creature (you control )?(attacks|deals)|commander damage/, "Rewards Auras and Equipment"],
 ];
 function optSynergy(T, c, types, main) {
@@ -6984,7 +7071,7 @@ function optSynergy(T, c, types, main) {
   const front = (T.type || c.type || "").split("//")[0], perm = !/\b(Instant|Sorcery)\b/.test(front), kw = (T.kw || []).map(x => String(x).toLowerCase());
   const names = [c.name, c.name.split(" // ")[0], c.name.split(",")[0]].filter((x, i, a) => x && a.indexOf(x) === i).sort((a, b) => b.length - a.length);
   let o = T.text.replace(/\([^)]*\)/g, "");
-  for (const n of names) o = o.split(n).join("this");                                              // a card's own name is not a creature type or a token
+  for (const n of names) o = o.split(n + "'s").join("its").split(n).join("this");                  // a card's own name is not a creature type or a token
   const sents = o.split(/(?<=\.)\s+|\n/).map(x => x.trim()).filter(Boolean), out = [], seen = new Set();
   const jobs = cardRoles(T.text, T.type || c.type).filter(x => x !== "Creature" && x !== "Land");
   // the quote: the whole clause the match sits in (from the last , ; : • . or quote mark before it to the next , ; . or quote mark after it), never cut mid-word
@@ -6993,16 +7080,18 @@ function optSynergy(T, c, types, main) {
     let q = s0.slice(a, z).replace(/["“”]/g, "").trim(); if (q.length > 110) { q = q.slice(0, 110); q = q.slice(0, q.lastIndexOf(" ")) + "…"; } return q; };
   const add = (cat, side, why, quote, direct, potential, extra) => { const key = cat + "|" + side; if (seen.has(key)) return; seen.add(key); out.push(Object.assign({ cat, side, why, quote: quote.replace(/\s+/g, " ").trim(), direct, potential: !!potential }, extra || {})); };
   sents.forEach((s0, i) => {
-    const s = s0.toLowerCase().replace(/\bcast(ing)? or cop(y|ies|ying)\b/g, "cast"), opp = OPP.test(s), near = [sents[i - 1], s0, sents[i + 1]].filter(Boolean).join(" ").toLowerCase();
+    const s = s0.toLowerCase().replace(/\bcast(ing)? or cop(y|ies|ying)\b/g, "cast"), near = [sents[i - 1], s0, sents[i + 1]].filter(Boolean).join(" ").toLowerCase();
+    // who gets it: the clause the match is in, from the last ", " " and " "; " or "then" before it ("target player loses 1 life and you gain 1 life")
+    const oppAt = (at, len) => { const a = Math.max(...[", ", " and ", "; ", " then "].map(x => { const k = s.lastIndexOf(x, at); return k < 0 ? 0 : k + x.length; })); return OPP.test(s.slice(a, at + len)); };
     for (const [cat, side, re, why, rider] of SYN_RULES) {
       const m = s.match(re); if (!m) continue;
-      if (opp && (side === "enabler" || cat === "lifegain")) continue;                          // it's the opponent who gets it
+      if ((side === "enabler" || side === "amplifier" || cat === "lifegain") && oppAt(m.index, m[0].length)) continue;          // it's the opponent who gets it
       if (cat === "blink" && side === "payoff" && !perm) continue;
       if (cat === "gowide" && /less to cast/.test(s)) continue;                                   // a cost that counts creatures (Blasphemous Act) isn't a go-wide card
       // a lord of one kind ("other Goblin creatures you control get +1/+1", "artifact creatures you control get…") isn't a go-wide card
       if (cat === "gowide" && /^creatures you control/.test(m[0]) && /\b(?!(?:other|all|each|the)\b)[a-z]+ $/.test(s.slice(Math.max(0, m.index - 20), m.index))) continue;
       if (cat === "lifegain" && side === "enabler" && /lifelink/.test(m[0]) && !/(this|creatures? you control|target [^.]{0,30}you control)[^.]{0,30}lifelink|^lifelink$/.test(s) && !kw.includes("lifelink")) continue;
-      const trig = /\b(whenever|at the beginning)\b/.test(s), granted = cat === "lifegain" && side === "enabler" && /lifelink/.test(m[0]) && !kw.includes("lifelink");
+      const trig = /\b(whenever|when|at the beginning)\b/.test(s + " " + (sents[i - 1] || "").toLowerCase()), granted = cat === "lifegain" && side === "enabler" && /lifelink/.test(m[0]) && !kw.includes("lifelink");
       // discarding as part of drawing (loot, rummage) is card filtering: it fills the graveyard only as a side effect
       const loot = cat === "graveyard" && side === "enabler" && /discard/.test(m[0]) && /\bdraws?\b/.test(near);
       const incidental = loot || (rider && ((!perm && jobs.length) || (cat === "lifegain" && !granted && !trig && !kw.includes("lifelink"))));
@@ -7022,7 +7111,7 @@ function optSynergy(T, c, types, main) {
     const p = `(${t}|${t}s|${t}es|${t.replace(/f$/, "ve")}s)`;
     for (const s0 of sents) { const s = s0.toLowerCase();
       const lord = s.match(new RegExp(`\\b(other )?${p}( creatures)?( you control)? (get|gets) \\+\\d`));
-      const pay = s.match(new RegExp(`for each (other )?(attacking )?${p}\\b|number of ${p}\\b|whenever (a|another|one or more|this or another) (other )?(nontoken )?${p}\\b|\\b${p} spells?\\b|\\b${p} (permanent |creature )?cards?\\b|\\b${p}( creatures)? you control\\b|\\b${p} or (another |an? )?[a-z]+( creatures?)? you control\\b|sacrifice (a|an|another) ${p}\\b|\\b${p} on the battlefield\\b`));
+      const pay = s.match(new RegExp(`for each (other )?(attacking )?${p}\\b|number of ${p}\\b|whenever (a|another|one or more|this( creature)? or another) (other )?(nontoken )?${p}\\b|\\b${p} spells?\\b|\\b${p} (permanent |creature )?cards?\\b|\\b${p}( creatures)? you control\\b|\\b${p} or (another |an? )?[a-z]+( creatures?)? you control\\b|sacrifice (a|an|another) ${p}\\b|\\b${p} on the battlefield\\b`));
       const mk = s.match(new RegExp(`\\bcreates? [^.]{0,40}\\b${p}\\b[^.]{0,30}?tokens?`));
       const T0 = t[0].toUpperCase() + t.slice(1);
       if (lord) add("type:" + T0, "payoff", `Lord: makes your ${T0}s stronger`, clause(s0, lord.index, lord[0].length), true);
@@ -7138,7 +7227,7 @@ async function drawOptimizer(d) {
       return `<div class="item" data-name="${esc(r.name)}">${r.card && r.card.img ? `<img loading="lazy" src="${esc(r.card.img)}" alt="">` : `<span class="t50-noimg" aria-hidden="true"></span>`}<button class="tap" data-oprec="${i}"><div class="name">${esc(r.name)}</div><div class="small muted num">#${r.rank + 1} in the Top 50${r.syn != null ? ` · synergy ${r.syn >= 0 ? "+" : ""}${Math.round(r.syn * 100)}%` : ""}${r.incl != null ? ` · in ${Math.round(r.incl * 100)}% of decks` : ""}</div></button><div class="right"><button class="btn sm primary" data-opadd="${i}" aria-label="Add ${esc(r.name)} to this deck">＋</button></div></div>`; }).join("")}</div><span class="small muted">The full comparison is on the Upgrade tab, under Top 50 analyzer.</span></div>` : ""}
     ${Sy.have ? `<span class="small"><b>On ${esc(cmd)}'s page</b></span>${list(Sy.onCmd.slice().sort((a, b) => (b.stat.syn ?? -2) - (a.stat.syn ?? -2) || a.name.localeCompare(b.name)), r => `<span class="small muted num">${[r.stat.syn != null ? `synergy ${r.stat.syn >= 0 ? "+" : ""}${Math.round(r.stat.syn * 100)}%` : "", pct(r.stat) ? `in ${pct(r.stat)} of decks` : ""].filter(Boolean).join(" · ")}</span>` + (r.tstat && r.tstat.syn > 0 ? chip(theme) : "") + (r.tribe ? chip(r.tribe) : ""), null)}` : ""}
     ${Sy.have && Sy.noLink.length ? `<div id="opNoLink"><span class="small"><b>No link found</b> · ${cnt(Sy.noLink.length, "card")}</span><p class="small muted" style="margin:2px 0">Not on EDHREC's lists for this deck, no shared creature type, and no role found in the rules text. That is all this says: these cards may be personal picks, new cards or part of a plan Deckhand can't see. It is not a list of cards to take out.</p>${list(Sy.noLink, null, null)}</div>` : ""}`);
-  const ST = A.strat, sideCh = e => chip(e.side === "payoff" ? "payoff" : e.side === "fodder" ? "fodder" : "enabler", e.side === "payoff" ? "ok" : ""), why = e => `<span class="small muted op-syw">${esc(e.why)} · “${esc(e.quote)}”</span>`;
+  const ST = A.strat, sideCh = e => chip(e.side === "payoff" && e.potential && !e.active ? "potential payoff" : e.side === "payoff" ? "payoff" : e.side === "fodder" ? "fodder" : e.side === "amplifier" ? "amplifier" : e.side === "fuel" ? "in the deck" : "enabler", e.side === "payoff" ? "ok" : ""), why = e => `<span class="small muted op-syw">${esc(e.why)} · “${esc(e.quote)}”</span>`;
   const sRows = l => list(l.map(x => x.r), r => { const es = l.filter(x => x.r === r).map(x => x.e); return es.map(sideCh).join("") + es.map(why).join(""); }, null);
   const themeLines = (d.themes || []).map(t => { const k = themeSyn(t, ST.types);
     if (!k) return `<p class="small" style="margin:0" data-theme="${esc(t)}">Your theme <b>${esc(t)}</b> has no strategy category here; the sections above cover it.</p>`;
@@ -7146,16 +7235,22 @@ async function drawOptimizer(d) {
     const g = ST.cats.find(x => x.key === k), lab = k.startsWith("type:") ? "Creature type: " + k.slice(5) : SYN_CAT[k];
     return `<p class="small" style="margin:0" data-theme="${esc(t)}">Your theme <b>${esc(t)}</b> → ${esc(lab)}: ${g && g.cards.length ? `${cnt(g.cards.length, "card")} (${cnt(g.copies, "copy").replace("copys", "copies")}): ${g.en.length} enabling it, ${g.pay.length} rewarding it` : "no card in the deck supports it directly"}.</p>`; });
   const catHTML = g => `<details class="an-group op-strat" id="op-st-${esc(g.key.replace(/\W+/g, "-").toLowerCase())}" data-g="st-${esc(g.key)}" ${st.open.has("st-" + g.key) ? "open" : ""}>
-      <summary><span class="label">${esc(g.label)}</span> <span class="small muted num">${g.cards.length ? `${cnt(g.cards.length, "card")} · ${g.copies} ${g.copies === 1 ? "copy" : "copies"} · ${g.en.length} enabling · ${g.pay.length} rewarding` : "not active"}</span></summary>
+      <summary><span class="label">${esc(g.label)}</span> <span class="small muted num">${g.cards.length ? `${cnt(g.cards.length, "card")} · ${g.copies} ${g.copies === 1 ? "copy" : "copies"} · ${g.en.length} enabling · ${g.pay.length} rewarding${g.amp.length ? ` · ${g.amp.length} amplifying` : ""}${g.fod.length ? ` · ${g.fod.length} fodder` : ""}` : "not active"}</span></summary>
       <div class="stack" style="gap:6px;margin-top:6px">${g.on.length ? sRows(g.on) : ""}
       ${g.pot.length ? `<div class="op-pot"><span class="small"><b>${g.key === "blink" ? "Potential payoffs" : g.key === "sacrifice" ? "Sacrifice fodder" : "Not counted"}</b> · ${cnt([...new Set(g.pot.map(x => x.r))].length, "card")}, not counted</span><p class="small muted" style="margin:2px 0">${g.key === "blink" ? "They have an enters-the-battlefield ability, which pays off only with a blink card, and this deck has none." : g.key === "sacrifice" ? "They do something when they die, which pays off only with a way to sacrifice them, and this deck has none." : `They make ${esc(g.key.slice(5))} creatures, but no card in the deck rewards ${esc(g.key.slice(5))}s.`}</p>${sRows(g.pot)}</div>` : ""}
       ${g.inc.length ? `<div class="op-inc"><span class="small"><b>Incidental</b> · ${cnt([...new Set(g.inc.map(x => x.r))].length, "card")}, not counted</span><p class="small muted" style="margin:2px 0">A side effect of a card that does another job.</p>${sRows(g.inc)}</div>` : ""}</div></details>`;
   const activeCats = ST.cats.filter(g => g.cards.length > 1), single = ST.cats.filter(g => g.cards.length === 1), quiet = ST.cats.filter(g => !g.cards.length);
   const sStrat = sec("strat", "Strategies", activeCats.length || single.length ? cnt(activeCats.length, "strategy").replace("strategys", "strategies") + (single.length ? ` · ${single.length} with one card` : "") : "none found", `
-    <p class="small muted" style="margin:0">What the cards support, read from their rules text: an <b>enabler</b> supplies something (tokens, a way to sacrifice, cheaper spells), a <b>payoff</b> rewards it. This is separate from the roles above, and a card can be in several. Counts are cards in the main deck without the commander, then copies; they are counts only, not targets.</p>
+    <p class="small muted" style="margin:0">What the cards support, read from their rules text: an <b>enabler</b> supplies something (tokens, a way to sacrifice, cheaper spells), a <b>payoff</b> rewards it, an <b>amplifier</b> makes the enablers do more (token doublers), and <b>fodder</b> is good to sacrifice. This is separate from the roles above, and a card can be in several. Counts are cards in the main deck without the commander, then copies; they are counts only, not targets.</p>
     ${!A.sorted ? `<p class="small" id="opStratNo" style="margin:0">Card text isn't loaded, so strategies can't be read.</p>` : ""}
     ${ST.cmd.length ? `<p class="small" id="opStratCmd" style="margin:0">Your commander supports: ${[...new Set(ST.cmd.map(x => x.e.cat))].map(k => { const sides = new Set(ST.cmd.filter(x => x.e.cat === k).map(x => x.e.side)); return (k.startsWith("type:") ? "Creature type: " + k.slice(5) : SYN_CAT[k]) + ` (${sides.size > 1 ? "enables and rewards it" : sides.has("payoff") ? "rewards it" : "enables it"})`; }).map(esc).join(", ")}.</p>` : A.cmdName && A.sorted ? `<p class="small" id="opStratCmd" style="margin:0">No strategy found in your commander's text.</p>` : ""}
     <div id="opStratTheme">${themeLines.join("")}</div>
+    ${A.sorted ? `<div id="opImb" class="stack" style="gap:6px"><span class="small"><b>Enablers and payoffs</b></span>${ST.imb.length ? ST.imb.map(o => `<details class="an-group op-imb" id="op-imb-${esc(o.key)}" data-g="imb-${esc(o.key)}" ${st.open.has("imb-" + o.key) ? "open" : ""}>
+      <summary><span class="chip warn">Worth a look</span> <span class="label">${esc(o.label)}</span> <span class="small muted num">${o.sides.map(x => `${esc(x.name.toLowerCase())}: ${x.n}`).join(" · ")}</span></summary>
+      <div class="stack" style="gap:6px;margin-top:6px"><p class="small" style="margin:0">${esc(o.text)}</p>
+      ${o.sides.map(x => `<div class="op-imb-side" data-side="${esc(x.name)}"><span class="small"><b>${esc(x.name)}</b> · ${cnt(x.n, "card")}${x.n ? `, ${x.copies} ${x.copies === 1 ? "copy" : "copies"}` : ""}${x.cmd ? " (your commander included)" : ""}</span>${x.n ? sRows(x.l.flatMap(y => y.es.filter(e => !e.member).map(e => ({ r: y.r, e }))).concat(x.l.filter(y => y.es.some(e => e.member)).map(y => ({ r: y.r, e: { side: "fuel", why: "Card type", quote: (y.r.c.type || "").split("//")[0].trim() } })))) : `<p class="small muted" style="margin:2px 0">None in this deck.</p>`}</div>`).join("")}
+      <p class="small muted" style="margin:0">Counts are this deck's cards; a card is counted once on each side it is on. Deckhand has no target numbers: this only points out that one side is missing or rests on one card.</p></div></details>`).join("")
+      : `<p class="small" id="opImbNone" style="margin:0">No significant strategy imbalances identified.</p>`}</div>` : ""}
     <p class="small" id="opCombo" style="margin:0">${ST.combos === null ? "Combo pieces aren't checked: the combo list from Commander Spellbook isn't saved on this device. Open the Combos tab once to load it." : ST.combos ? (ST.combos.length ? `${cnt(ST.combos.length, "combo")} from Commander Spellbook ${ST.combos.length === 1 ? "is" : "are"} complete in this deck; the pieces are under Combo pieces.` : "No complete combo from Commander Spellbook is in this deck.") : ""}</p>
     ${activeCats.map(catHTML).join("")}
     ${single.length ? `<div id="opStratSingle"><span class="small"><b>One card each</b> · ${single.length}</span><p class="small muted" style="margin:2px 0">A single card is a touch of a strategy rather than a plan.</p>${single.map(catHTML).join("")}</div>` : ""}
