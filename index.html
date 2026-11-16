@@ -243,7 +243,7 @@ details>summary{cursor:pointer}.seg.wide button{flex:1 1 auto;min-width:0;white-
 .op-bar{background:var(--accent);border-radius:3px 3px 0 0;position:relative;min-height:2px}.op-bar span{position:absolute;top:-17px;left:0;right:0;text-align:center;font-size:12px;color:var(--ink)}.op-list{display:flex;flex-direction:column}
 .op-card{display:flex;flex-wrap:wrap;gap:2px 10px;align-items:center;width:100%;text-align:left;padding:7px 2px;border:0;border-top:1px solid var(--line);background:none;font:inherit;color:inherit;cursor:pointer}
 .op-card .name{font-weight:600;min-width:0;overflow-wrap:anywhere}.op-card .meta{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;margin-left:auto;justify-content:flex-end}
-.op-weak{border-top:1px solid var(--line);padding-top:4px}.op-sec>summary,.op-weak>summary{min-height:36px}.op-weak>summary{flex-wrap:wrap}.op-why{margin-top:2px}.op-sec .kv,.op-weak .kv{gap:10px}
+.op-note{border-top:1px solid var(--line);padding-top:6px}.op-weak{border-top:1px solid var(--line);padding-top:4px}.op-sec>summary,.op-weak>summary{min-height:36px}.op-weak>summary{flex-wrap:wrap}.op-why{margin-top:2px}.op-sec .kv,.op-weak .kv{gap:10px}
 .t50-noimg{width:44px;aspect-ratio:5/7;border-radius:4px;background:var(--line);flex:none;display:block}
 #sMode{display:flex;max-width:100%;overflow-x:auto;scrollbar-width:none}#sMode::-webkit-scrollbar{display:none}#sMode button{flex:1 1 auto;padding:6px 8px;white-space:nowrap}@media(max-width:380px){#sMode button{padding:6px 5px;font-size:13px}}
 @media (max-width:520px){.seg.wide button{padding:6px 5px;font-size:13px}}
@@ -745,13 +745,22 @@ function cardRoles(text, type) {
   const land = /\bLand\b/.test(ty);
   if (land) r.push("Land");
   if (!land && (/\badd (\{|one mana|two mana|three mana|x mana|an amount of)|adds? .{0,30}mana of any|search your library for (a|up to \w+|two) (basic )?(land|forest|plains|island|swamp|mountain)|create (a|two|\w+) treasure|put (a|up to \w+) land cards? .{0,40}onto the battlefield|additional land/.test(t))) r.push("Ramp");
-  if (/(?<!(opponent|player|players|opponents) )\bdraws? (a|an additional|two|three|four|x|\w+) cards?|draw cards equal|investigate|connives?/.test(t)) r.push("Card draw");     // not "an opponent draws a card"
-  if (/(destroy|exile) (up to \w+ )?target (\w+ )?(creature|artifact|enchantment|planeswalker|permanent|nonland|battle)|deals? (\w+|x) damage to (any target|target (creature|planeswalker|player or planeswalker))|target creature (an opponent controls )?gets -\d|fights? (up to one )?target|return target (creature|nonland permanent|permanent) to its owner's hand|target (player|opponent) sacrifices/.test(t)) r.push("Removal");
-  if (/(destroy|exile) (all|each) (other )?(creatures|nonland|artifacts|enchantments|permanents|nontoken)|all (other )?creatures get -|deals? (\w+|x) damage to each creature|return all (nonland|creatures)|each (player|opponent) sacrifices (all|a creature)/.test(t)) r.push("Board wipe");
-  if (/counter target (spell|activated|triggered|noncreature|creature|instant|artifact)/.test(t)) r.push("Counterspell");
-  if (/(you control|target creature you control|creatures you control|permanents you control|equipped creature|enchanted creature) (gain|gains|have|has|get|gets) [^.]{0,40}(hexproof|indestructible|protection from|shroud|ward)|phases? out|can't be countered|prevent all (combat )?damage/.test(t)) r.push("Protection");
-  if (/search your library for (a|an|up to \w+) (card|creature|artifact|enchantment|instant|sorcery|planeswalker|legendary|equipment|aura)(?![^.]*land)/.test(t)) r.push("Tutor");
-  if (/return [^.]{0,60}from your graveyard to (your hand|the battlefield)|cast [^.]{0,30}from your graveyard/.test(t)) r.push("Recursion");
+  // card draw: you draw (not "an opponent draws"; "target player draws" can be you), wheels, and "reveal the top N, put all the X into your hand"
+  if (/(?<!(opponent|player|players|opponents) )\bdraws? (a|an additional|two|three|four|x|\w+) cards?|draw cards equal|investigate|connives?|\btarget player draws (a|x|two|three|\w+) cards?|discards? (their|your) hand[^.]{0,40}draws? (cards equal|that many cards|\w+ cards?)|(reveal|look at) the top [^.]{0,40}cards? of your library\. put (all|any number of) [^.]{0,60}into your hand/.test(t)) r.push("Card draw");
+  // removal: sentences that only touch your own permanent (a flicker, a bounce of your own creature) don't count
+  const rt = t.split(/(?<=\.)\s+|\n/).filter(x => !(/(exile|return) (up to \w+ )?target [^,.]{0,30}you (control|own)/.test(x) && !/fights?|you don't control|an opponent controls/.test(x))).join(" ");
+  if (/(destroy|exile) (up to \w+ )?target (\w+ )?(creature|artifact|enchantment|planeswalker|permanent|nonland|battle)/.test(rt)
+    || /deals? [^.]{0,70}?damage [^.]{0,110}?(to|among) (any target|any number of targets|each of (them|[^.]{0,20}targets?)|(up to \w+ )?target(?!s? (player|opponent))|\w+ targets\b)/.test(rt)
+    || /target creature (an opponent controls )?gets -\d|fights? (up to one )?target|target (player|opponent) sacrifices/.test(rt)
+    || /return (up to \w+ )?target (creature|nonland permanent|permanent|artifact|enchantment|spell or permanent|nonland)[^.]{0,40}to (its|their) owner'?s'? hands?/.test(rt)
+    || /owner of target [^.]{0,40}(shuffles|puts) it (into|on)|put target [^.]{0,40}(on|into) [^.]{0,20}its owner's library|\btarget (\w+ )?creature\.[^.]{0,80}(exile|destroy) that creature/.test(rt)) r.push("Removal");
+  if (/(destroy|exile) (all|each) (?![^.]{0,40}\bcards?\b)[^.]{0,40}(creatures?|permanents?|artifacts|enchantments|planeswalkers|nonland|nontoken)|all (other )?creatures get -|each (other )?creature gets -|deals? (\w+|x) damage to each (other )?creature|return all [^.]{0,30}(creatures|permanents|artifacts)[^.]{0,30}to (their|its) owners?'s? hands?|each (player|opponent) sacrifices (all|a creature)/.test(t)
+    || (/\boverload\b/.test(t) && r.includes("Removal"))) r.push("Board wipe");
+  if (/counter target [^.]{0,50}?\b(spell|ability)/.test(t)) r.push("Counterspell");
+  // protection: something of yours is kept safe. A spell that merely can't be countered itself doesn't protect anything.
+  if (/(you control|target creature you control|creatures you control|permanents you control|equipped creature|enchanted creature) (gain|gains|have|has|get|gets) [^.]{0,40}(hexproof|indestructible|protection from|shroud|ward)|phases? out|prevent all (combat )?damage|regenerate (target|each|all)|spells you (control|cast) can't be countered/.test(t)) r.push("Protection");
+  if (/search your library for (a|an|up to \w+|any number of|two|three|x) (?![^.]{0,50}\b(land|forest|plains|island|swamp|mountain)\b)[^.]{0,50}?\bcards?\b/.test(t)) r.push("Tutor");
+  if (/(return|put) [^.]{0,110}from (your|a|any) graveyard (on)?to (your hand|the battlefield)|(cast|play) [^.]{0,60}from your graveyard|in your graveyard (gains?|has|have) (flashback|escape|retrace|jump-start)|target [^.]{0,40}card in your graveyard\. you may (cast|play) (that card|it)|exile target [^.]{0,50}from your graveyard\. [^.]{0,80}(copy it|cast (it|the copy|that card))/.test(t)) r.push("Recursion");
   if (/\bCreature\b/.test(ty)) r.push("Creature");
   return r;
 }
@@ -4087,7 +4096,8 @@ async function loadTop50(sel) {
   // Lands, apart: the same lands are played with nearly every commander, so their synergy is low and they almost never
   // reach the 50. The cards in EDHREC's own land categories ("Lands", "Utility Lands") that aren't in the 50 are ranked
   // among themselves by how many decks play them (then synergy, then name); the first 20.
-  const isLand = c => /\blands?\b/i.test(c.list || ""), inTop = new Set(top.map(c => c.name));
+  const landNames = new Set(); for (const k in S.coll) { const e = S.coll[k]; if (/\bLand\b/.test((e.type || "").split("//")[0])) landNames.add(e.name); }      // a card's own type wins over EDHREC's list
+  const isLand = c => /\blands?\b/i.test(c.list || "") || landNames.has(c.name), inTop = new Set(top.map(c => c.name));
   const landList = edh.data.cards.filter(c => isLand(c) && !inTop.has(c.name)).sort((a, b) => (b.num || 0) - (a.num || 0) || (b.syn ?? -2) - (a.syn ?? -2) || a.name.localeCompare(b.name));
   res.landTotal = landList.length; res.landsInTop = top.filter(isLand).length;
   const lands = landList.slice(0, 20), need = [...top, ...lands].filter(c => !t50Owned(c.name)).map(c => ({ name: c.name }));
@@ -4149,7 +4159,7 @@ function drawTop50() {
       : `<p class="small muted" id="tNone">${t50.show === "owned" ? "You don't own any of these cards." : "You own every one of these cards."}</p>`}
     <h2 class="sec" id="tLandsHead">Lands</h2>
     ${lrows.length ? `<p class="small" id="tLandSum"><b>${lrows.length < 20 || R.landTotal === lrows.length ? `All ${lrows.length}` : `Top ${lrows.length} of ${R.landTotal.toLocaleString()}`}</b> land${lrows.length === 1 ? "" : "s"} for ${esc(R.label)}, by how many decks play them: <b class="up">${lOwn} owned</b> · <b class="${lrows.length - lOwn ? "down" : "muted"}">${lrows.length - lOwn} missing</b>${lshown.length !== lrows.length ? ` · showing ${lshown.length}` : ""}</p>
-      <p class="small muted" id="tLandWhy">Lands are listed apart because the same ones are played with nearly every commander: their synergy is low, so they rarely reach the 50 above${R.landsInTop ? ` (${R.landsInTop} did, and ${R.landsInTop === 1 ? "is" : "are"} listed there)` : ""}. These are the cards in EDHREC's land categories, ranked among themselves.</p>
+      <p class="small muted" id="tLandWhy">Lands are listed apart so they don't crowd out the spells. Most lands are played with nearly every commander in their colors, so ranked by synergy few reach the 50 above${R.landsInTop ? ` (${R.landsInTop} did, and ${R.landsInTop === 1 ? "is" : "are"} listed there)` : ""}, though a land made for this commander's plan can. These are EDHREC's lands that aren't in the 50, ranked among themselves by how many decks play them.</p>
       ${lshown.length ? `<div class="list" id="tLands">${lshown.map((r, i) => tRow(r, nTop + i)).join("")}</div>` : `<p class="small muted" id="tLandNone">${t50.show === "owned" ? "You don't own any of these lands." : "You own every one of these lands."}</p>`}`
       : `<p class="small muted" id="tNoLands">${R.landsInTop ? `EDHREC lists no lands for ${esc(R.label)} beyond the ${R.landsInTop} already in the list above.` : `EDHREC's page for ${esc(R.label)} has no land category, so there are no lands to list.`}</p>`}`}`;
   const rf = $("#tRefresh"); if (rf) rf.onclick = async () => { const sel = { kind: t50.kind, cmd: t50.cmd, theme: t50.theme }, cp = sel.cmd ? "commanders/" + edhSlug(sel.cmd) : "", ts = sel.theme ? t50Slug(sel.theme) : "";
@@ -5574,6 +5584,7 @@ async function captureFrom(kind, file, alt) {
   }
 }
 /* ---------- card lookups: everything needed for one scan in a single request, cached on the device ---------- */
+const ROLE_RULES_AT = Date.UTC(2026, 10, 16);      // when the role rules last changed (cardRoles)
 const CC = { map: null, p: null, dirty: false, t: null, miss: new Map() };
 const identKey = i => i.id ? "i:" + i.id : i.collector_number ? `c:${i.set}|${i.collector_number}` : i.set ? `ns:${i.name.toLowerCase()}|${i.set}` : "n:" + i.name.toLowerCase();
 async function cardCache() {
@@ -5594,7 +5605,7 @@ async function lookupCards(idents) {
   for (const i of idents) {
     const k = identKey(i);
     const hit = map.get(k);
-    if (hit && now - hit.t < 24 * 3600e3) out[k] = hit.c;                                  // prices are refreshed daily
+    if (hit && now - hit.t < 24 * 3600e3 && hit.t >= ROLE_RULES_AT) out[k] = hit.c;          // saved under the older role rules: looked up again                                  // prices are refreshed daily
     else if (CC.miss.has(k) && now - CC.miss.get(k) < 10 * 60e3) out[k] = null;     // asked recently, wasn't found
     else if (!need.some(n => identKey(n) === k)) need.push(i);
   }
@@ -6103,13 +6114,16 @@ async function fillDeck(d) {
    ranking and say so; no statistics are made up. */
 const EDH = { mem: new Map(), blocked: null };
 const edhSlug = n => (n || "").split(" // ")[0].toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\+/g, "plus").replace(/['’,.:!?"()]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+const EDH_GENERIC = /^(new cards|top cards|high (lift|synergy) cards|game changers)$/i;
 function compactEdh(j) {
   const cards = new Map(), cl = (j && j.container && j.container.json_dict && j.container.json_dict.cardlists) || [];
   let pot = 0;
   for (const list of cl) {
     if (/commanders$/.test(list.tag || "")) continue;                       // "Top Commanders" on theme pages: not cards to play
     for (const v of list.cardviews || []) {
-      if (!v.name || cards.has(v.name)) continue;
+      if (!v.name) continue;
+      // a card in a general list (Top Cards, High Lift Cards, …) is listed again under its own kind (Creatures, Lands, …): keep that kind
+      const had = cards.get(v.name); if (had) { if (EDH_GENERIC.test(had.list) && !EDH_GENERIC.test(list.header || "")) had.list = list.header || ""; continue; }
       cards.set(v.name, { name: v.name, num: v.num_decks ?? null, pot: v.potential_decks ?? null, syn: typeof v.synergy === "number" ? v.synergy : null, list: list.header || "" });
       if (v.potential_decks > pot) pot = v.potential_decks;
     }
@@ -6616,7 +6630,7 @@ async function drawAnalyzer(d) {
     ${group("owned", `Owned upgrades`, A.owned, "owned", `Cards from ${listName} that you own and haven't put in this deck. ＋ adds one copy to the main deck; your collection isn't changed.${shareCopies() ? "" : " Sharing copies between decks is off, so “free” is what your other decks leave over."}`, A.have.length === n ? "Nothing to add: they are all in the deck." : `You don't own any of the cards from ${listName} that aren't in this deck.`)}
     ${group("missing", `Missing upgrades`, A.missing, "missing", `Cards from ${listName} that you don't own. Nothing is added to a wishlist or a deck from here.`, `You own every card in ${listName}.`)}
     ${(() => { const L = A.lands; if (!L.length) return ""; const c = k => L.filter(r => r.at === k).length;
-      return group("lands", "Most-played lands", L, null, `The ${L.length} lands most played with ${esc(cmd)} that aren't in ${listName}, ranked among lands by how many decks play them. Lands are kept apart because the same ones are played with nearly every commander, so their synergy is too low to reach the list. <span class="num" id="anLandAdds">${c("have")} in the deck + ${c("owned")} owned + ${c("missing")} not owned${c("blocked") ? ` + ${c("blocked")} that can't go in this deck` : ""} = ${L.length} land${L.length === 1 ? "" : "s"}.</span>`, ""); })()}
+      return group("lands", "Most-played lands", L, null, `The ${L.length} lands most played with ${esc(cmd)} that aren't in ${listName}, ranked among lands by how many decks play them. Lands are kept apart because most are played with nearly every commander in their colors, so ranked by synergy few reach the list. <span class="num" id="anLandAdds">${c("have")} in the deck + ${c("owned")} owned + ${c("missing")} not owned${c("blocked") ? ` + ${c("blocked")} that can't go in this deck` : ""} = ${L.length} land${L.length === 1 ? "" : "s"}.</span>`, ""); })()}
     ${blocked ? group("blocked", `Can't go in this deck`, A.blocked, "blocked", `Cards from ${listName} that are outside this deck's colors or not legal in its format. They aren't counted as upgrades.`, "") : ""}
     ${group("outside", `Outside ${n < 50 ? "the list" : "the Top 50"}`, A.outside, "outside", `Cards in this deck that aren't among ${listName}${A.lands.length ? " or the most-played lands above" : ""}. That is all this means: the list counts how often cards are played with ${esc(cmd)}, not how good they are, and it is not a list of cards to take out.${basicN ? ` The deck's ${basicN} basic land${basicN === 1 ? "" : "s"} (${A.basics.map(r => `${esc(r.name)} ×${r.main + r.side}`).join(", ")}) ${basicN === 1 ? "is" : "are"} not listed here.` : ""}`, `Every ${basicN ? "non-basic " : ""}card in this deck is in ${listName}${A.lands.length ? " or among the most-played lands" : ""}.`)}
   </div>`;
@@ -6660,34 +6674,53 @@ function optKinds(T, c) {
   const perm = !/\b(Instant|Sorcery)\b/.test(ty), adds = !!(T.mana && T.mana.length) || /\badd (\{|one mana|two mana|three mana|x mana|an amount of)|mana of any/.test(t);
   k.ramp = /search your library for [^.]*\b(land|forest|plains|island|swamp|mountain)|put [^.]*\bland cards? [^.]*onto the battlefield/.test(t) ? "land" : /additional land/.test(t) ? "extra" : /treasure/.test(t) ? "treasure"
     : adds && !perm ? "burst" : adds && /\bCreature\b/.test(ty) ? "dork" : adds && /\bArtifact\b/.test(ty) ? "rock" : "other";
-  const ds = t.split(/[.\n]/).filter(s => /\bdraws? |investigate|connive/.test(s) && !/(opponent|each player|target player) draws?/.test(s));
-  k.draw = ds.some(s => /draws? [^.]*then discard|discard [^.]*then draw/.test(s)) && ds.length === 1 ? "loot" : perm && ds.some(s => /\b(whenever|at the beginning of)\b/.test(s) || (/:[^:]*\bdraw/.test(s) && !/sacrifice[^:]*:/.test(s))) ? "repeat" : ds.some(s => /\bif\b|\bunless\b|\bmay pay\b/.test(s)) ? "cond" : "direct";
+  const ds = t.split(/[.\n]/).filter(s => /\bdraws? |investigate|connive/.test(s) && !/(opponent|each player) draws?/.test(s));
+  // filtering only when it discards at least as many cards as it draws ("draw two, then discard two"); "draw X, then discard one" is card draw
+  const N = w => ({ a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5 })[w] || (/^\d+$/.test(w) ? +w : w === "x" ? 99 : 0);
+  const loot = ds.length === 1 && (m => m && N(m[2]) >= N(m[1]))(ds[0].match(/draws? (\w+) cards?,? then discards? (\w+) cards?/));
+  k.draw = loot ? "loot" : perm && ds.some(s => /\b(whenever|at the beginning of)\b/.test(s) || (/:[^:]*\bdraw/.test(s) && !/sacrifice[^:]*:/.test(s))) ? "repeat" : ds.length && ds.every(s => /\bif\b|\bunless\b|\bmay pay\b/.test(s)) ? "cond" : "direct";
   k.sel = kw.has("scry") || kw.has("surveil") || /\bscry \w+|\bsurveil \w+|look at the top [^.]* of your library/.test(t);
-  const rem = [];
-  if (/(destroy|exile) (up to \w+ )?target (nonland |noncreature )?permanent/.test(t)) rem.push("flex");
+  const rem = [], dmg = /deals? [^.]{0,70}?damage [^.]{0,110}?(to|among) /, anyT = /(any target|any number of targets|each of (them|[^.]{0,20}targets?)|\w+ targets\b)/;
+  if (/(destroy|exile) (up to \w+ )?target (nonland |noncreature )?permanent|owner of target (nonland )?permanent [^.]{0,30}(shuffles|puts) it|put target (nonland )?permanent [^.]{0,30}library/.test(t)) rem.push("flex");
   else {
-    if (/(destroy|exile) (up to \w+ )?target [^.]{0,30}\bcreature|damage to (any target|target [^.]{0,20}\bcreature)|target creature [^.]{0,30}gets -|\bfights? |target (player|opponent) sacrifices [^.]{0,20}\bcreature/.test(t)) rem.push("creature");
+    const anyDmg = new RegExp(dmg.source + anyT.source).test(t) || (/choose any target/.test(t) && /\bdamage\b/.test(t));
+    if (/(destroy|exile) (up to \w+ )?target [^.]{0,30}\bcreature|target creature [^.]{0,30}gets -|\bfights? |target (player|opponent) sacrifices [^.]{0,20}\bcreature|\btarget (\w+ )?creature\.[^.]{0,80}(exile|destroy) that creature/.test(t) || anyDmg || new RegExp(dmg.source + "target [^.]{0,20}\\bcreature").test(t)) rem.push("creature");
     if (/(destroy|exile) (up to \w+ )?target [^.]{0,40}\b(artifact|enchantment)/.test(t)) rem.push("artench");
-    if (/(destroy|exile) (up to \w+ )?target [^.]{0,40}\bplaneswalker|damage to (any target|target [^.]{0,30}\bplaneswalker)/.test(t)) rem.push("pw");
-    if (!rem.length && /return target [^.]{0,40} to its owner's hand/.test(t)) rem.push("temp");
+    if (/(destroy|exile) (up to \w+ )?target [^.]{0,40}\bplaneswalker/.test(t) || anyDmg || new RegExp(dmg.source + "target [^.]{0,30}\\bplaneswalker").test(t)) rem.push("pw");
+    if (!rem.length && /return (up to \w+ )?target [^.]{0,40} to (its|their) owner'?s'? hands?/.test(t)) rem.push("temp");
   }
   k.rem = rem;
+  k.bounceAny = /return (up to \w+ )?target (nonland )?permanent[^.]{0,40}to (its|their) owner'?s'? hands?/.test(t);       // a bounce that can also send back an artifact or enchantment
   k.wipe = /return all /.test(t) && !/(destroy|exile) (all|each)|damage to each creature|creatures get -|sacrifices/.test(t) ? "reset" : "mass";
-  k.wipeAE = /(destroy|exile) (all|each) [^.]{0,40}(artifacts|enchantments|permanents)/.test(t);
+  k.wipeAE = /(destroy|exile) (all|each) [^.]{0,40}(artifacts|enchantments|permanents)/.test(t) || (/\boverload\b/.test(t) && /target (nonland )?(artifact|enchantment|permanent)/.test(t));
   const how = [];
   if (kw.has("hexproof") || kw.has("shroud") || kw.has("ward") || /hexproof|shroud|\bward\b/.test(t)) how.push("hexproof");
   if (/indestructible/.test(t)) how.push("indestructible");
   if (/protection from/.test(t)) how.push("protection from");
   if (/phases? out/.test(t)) how.push("phasing");
   if (/prevent all/.test(t)) how.push("damage prevention");
-  if (/can't be countered/.test(t)) how.push("can't be countered");
+  if (/regenerate/.test(t)) how.push("regeneration");
+  if (/spells you (control|cast) can't be countered/.test(t)) how.push("your spells can't be countered");
   k.how = how;
   k.scope = /\bcommander\b/.test(t) && /hexproof|indestructible|protection from|phases? out|shroud|\bward\b/.test(t) ? "commander"
-    : /(creatures|permanents) you control (gain|gains|have|has|get|gets|phase)|each (creature|permanent) you control/.test(t) ? "board"
-    : /target (creature|permanent)|equipped creature|enchanted creature|creature you control/.test(t) ? "one" : /can't be countered/.test(t) ? "spells" : "other";
-  k.rec = /from your graveyard to the battlefield|from your graveyard onto the battlefield/.test(t) ? "battlefield" : /cast [^.]{0,40}from your graveyard/.test(t) ? "cast" : "hand";
+    : /(creatures|permanents|artifacts|enchantments|lands) you control (gain|gains|have|has|get|gets|phase)|each (creature|permanent) you control/.test(t) ? "board"
+    : /target (creature|permanent)|equipped creature|enchanted creature|creature you control/.test(t) ? "one" : /spells you (control|cast) can't be countered/.test(t) ? "spells" : "other";
+  k.rec = /from (your|a) graveyard (on)?to the battlefield/.test(t) ? "battlefield" : /(cast|play) [^.]{0,60}from your graveyard|gains? (flashback|escape|retrace|jump-start)|you may (cast|play) (that card|it) this turn|cast the copy|copy it, and you may cast/.test(t) ? "cast" : "hand";
+  k.cost = costCut(t);
   return k;
 }
+// Cost reduction: a permanent or ability that makes other spells (or abilities) cheaper. It isn't ramp: it adds no mana,
+// and helps only what it names. A card that only makes itself cheaper (affinity, improvise, "this spell costs") isn't one.
+// Gives what it reduces ("instant and sorcery spells"), or "".
+function costCut(text) {
+  const t = (text || "").toLowerCase().replace(/\([^)]*\)/g, "");
+  const m = t.match(/(?:^|[.\n]\s*|[,;] )((?:[a-z/-]+ ){0,4})spells you cast (?:that [^.]{0,40})?cost \{[^}]+\}(?: or \{[^}]+\})? less/);
+  if (m) { const w = m[1].trim().replace(/^(and|that|other) /, ""); return (w ? w + " " : "") + "spells"; }
+  if (/activated abilit[^.]{0,60}cost(s)? \{[^}]+\} less/.test(t)) return "activated abilities";
+  return "";
+  return k;
+}
+const costCutOf = T => T ? costCut(T.text) : "";
 const OPT_KIND = {
   ramp: { land: "fetches lands", rock: "mana rock", dork: "mana creature", treasure: "Treasure", extra: "extra land drops", burst: "one-time mana", other: "ramp" },
   draw: { direct: "draws cards", repeat: "repeatable", cond: "conditional", loot: "filtering (draw, then discard)" },
@@ -6713,8 +6746,10 @@ function optAnalyze(d, E) {
   for (const [k, c] of Object.entries(d.cards)) { if (c.side) continue; let m = byName.get(c.name); if (!m) byName.set(c.name, m = { name: c.name, c, qty: 0, cmdr: false }); m.qty += c.qty; if (d.cmdr.includes(k)) m.cmdr = true; }
   const rows = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
   for (const r of rows) {
-    const T = OPT.text.get(r.name) || null, roles = (S.roles && S.roles[r.name]) || r.c.roles || (T ? cardRoles(T.text, T.type || r.c.type) : null);
-    r.T = T; r.k = T ? optKinds(T, r.c) : null; r.roles = roles || []; r.noData = !roles || (!r.c.type && !T); r.land = typeOf(r.c.type) === "Land"; r.mv = Math.floor(r.c.cmc || 0);
+    // your own fix first; then the card's rules text read with the current rules; then the roles saved with the card
+    const T = OPT.text.get(r.name) || null, fresh = T ? cardRoles(T.text, T.type || r.c.type) : null, roles = (S.roles && S.roles[r.name]) || fresh || r.c.roles || null;
+    r.T = T; r.k = T ? optKinds(T, r.c) : null; r.roles = roles || []; r.noData = !roles || (!r.c.type && !T); r.cost = r.k ? r.k.cost : "";
+    r.stale = !!(fresh && r.c.roles && J_(fresh) !== J_(r.c.roles)); r.land = typeOf(r.c.type) === "Land"; r.mv = Math.floor(r.c.cmc || 0);
     r.jobs = r.roles.filter(x => x !== "Creature" && x !== "Land");
   }
   const deck = rows.filter(r => !r.cmdr), cmdrs = rows.filter(r => r.cmdr), sum = l => l.reduce((a, r) => a + r.qty, 0);
@@ -6725,21 +6760,29 @@ function optAnalyze(d, E) {
   const burst = R.Ramp.list.filter(r => r.k && r.k.ramp === "burst"), ramp = R.Ramp.list.filter(r => !burst.includes(r)), early = ramp.filter(r => r.mv <= 2);
   const cmdRamp = cmdrs.some(r => r.roles.includes("Ramp"));
   const sorted = deck.some(r => r.k), unsorted = l => l.filter(r => !r.k);
-  const hitsAE = deck.filter(r => r.k && ((r.roles.includes("Removal") && (r.k.rem.includes("flex") || r.k.rem.includes("artench"))) || (r.roles.includes("Board wipe") && r.k.wipeAE)));
+  const hitsAE = deck.filter(r => r.k && ((r.roles.includes("Removal") && (r.k.rem.includes("flex") || r.k.rem.includes("artench") || r.k.bounceAny)) || (r.roles.includes("Board wipe") && r.k.wipeAE)));
   const boardProt = R.Protection.list.filter(r => r.k && r.k.scope === "board"), selection = spells.filter(r => r.k && r.k.sel);
-  const unknown = spells.filter(r => !r.noData && !r.jobs.length), noData = deck.filter(r => r.noData);
+  const unknown = spells.filter(r => !r.noData && !r.jobs.length && !r.cost), noData = deck.filter(r => r.noData);
   // commander and theme: facts only (on EDHREC's page for the commander, on the theme's page, shares a creature type the commander's text names)
   const c0 = cmdrs[0], cmdText = c0 ? ((c0.T && c0.T.text) || c0.c.text || "").replace(c0.name.split(",")[0], "") : "", tribes = [];
-  if (c0) for (const s of ((c0.c.type || "").split("//")[0].split("—")[1] || "").trim().split(/\s+/).filter(Boolean)) if (new RegExp("\\b" + s + "s?\\b", "i").test(cmdText)) tribes.push(s);
-  for (const t of d.themes || []) { const s = t.replace(/s$/i, ""); if (/^[A-Za-z]+$/.test(s) && !tribes.some(x => x.toLowerCase() === s.toLowerCase())) tribes.push(s); }
-  const tribeOf = (c, T) => tribes.find(s => new RegExp("\\b" + s + "\\b", "i").test(((c.type || "").split("//")[0].split("—")[1] || "")) || (T && new RegExp("\\b" + s + "s?\\b", "i").test(T.text))) || "";
+  // creature types only: the commander's own creature types that its text names, and a theme only when it is a creature type
+  // of a creature card in this deck. A theme such as Spellslinger or Vehicles is a strategy, not a creature type.
+  const ctypes = c => /\b(Creature|Kindred|Tribal)\b/.test((c.type || "").split("//")[0].split("—")[0]) ? ((c.type || "").split("//")[0].split("—")[1] || "").trim().split(/\s+/).filter(Boolean) : [];
+  const deckTypes = new Set(rows.flatMap(r => ctypes(r.c)).map(x => x.toLowerCase()));
+  if (c0) for (const s of ctypes(c0.c)) if (new RegExp("\\b" + s + "s?\\b", "i").test(cmdText)) tribes.push(s);
+  for (const t of d.themes || []) { const s = t.replace(/(?<=[^s])s$/i, ""); if (/^[A-Za-z]+$/.test(s) && deckTypes.has(s.toLowerCase()) && !tribes.some(x => x.toLowerCase() === s.toLowerCase())) tribes.push(s[0].toUpperCase() + s.slice(1)); }
+  const tribeOf = (c, T) => tribes.find(s => ctypes(c).some(x => x.toLowerCase() === s.toLowerCase()) || (T && new RegExp("\\b" + s + "s?\\b", "i").test(T.text))) || "";
   for (const r of spells) { r.stat = E.stat.get(r.name) || null; r.tstat = E.tstat.get(r.name) || null; r.tribe = tribeOf(r.c, r.T); }
   const top = new Set(E.R && !E.R.err ? E.R.rows.map(x => x.name) : []);
-  const syn = { tribes, onCmd: spells.filter(r => r.stat), inTop: spells.filter(r => top.has(r.name)), onTheme: spells.filter(r => r.tstat), tribe: spells.filter(r => r.tribe), have: E.stat.size > 0,
-    noLink: E.stat.size ? spells.filter(r => !r.stat && !r.tstat && !r.tribe && !r.jobs.length) : [] };
+  // theme support: on the theme's EDHREC list AND played more in those decks than elsewhere (positive synergy). A card on the list
+  // with no synergy is a staple of every deck in its colors, not a sign of the theme.
+  const tsyn = r => r.tstat && r.tstat.syn != null && r.tstat.syn > 0;
+  const syn = { tribes, onCmd: spells.filter(r => r.stat), inTop: spells.filter(r => top.has(r.name)), onTheme: spells.filter(tsyn), onThemeAny: spells.filter(r => r.tstat), tribe: spells.filter(r => r.tribe), have: E.stat.size > 0,
+    noLink: E.stat.size ? spells.filter(r => !r.stat && !tsyn(r) && !r.tribe && !r.jobs.length && !r.cost) : [] };
+  const cost = deck.filter(r => r.cost), cmdCost = cmdrs.filter(r => r.cost), costN = sum(cost);
   // possible weaknesses: the role table's own ranges, plus a few specific checks. Nothing is flagged for a deck that is far from finished.
   const ranges = g.ranges ? Object.fromEntries(g.ranges.map(([x, lo, hi]) => [x, [lo, hi]])) : null, full = d.format === "commander" ? 100 : 60, unfinished = total < full * 0.6;
-  const weak = [], healthy = [], n = { Land: R.Land.copies, Ramp: sum(ramp), "Card draw": R["Card draw"].copies, Removal: R.Removal.copies, "Board wipe": R["Board wipe"].copies, Protection: R.Protection.copies };
+  const weak = [], notes = [], healthy = [], n = { Land: R.Land.copies, Ramp: sum(ramp), "Card draw": R["Card draw"].copies, Removal: R.Removal.copies, "Board wipe": R["Board wipe"].copies, Protection: R.Protection.copies };
   const cards = (v, w) => `${v} ${w}${v === 1 ? "" : "s"}`, cmdName = c0 ? c0.name : "";
   if (ranges && !unfinished) {
     const W = {
@@ -6750,12 +6793,24 @@ function optAnalyze(d, E) {
       "Board wipe": { title: "Few board wipes", unit: "board wipe", why: "When an opponent's board outgrows yours, a board wipe is the way back into the game.", how: "Add one or two board wipes; a deck that relies on its own creatures may prefer ones that spare them." },
       Protection: { title: "Limited protection", unit: "protection card", why: "Your commander and your most important creatures are exposed to removal.", how: "Add cards that give hexproof or indestructible, or that protect the whole board." }
     };
+    const creatures0 = R.Creature.copies, share = nSpells ? creatures0 / nSpells : 0, counters = R.Counterspell.copies, cutN = costN + (cmdCost.length ? 1 : 0);
+    // a count below the range isn't always a weakness: some decks are built that way on purpose. Where the deck's own numbers
+    // explain it, it is listed under "Worth a look" with the reason, not as a weakness.
+    const why = {
+      Land: (v, lo) => lo - v <= 3 && n.Ramp + cutN >= 10 && g.avg <= 3.5 ? `It has ${cards(n.Ramp, "ramp source")}, ${cutN ? `${cards(cutN, "cost reducer")} ` : ""}and an average mana value of ${g.avg.toFixed(2)}. Decks with plenty of ramp and a low curve often run a few lands fewer, so this may be deliberate. If you miss land drops in play, add a land.` : "",
+      Ramp: (v, lo) => cutN && v + cutN >= lo ? `It also has ${cards(cutN, "cost reducer")} (${[...cmdCost, ...cost].map(r => r.name).join(", ")}). They aren't ramp (they add no mana and help only the spells they name), but together with the ramp they cover the usual range.` : "",
+      "Board wipe": () => share >= 0.4 ? `${creatures0} of its ${nSpells} spells are creatures. A board wipe would hit this deck's own board too, and creature decks often run few or none, relying on speed instead. If you want one, look for one that spares your creatures.`
+        : share > 0.25 ? `With ${creatures0} creatures among ${nSpells} spells, whether it needs more depends on how it wins: a deck that builds a board wants few, a deck that controls the game wants more.` : "",
+      Protection: () => counters >= 3 ? `It has ${cards(counters, "counterspell")}, which can stop removal aimed at your commander or key cards, though only while you hold mana up.` : ""
+    };
     for (const x of Object.keys(W)) { const [lo, hi] = ranges[x], v = n[x];
-      if (v < lo) weak.push(Object.assign({ key: x.toLowerCase().replace(/\W+/g, "-"), role: x, roles: [x], counts: `${cards(v, W[x].unit)}; the suggested range is ${lo}–${hi}.${x === "Ramp" && burst.length ? ` (${cards(sum(burst), "card")} that give${sum(burst) === 1 ? "s" : ""} mana once ${sum(burst) === 1 ? "is" : "are"} not counted.)` : ""}` }, W[x]));
+      if (v < lo) { const counts = `${cards(v, W[x].unit)}; the suggested range is ${lo}–${hi}.${x === "Ramp" && burst.length ? ` (${cards(sum(burst), "card")} that give${sum(burst) === 1 ? "s" : ""} mana once ${sum(burst) === 1 ? "is" : "are"} not counted.)` : ""}${x === "Ramp" && cutN && !(why.Ramp(v, lo)) ? ` Cost reducers (${cutN}) aren't counted as ramp.` : ""}`, nb = why[x] ? why[x](v, lo) : "";
+        if (nb) notes.push({ key: x.toLowerCase().replace(/\W+/g, "-"), role: x, title: W[x].title, counts, why: nb });
+        else weak.push(Object.assign({ key: x.toLowerCase().replace(/\W+/g, "-"), role: x, roles: [x], counts }, W[x])); }
       else healthy.push({ role: x, v, lo, hi, high: v > hi }); }
     if (n.Ramp >= ranges.Ramp[0] && sum(early) < 4) weak.push({ key: "early-ramp", role: "Ramp", roles: ["Ramp"], test: c => (c.cmc || 0) <= 2, not: k => k.ramp === "burst", title: "Ramp arrives late", counts: `${sum(early)} of your ${n.Ramp} ramp cards cost two or less.`,
       why: "Ramp helps most in the first turns. At three or more mana it competes with the cards it is meant to speed up.", how: "Trade some of the more expensive ramp for ramp that costs two or less." });
-    if (sorted && !unsorted(R.Removal.list).length && hitsAE.length < 2) weak.push({ key: "artifact-enchantment", role: "Removal", roles: ["Removal", "Board wipe"], kind: (k, c) => (rolesOf(c).includes("Removal") && (k.rem.includes("flex") || k.rem.includes("artench"))) || (rolesOf(c).includes("Board wipe") && k.wipeAE),
+    if (sorted && !unsorted(R.Removal.list).length && hitsAE.length < 2 && !(R.Removal.copies >= ranges.Removal[0] && hitsAE.length)) weak.push({ key: "artifact-enchantment", role: "Removal", roles: ["Removal", "Board wipe"], kind: (k, c) => (rolesOf(c).includes("Removal") && (k.rem.includes("flex") || k.rem.includes("artench"))) || (rolesOf(c).includes("Board wipe") && k.wipeAE),
       title: "Very little artifact or enchantment removal", counts: `${cards(hitsAE.length, "card")} in the deck can remove an artifact or an enchantment.`,
       why: "Many of the strongest Commander cards are artifacts and enchantments, and creature removal can't touch them.", how: "Add removal that hits artifacts and enchantments, or any permanent." });
     const creatures = R.Creature.copies, rec = R.Recursion.copies;
@@ -6766,11 +6821,11 @@ function optAnalyze(d, E) {
   if (!unfinished && nSpells >= 30) {
     const pc = v => Math.round(v / nSpells * 100), lab = ["0–1", "2", "3", "4", "5", "6+"], cheap = curve[0] + curve[1], big = curve.map((v, i) => [v, i]).sort((a, b) => b[0] - a[0])[0];
     if (cheap / nSpells < 0.25) weak.push({ key: "early-plays", title: "Few early plays", counts: `${cheap} of ${nSpells} spells (${pc(cheap)}%) cost two or less.`, why: "The first turns may pass without a play, which leaves you behind before the game has started.", how: "Trade some expensive cards for cheaper ones that do a similar job." });
-    if (big[0] / nSpells >= 0.35) weak.push({ key: "curve-peak", title: `Mana curve concentrated at ${lab[big[1]]}`, counts: `${big[0]} of ${nSpells} spells (${pc(big[0])}%) have mana value ${lab[big[1]]}.`, why: "Too many cards at one cost can leave turns where you can't use your mana well.", how: "Spread some of them to the costs next to it." });
+    if (big[1] >= 2 && big[1] <= 4 && big[0] / nSpells >= (big[1] === 2 ? 0.4 : 0.3)) weak.push({ key: "curve-peak", title: `Mana curve concentrated at ${lab[big[1]]}`, counts: `${big[0]} of ${nSpells} spells (${pc(big[0])}%) have mana value ${lab[big[1]]}.`, why: "Too many cards at one cost can leave turns where you can't use your mana well.", how: "Spread some of them to the costs next to it." });
     if (curve[5] / nSpells >= 0.2 && (!ranges || n.Ramp < ranges.Ramp[1])) weak.push({ key: "expensive", title: "Many expensive cards", counts: `${curve[5]} of ${nSpells} spells (${pc(curve[5])}%) cost six or more, with ${cards(n.Ramp, "ramp card")} to reach them.`,
       why: "Expensive cards can sit in your hand for many turns. That suits a deck built to ramp hard or to play a long game; with this much ramp it may be slow.", how: "Either add ramp or trade a few of the most expensive cards for cheaper ones. If the deck is meant to be top-heavy, this is not a problem." });
   }
-  return { rows, deck, cmdrs, spells, nSpells, total, uniq: rows.length, side: deckStats(d).sideN, curve, avg: g.avg, R, n, ramp, burst, early, cmdRamp, sorted, hitsAE, boardProt, selection, unknown, noData, syn, weak, healthy, ranges, unfinished, full, cmdName };
+  return { rows, deck, cmdrs, spells, nSpells, total, uniq: rows.length, side: deckStats(d).sideN, curve, avg: g.avg, R, n, ramp, burst, early, cmdRamp, sorted, hitsAE, boardProt, selection, unknown, noData, syn, weak, notes, healthy, ranges, unfinished, full, cmdName, cost, cmdCost, costN, stale: rows.filter(r => r.stale) };
 }
 // Cards that could fill a weakness: ones you own that have the role, fit the deck's colors and format and aren't in it
 // (most played with this commander first, then on the theme's list, then by overall EDHREC rank); then cards you don't
@@ -6780,7 +6835,7 @@ function optRecs(d, w, E) {
   const fits = c => w.roles.some(r => rolesOf(c).includes(r)) && !(w.role === "Land" && (c.basic || /^Basic /.test(c.type || ""))) && (!w.test || w.test(c)) && !t50Blocked(c, d);
   for (const k in S.coll) { const e = S.coll[k]; if (!(e.qty > 0)) continue; if (isWish(e.binder)) { wish.add(e.name); continue; }
     if (seen.has(e.name) || inDeck.has(e.name) || !fits(e)) continue; seen.add(e.name); owned.push({ name: e.name, card: e, entry: e }); }
-  const key = x => { const s = E.stat.get(x.name), t = E.tstat.get(x.name), u = s || t || {}; return [s ? 0 : t ? 1 : 2, -(u.syn ?? -2), -(u.num || 0), x.card.er || 1e9]; };
+  const key = x => { const s = E.stat.get(x.name), t0 = E.tstat.get(x.name), t = t0 && t0.syn != null && t0.syn > 0 ? t0 : null, u = s || t || {}; return [s ? 0 : t ? 1 : 2, -(u.syn ?? -2), -(u.num || 0), x.card.er || 1e9]; };
   owned.sort((a, b) => { const A = key(a), B = key(b); for (let i = 0; i < 4; i++) if (A[i] !== B[i]) return A[i] - B[i]; return a.name.localeCompare(b.name); });
   if (E.R && !E.R.err) for (const r of [...E.R.rows, ...E.R.lands]) { const c = r.looked; if (!c || inDeck.has(r.name) || seen.has(r.name) || ownedByName(r.name) > 0 || !fits(c)) continue; seen.add(r.name); missing.push({ name: r.name, card: c, wish: wish.has(r.name) }); }
   return { owned, missing };
@@ -6796,11 +6851,58 @@ function optWhy(x, w, E, A) {
     : r === "Recursion" ? (k ? ({ battlefield: "Returns cards from your graveyard to the battlefield", cast: "Lets you cast cards from your graveyard", hand: "Returns cards from your graveyard to your hand" })[k.rec] : "Recursion")
     : r === "Land" ? "A land" : r;
   const also = roles.filter(y => y !== r && y !== "Creature" && y !== "Land"), s = E.stat.get(c.name), t = E.tstat.get(c.name), tribe = A.syn.tribes.find(y => new RegExp("\\b" + y + "\\b", "i").test(((c.type || "").split("//")[0].split("—")[1] || "")));
-  return what + "." + (also.length ? ` Also: ${also.join(", ").toLowerCase()}.` : "") + (s && s.num && s.pot ? ` In ${Math.round(s.num / s.pot * 100)}% of ${E.cmd} decks on EDHREC.` : s ? ` On EDHREC's page for ${E.cmd}.` : t ? ` On EDHREC's ${E.theme} list.` : "") + (tribe ? ` A ${tribe}, which your deck is built around.` : "");
+  return what + "." + (also.length ? ` Also: ${also.join(", ").toLowerCase()}.` : "") + (s && s.num && s.pot ? ` In ${Math.round(s.num / s.pot * 100)}% of ${E.cmd} decks on EDHREC.` : s ? ` On EDHREC's page for ${E.cmd}.` : t && t.syn != null && t.syn > 0 ? ` Played more in ${E.theme} decks than elsewhere (EDHREC synergy +${Math.round(t.syn * 100)}%).` : "") + (tribe ? ` A ${tribe}, which your deck is built around.` : "");
+}
+/* ---------- updating saved roles after the role rules change ----------
+   Each card saved in the collection or a deck carries "roles", worked out from its rules text when it was added
+   (cardRoles in slim). When the rules improve, those saved copies keep the old answer. This re-reads the rules text
+   for the names asked, works out the roles again, and changes nothing but that one field, wherever a card of that name
+   is saved (collection entries and deck cards). Your own fixes (S.roles) are left as they are. Before changing anything
+   the old roles are copied to this device (IndexedDB key "rolesBackup"; memory only if that isn't available), and
+   afterwards every changed record is compared with its copy, field by field, without "roles": if anything else
+   differs, the old roles are put back and nothing is kept. */
+const ROLEBK = { has: null, at: 0, mem: null };
+async function roleBackupLoad() { try { const b = ROLEBK.mem || (idb.ok ? await idbGet("rolesBackup") : null); ROLEBK.has = !!(b && b.items && b.items.length); ROLEBK.at = b ? b.at : 0; if (b) ROLEBK.mem = b; } catch (e) { ROLEBK.has = false; } }
+const allCardNames = () => [...new Set([...Object.values(S.coll).map(e => e.name), ...Object.values(S.decks).flatMap(d => Object.values(d.cards).map(c => c.name))])].filter(Boolean);
+function roleRecords(names) {
+  const want = new Set(names), out = [];
+  for (const k in S.coll) { const e = S.coll[k]; if (want.has(e.name)) out.push({ at: "coll", k, rec: e }); }
+  for (const d of Object.values(S.decks)) for (const k in d.cards) { const c = d.cards[k]; if (want.has(c.name)) out.push({ at: "deck", deck: d.id, k, rec: c }); }
+  return out;
+}
+const noRoles = o => { const c = Object.assign({}, o); delete c.roles; return J_(c); };
+async function refreshRoles(names, onProg) {
+  names = [...new Set(names)].filter(Boolean); OPT.failed.clear();
+  for (let i = 0; i < names.length; i += 300) { await optTexts(names.slice(i, i + 300)); onProg && onProg(Math.min(i + 300, names.length), names.length); }
+  const fresh = new Map(); let failed = 0;
+  for (const n of names) { const T = OPT.text.get(n); if (T) fresh.set(n, cardRoles(T.text, T.type)); else failed++; }
+  const recs = roleRecords([...fresh.keys()]).filter(x => J_(x.rec.roles) !== J_(fresh.get(x.rec.name)));
+  if (!recs.length) return { changed: 0, names: 0, failed };
+  // 1. a copy of the old roles, kept on this device
+  const backup = { at: Date.now(), items: recs.map(x => ({ at: x.at, deck: x.deck, k: x.k, name: x.rec.name, roles: x.rec.roles === undefined ? null : x.rec.roles })) };
+  ROLEBK.mem = backup; ROLEBK.has = true; ROLEBK.at = backup.at;
+  try { if (idb.ok) await idbSet("rolesBackup", backup); } catch (e) {}
+  // 2. only "roles" changes; 3. everything else is checked to be exactly as it was
+  const before = recs.map(x => noRoles(x.rec)), counts = J_([Object.keys(S.coll).length, Object.values(S.decks).map(d => Object.keys(d.cards).length)]);
+  for (const x of recs) x.rec.roles = fresh.get(x.rec.name).slice();
+  const ok = recs.every((x, i) => noRoles(x.rec) === before[i]) && counts === J_([Object.keys(S.coll).length, Object.values(S.decks).map(d => Object.keys(d.cards).length)]);
+  if (!ok) { recs.forEach((x, i) => { const o = backup.items[i].roles; if (o === null) delete x.rec.roles; else x.rec.roles = o; }); throw new Error("Something other than the roles would have changed, so nothing was changed."); }
+  save();
+  return { changed: recs.length, names: new Set(recs.map(x => x.rec.name)).size, failed, coll: recs.filter(x => x.at === "coll").length, decks: recs.filter(x => x.at === "deck").length };
+}
+async function restoreRoles() {
+  const b = ROLEBK.mem || (idb.ok ? await idbGet("rolesBackup").catch(() => null) : null); if (!b || !b.items) throw new Error("There is no copy of earlier roles on this device.");
+  let n = 0;
+  for (const it of b.items) { const rec = it.at === "coll" ? S.coll[it.k] : S.decks[it.deck] && S.decks[it.deck].cards[it.k];
+    if (!rec || rec.name !== it.name) continue;                                                   // removed or replaced since: left alone
+    if (it.roles === null) delete rec.roles; else rec.roles = it.roles; n++; }
+  ROLEBK.mem = null; ROLEBK.has = false; try { if (idb.ok) await idbSet("rolesBackup", null); } catch (e) {}
+  save(); return n;
 }
 async function drawOptimizer(d) {
   const el = $("#dPane"); if (!el) return;
   const st = optState[d.id] = optState[d.id] || { open: new Set(), seq: 0 };
+  if (ROLEBK.has === null) await roleBackupLoad();
   const names = [...new Set(Object.values(d.cards).filter(c => !c.side).map(c => c.name))];
   if (!names.length) { el.innerHTML = `<div class="box" id="opEmpty"><b>There is nothing to analyse yet.</b><p class="small muted" style="margin:4px 0 0">This deck's main deck has no cards. Add some on the Cards tab, then come back.</p></div>`; return; }
   const cmd = d.format === "commander" ? deckCommanderName(d) : null, theme = (d.themes || [])[0] || "", key = (cmd || "") + "|" + theme, my = ++st.seq;
@@ -6839,10 +6941,16 @@ async function drawOptimizer(d) {
   const mvLine = l => { const m = {}; for (const r of l) { const b = r.mv >= 4 ? "4+" : String(r.mv); m[b] = (m[b] || 0) + r.qty; } return ["0", "1", "2", "3", "4+"].filter(b => m[b]).map(b => `${b}: ${m[b]}`).join(" · "); };
   const sRamp = sec("ramp", "Ramp", count(R.Ramp.list), `
     ${kv("Ramp sources", A.n.Ramp, "opRampN")}${A.burst.length ? kv("One-time mana (not counted as ramp)", sum(A.burst), "opBurstN") : ""}${kv("Cost two or less", sum(A.early), "opEarlyN")}
+    ${A.cost.length || A.cmdCost.length ? `<p class="small muted" id="opRampCut" style="margin:0">Cost reducers aren't counted here; see Cost reduction.</p>` : ""}
     ${A.ramp.length ? `<p class="small muted num" id="opRampMv" style="margin:0">By mana value: ${mvLine(A.ramp)}</p>` : ""}
     <p class="small" id="opRampSay" style="margin:0">${!A.ramp.length ? "No ramp found in this deck." : sum(A.early) >= 4 ? `${sum(A.early)} of them cost two or less, so ramp is there in the early turns.` : `Only ${sum(A.early)} cost${sum(A.early) === 1 ? "s" : ""} two or less, so most of the ramp arrives from turn three on.`}
       ${A.cmdName ? (A.cmdRamp ? ` Your commander makes mana too. ${A.ranges && A.n.Ramp < A.ranges.Ramp[0] ? `With only ${cnt(A.n.Ramp, "other source")}, the deck leans on it for acceleration.` : `With ${cnt(A.n.Ramp, "other source")}, the deck doesn't depend on it.`}` : " The commander isn't a ramp source, so the deck's acceleration doesn't depend on it.") : ""}</p>
     ${list(R.Ramp.list, r => r.k ? chip(K.ramp[r.k.ramp]) + `<span class="small muted num">MV ${r.mv}</span>` : `<span class="small muted num">MV ${r.mv}</span>`, "Ramp")}`);
+  const cutList = [...A.cmdCost, ...A.cost];
+  const sCost = sec("cost", "Cost reduction", count(A.cost) + (A.cmdCost.length ? " + commander" : ""), `
+    ${kv("Cost reducers in the deck", A.costN, "opCostN")}
+    <p class="small" id="opCostSay" style="margin:0">${!A.sorted ? "Card text isn't loaded, so cost reducers can't be identified." : A.cmdCost.length ? `Your commander makes ${esc(A.cmdCost.map(r => r.cost).join(", "))} cheaper. ` : A.cmdName ? "Your commander doesn't reduce costs. " : ""}${A.sorted ? (cutList.length ? "Cost reducers make some spells cheaper but add no mana, so they aren't counted as ramp and help only the spells they name." : "No cost reducers found.") : ""}</p>
+    ${cutList.length ? list(cutList, r => chip(r.cost) + (r.cmdr ? chip("commander") : ""), null) : ""}`);
   const D = R["Card draw"].list, tut = R.Tutor.list, selOnly = A.selection.filter(r => !r.roles.includes("Card draw"));
   const sDraw = sec("draw", "Card draw and card advantage", count(D), `
     ${kv("Direct card draw", sum(of(D, k => k.draw === "direct")), "opDrawDirect")}${kv("Repeatable", sum(of(D, k => k.draw === "repeat")), "opDrawRepeat")}${kv("Conditional", sum(of(D, k => k.draw === "cond")), "opDrawCond")}${kv("Filtering (draw, then discard)", sum(of(D, k => k.draw === "loot")), "opDrawLoot")}
@@ -6876,12 +6984,12 @@ async function drawOptimizer(d) {
     ${!cmd ? `<p class="small" id="opSynNo" style="margin:0">${d.format === "commander" ? "This deck has no commander yet, so there is no commander to measure it against." : "This isn't a Commander deck, so there is no commander to measure it against."}</p>`
       : !Sy.have ? `<p class="small" id="opSynNo" style="margin:0">${E.err && E.err.notFound ? `EDHREC has no page for ${esc(cmd)}, so its statistics can't be used here.` : `EDHREC's statistics for ${esc(cmd)} couldn't be loaded, so commander-specific figures are unavailable.`} Nothing is put in their place.</p>`
       : `${kv(`On EDHREC's page for ${esc(cmd)}`, `${Sy.onCmd.length} of ${A.spells.length}`, "opSynCmd")}${kv("Of those, in its Top 50", Sy.inTop.length, "opSynTop")}`}
-    ${theme ? (E.themeOk ? kv(`On EDHREC's ${esc(theme)} list`, `${Sy.onTheme.length} of ${A.spells.length}`, "opSynTheme") : `<p class="small" id="opThemeNo" style="margin:0">EDHREC's list for the theme “${esc(theme)}” couldn't be loaded.</p>`) : `<p class="small muted" id="opThemeNone" style="margin:0">No theme is chosen for this deck. Choose one on the Suggestions tab to see how the deck supports it.</p>`}
+    ${theme ? (E.themeOk ? kv(`Played more in ${esc(theme)} decks than elsewhere (on EDHREC's list, positive synergy)`, `${Sy.onTheme.length} of ${A.spells.length}`, "opSynTheme") + (Sy.onThemeAny.length > Sy.onTheme.length ? kv(`On the ${esc(theme)} list, but played as much in other decks (synergy 0 or lower)`, Sy.onThemeAny.length - Sy.onTheme.length, "opSynThemeGen") : "") : `<p class="small" id="opThemeNo" style="margin:0">EDHREC's list for the theme “${esc(theme)}” couldn't be loaded.</p>`) : `<p class="small muted" id="opThemeNone" style="margin:0">No theme is chosen for this deck. Choose one on the Suggestions tab to see how the deck supports it.</p>`}
     ${Sy.tribes.length ? kv(`${esc(Sy.tribes.join(" / "))} cards, or cards that name them`, Sy.tribe.length, "opSynTribe") : ""}
     <p class="small muted" style="margin:0">These are counts of facts: a card is on a list, or it shares a creature type with the deck's plan. Deckhand doesn't read what your commander's abilities reward beyond that, so a card that isn't counted here may still fit the deck perfectly.</p>
     ${an && an.owned.length ? `<div id="opSynOpp"><span class="small"><b>Synergy you already own</b> · ${cnt(an.owned.length, "card")} from ${esc(cmd)}'s Top 50 that you own and haven't put in. The first ${Math.min(5, an.owned.length)}:</span><div class="list">${an.owned.slice(0, 5).map(r => { const i = recs.push({ name: r.name, card: r.card, entry: r.entry }) - 1;
       return `<div class="item" data-name="${esc(r.name)}">${r.card && r.card.img ? `<img loading="lazy" src="${esc(r.card.img)}" alt="">` : `<span class="t50-noimg" aria-hidden="true"></span>`}<button class="tap" data-oprec="${i}"><div class="name">${esc(r.name)}</div><div class="small muted num">#${r.rank + 1} in the Top 50${r.syn != null ? ` · synergy ${r.syn >= 0 ? "+" : ""}${Math.round(r.syn * 100)}%` : ""}${r.incl != null ? ` · in ${Math.round(r.incl * 100)}% of decks` : ""}</div></button><div class="right"><button class="btn sm primary" data-opadd="${i}" aria-label="Add ${esc(r.name)} to this deck">＋</button></div></div>`; }).join("")}</div><span class="small muted">The full comparison is on the Upgrade tab, under Top 50 analyzer.</span></div>` : ""}
-    ${Sy.have ? `<span class="small"><b>On ${esc(cmd)}'s page</b></span>${list(Sy.onCmd.slice().sort((a, b) => (b.stat.syn ?? -2) - (a.stat.syn ?? -2) || a.name.localeCompare(b.name)), r => `<span class="small muted num">${[r.stat.syn != null ? `synergy ${r.stat.syn >= 0 ? "+" : ""}${Math.round(r.stat.syn * 100)}%` : "", pct(r.stat) ? `in ${pct(r.stat)} of decks` : ""].filter(Boolean).join(" · ")}</span>` + (r.tstat ? chip(theme) : "") + (r.tribe ? chip(r.tribe) : ""), null)}` : ""}
+    ${Sy.have ? `<span class="small"><b>On ${esc(cmd)}'s page</b></span>${list(Sy.onCmd.slice().sort((a, b) => (b.stat.syn ?? -2) - (a.stat.syn ?? -2) || a.name.localeCompare(b.name)), r => `<span class="small muted num">${[r.stat.syn != null ? `synergy ${r.stat.syn >= 0 ? "+" : ""}${Math.round(r.stat.syn * 100)}%` : "", pct(r.stat) ? `in ${pct(r.stat)} of decks` : ""].filter(Boolean).join(" · ")}</span>` + (r.tstat && r.tstat.syn > 0 ? chip(theme) : "") + (r.tribe ? chip(r.tribe) : ""), null)}` : ""}
     ${Sy.have && Sy.noLink.length ? `<div id="opNoLink"><span class="small"><b>No link found</b> · ${cnt(Sy.noLink.length, "card")}</span><p class="small muted" style="margin:2px 0">Not on EDHREC's lists for this deck, no shared creature type, and no role found in the rules text. That is all this says: these cards may be personal picks, new cards or part of a plan Deckhand can't see. It is not a list of cards to take out.</p>${list(Sy.noLink, null, null)}</div>` : ""}`);
   const sUnknown = A.unknown.length || A.noData.length ? sec("unknown", "No role identified", cnt(A.unknown.length + A.noData.length, "card"), `
     <p class="small muted" style="margin:0">Cards whose rules text matched none of the roles counted here (creatures included: being a creature isn't counted as a job). Deckhand would rather say it doesn't know than guess. If a card does have one of these roles, fix it on the Role balance view and it will be counted.</p>
@@ -6904,8 +7012,9 @@ async function drawOptimizer(d) {
   const other = A.weak.filter(w => !low.includes(w)).map(w => w.title.toLowerCase());
   const assess = A.unfinished ? `This deck has ${A.total} of ${A.full} cards, so it is too early to say what it lacks; the sections below show what is in it so far.`
     : `${Sy.have && A.spells.length ? `${Sy.onCmd.length} of your ${A.spells.length} nonland cards are among those played with ${cmd} on EDHREC. ` : ""}${!A.ranges ? "Suggested ranges exist only for Commander decks, so this shows what the deck holds without measuring it against them." + (other.length ? ` Worth a look: ${join(other)}.` : "")
+      : !A.weak.length && A.notes.length ? `Nothing stands out as weak. ${cap(join(A.notes.map(w => rl[w.role])))} ${A.notes.length === 1 && !/s$/.test(rl[A.notes[0].role]) ? "is" : "are"} below the usual range, but the deck's own numbers explain it (see Worth a look).`
       : !A.weak.length ? "Nothing stands out as weak: lands, ramp, card draw, removal, board wipes and protection are all at or above their usual ranges, and the mana curve has no unusual shape."
-      : `${hl.length ? cap(join(hl.map(h => rl[h.role]))) + ` ${hl.length === 1 && !/s$/.test(rl[hl[0].role]) ? "is" : "are"} at or above the usual range` : ""}${low.length ? `${hl.length ? ", but " : ""}${hl.length ? "" : "The deck's "}${join(low.map(w => `${rl[w.role]} (${A.n[w.role]})`))} look${low.length === 1 && !/s$/.test(rl[low[0].role]) ? "s" : ""} light` : ""}.${other.length ? ` Also worth a look: ${join(other)}.` : ""}`}`;
+      : `${hl.length ? cap(join(hl.map(h => rl[h.role]))) + ` ${hl.length === 1 && !/s$/.test(rl[hl[0].role]) ? "is" : "are"} at or above the usual range` : ""}${low.length ? `${hl.length ? ", but " : ""}${hl.length ? "" : "The deck's "}${join(low.map(w => `${rl[w.role]} (${A.n[w.role]})`))} look${low.length === 1 && !/s$/.test(rl[low[0].role]) ? "s" : ""} light` : ""}.${other.length ? ` Also worth a look: ${join(other)}.` : ""}${A.notes.length ? ` ${cap(join(A.notes.map(w => rl[w.role])))} ${A.notes.length === 1 && !/s$/.test(rl[A.notes[0].role]) ? "is" : "are"} below the usual range for reasons the deck explains (see Worth a look).` : ""}`}`;
   const multi = A.spells.filter(r => r.jobs.length > 1);
   el.innerHTML = `<div class="stack" id="op">
     <div class="row" style="justify-content:space-between;gap:8px;align-items:flex-start"><div style="min-width:0"><span class="label">Deck analysis</span>
@@ -6914,6 +7023,10 @@ async function drawOptimizer(d) {
     ${cmd && !Sy.have ? `<p class="small gold" id="opNoEdh">${E.err && E.err.notFound ? `EDHREC has no page for ${esc(cmd)}.` : "EDHREC's statistics couldn't be loaded."} The analysis of the deck's own cards below is complete, but commander-specific suggestions are unavailable; nothing is made up in their place.</p>` : ""}
     ${!cmd && d.format === "commander" ? `<p class="small gold" id="opNoCmd">This deck has no commander yet. The deck's cards are analysed, but nothing can be said about its commander, and color limits aren't applied to suggestions.</p>` : ""}
     ${d.cmdr.length > 1 ? `<p class="small gold" id="opPartner">This deck has two commanders. EDHREC's figures here are for ${esc(cmd)} only.</p>` : ""}
+    ${A.stale.length || ROLEBK.has ? `<div class="box stack" id="opStale" style="gap:6px">${A.stale.length ? `<p class="small" style="margin:0"><b>${cnt(A.stale.length, "card")} in this deck ${A.stale.length === 1 ? "has" : "have"} roles saved under Deckhand's older rules</b> (${esc(A.stale.slice(0, 3).map(r => r.name).join(", "))}${A.stale.length > 3 ? ", …" : ""}). This analysis already reads them with the current rules; the Role balance view and the Suggestions still use the saved roles until they are updated.</p>
+      <div class="row wrap" style="gap:6px"><button class="btn sm primary" id="opRoleDeck">Update this deck's cards</button><button class="btn sm" id="opRoleAll">Update all your cards</button></div>
+      <p class="small muted" style="margin:0">Only the saved roles change, wherever these cards are (this deck, other decks, your collection). A copy of the old roles is kept on this device so you can put them back. Your own role fixes aren't touched.</p>` : ""}
+      ${ROLEBK.has ? `<div class="row wrap" style="gap:6px;align-items:center"><span class="small muted">Roles were updated ${esc(ROLEBK.at ? dayLabel(ROLEBK.at) : "")}.</span><button class="btn sm ghost" id="opRoleUndo">Put back the earlier roles</button></div>` : ""}<p class="small muted" id="opRoleMsg" style="margin:0"></p></div>` : ""}
     <div class="summary an-sum op-sum" id="opSum"><div><span class="label">Cards analysed</span><b class="num" id="opTotal">${A.total}</b></div><div><span class="label">Average mana value</span><b class="num" id="opAvg">${A.avg.toFixed(2)}</b></div>
       <div><span class="label">Ramp</span><b class="num" id="opNRamp">${A.n.Ramp}</b></div><div><span class="label">Card draw</span><b class="num" id="opNDraw">${A.n["Card draw"]}</b></div><div><span class="label">Removal</span><b class="num" id="opNRem">${A.n.Removal}</b></div>
       <div><span class="label">Board wipes</span><b class="num" id="opNWipe">${A.n["Board wipe"]}</b></div><div><span class="label">Protection</span><b class="num" id="opNProt">${A.n.Protection}</b></div><div><span class="label">Lands</span><b class="num" id="opNLand">${A.n.Land}</b></div></div>
@@ -6922,11 +7035,21 @@ async function drawOptimizer(d) {
     <div class="box stack" id="opWeak" style="gap:8px"><div class="row" style="justify-content:space-between"><span class="label">${A.weak.length ? "Possible weaknesses" : "Weaknesses"}</span><b class="num" id="opWeakN">${A.weak.length}</b></div>
       ${A.unfinished ? `<p class="small muted" id="opUnfinished" style="margin:0">Not judged yet: the deck has ${A.total} of ${A.full} cards, and low counts in an unfinished deck aren't weaknesses.</p>`
         : A.weak.length ? `<p class="small muted" style="margin:0">Measured against the same suggested ranges as the Role balance view, plus a few specific checks. They are pointers, not rules: your deck's plan may make some of them irrelevant. ＋ adds one copy of a card you own to the main deck; nothing is ever removed or replaced, and your collection isn't changed.</p>${A.weak.map(weakHTML).join("")}`
-        : `<p class="small" id="opNoWeak" style="margin:0">None found. ${A.ranges ? "Every counted role is at or above its suggested range and the mana curve has no unusual shape." : "The mana curve has no unusual shape; suggested role ranges exist only for Commander decks."}</p>`}
+        : `<p class="small" id="opNoWeak" style="margin:0">None found. ${A.ranges ? (A.notes.length ? "Where a count is below its suggested range, the deck's own numbers explain it (below)." : "Every counted role is at or above its suggested range and the mana curve has no unusual shape.") : "The mana curve has no unusual shape; suggested role ranges exist only for Commander decks."}</p>`}
+      ${A.notes.length && !A.unfinished ? `<div id="opNotes" class="stack" style="gap:6px"><span class="small"><b>Worth a look</b> · not counted as weaknesses</span>${A.notes.map(w => `<div class="op-note" data-n="${esc(w.key)}"><p class="small" style="margin:0"><b>${esc(w.title)}?</b> <span class="num">${esc(w.counts)}</span></p><p class="small muted" style="margin:2px 0 0">${esc(w.why)}</p></div>`).join("")}</div>` : ""}
       ${hl.length ? `<div id="opHealthy"><span class="small"><b>Looks healthy</b></span><div class="row wrap" style="gap:6px;margin-top:4px">${hl.map(h => `<span class="chip ${h.high ? "" : "ok"}" data-h="${esc(h.role)}">${esc(h.role)} ${h.v} · ${h.high ? `more than the usual ${h.lo}–${h.hi}` : `usual ${h.lo}–${h.hi}`}</span>`).join("")}</div></div>` : ""}</div>
-    ${sCurve}${sRamp}${sDraw}${sRem}${sWipe}${sProt}${sSyn}${sUnknown}
+    ${sCurve}${sRamp}${sCost}${sDraw}${sRem}${sWipe}${sProt}${sSyn}${sUnknown}
     <p class="small muted" id="opSource" style="margin:0">Roles come from each card's rules text by pattern, so a card worded unusually can be missed or miscounted; you can correct any card on the Role balance view. ${Sy.have ? `Commander figures are EDHREC's${E.R && E.R.at ? `, saved ${esc(dayLabel(E.R.at))}` : ""}; being on its lists means a card is played often, not that it is better.` : ""}</p>
   </div>`;
+  const rmsg = t => { const m = $("#opRoleMsg"); if (m) m.textContent = t; };
+  const doRoles = async (nm, b) => { b.disabled = true; rmsg("Reading the cards' rules text…");
+    try { const r = await refreshRoles(nm, (i, n) => rmsg(`Reading the cards' rules text… ${i} of ${n}`));
+      toast(r.changed ? `Updated roles on ${r.changed} saved card${r.changed === 1 ? "" : "s"} (${r.names} name${r.names === 1 ? "" : "s"})` : "Every saved role was already up to date", r.changed ? { label: "Undo", fn: () => restoreRoles().then(() => renderDeck(d)) } : null);
+      renderDeck(d); if (r.failed) setTimeout(() => rmsg(`${r.failed} name${r.failed === 1 ? "" : "s"} couldn't be read from Scryfall and kept their roles.`), 0); }
+    catch (e) { b.disabled = false; rmsg(e.message || String(e)); } };
+  const rd = $("#opRoleDeck"); if (rd) rd.onclick = () => doRoles(names, rd);
+  const ra = $("#opRoleAll"); if (ra) ra.onclick = () => doRoles(allCardNames(), ra);
+  const ru = $("#opRoleUndo"); if (ru) ru.onclick = async () => { ru.disabled = true; try { const n = await restoreRoles(); toast(`Put back the earlier roles on ${n} saved card${n === 1 ? "" : "s"}`); } catch (e) { rmsg(e.message || String(e)); } renderDeck(d); };
   $("#opRefresh").onclick = () => { st.edh = null; OPT.failed.clear(); for (const n of names) if (OPT.text.get(n) === null) OPT.text.delete(n); el.innerHTML = ""; drawOptimizer(d); };
   el.querySelectorAll("details[data-g]").forEach(x => x.addEventListener("toggle", () => { if (x.open) st.open.add(x.dataset.g); else st.open.delete(x.dataset.g); }));
   el.querySelectorAll("[data-opadd]").forEach(b => b.onclick = () => { const x = recs[+b.dataset.opadd]; if (!x || !x.entry || t50Blocked(x.entry, d)) return;

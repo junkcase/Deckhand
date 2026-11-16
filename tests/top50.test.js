@@ -85,7 +85,7 @@ async function run(opts, label) {
   ok(/Missing/.test(await row("Card 05")) && !/Owned/.test(await row("Card 05")) && !(await p.$('#tRows .item[data-name="Card 05"] [data-tadd]')), `${label}: a card that is only on your wishlist is Missing, with no Add button`);
   ok(/Missing/.test(await row("Card 02")) && /Instant/.test(await row("Card 02")) && M.sf === 1, `${label}: missing cards get their details from one Scryfall lookup`);
   ok(await p.evaluate(b => JSON.stringify([S.coll, S.decks, S.binders, S.settings || null, S.meta.staples || null]) === b, before), `${label}: browsing changes nothing in the collection, decks, binders or settings`);
-  ok(/has no land category, so there are no lands to list/.test(await txt("#tNoLands")) && !(await p.$("#tLands")), `${label}: a page with no land category says there are no lands to list, and invents none`);
+  ok(/EDHREC lists no lands for Krenko, Mob Boss beyond the 1 already in the list above\./.test(await txt("#tNoLands")) && !(await p.$("#tLands")), `${label}: a page with no land category lists no lands and invents none; the basic land you own in the 50 (Card 08) is known to be a land by its type, and is said to be there (${await txt("#tNoLands")})`);
   // filters and sorting
   await p.click('#tShow [data-s="owned"]'); await p.waitForTimeout(100); ok((await names()).join("|") === "Card 01|Card 03|Card 04|Card 06|Card 08|Card 20", `${label}: Owned shows the 6 you own (${(await names()).join(", ")})`);
   await p.click('#tShow [data-s="missing"]'); await p.waitForTimeout(100); const miss = await names(); ok(miss.length === 44 && miss.includes("Card 05") && !miss.includes("Card 01") && /showing 44/.test(await txt("#tSum")), `${label}: Missing shows the other 44`);
