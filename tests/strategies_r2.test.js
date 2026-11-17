@@ -31,8 +31,8 @@ const FIX = require("./real_decks_fixture.js");
         await optTexts(list.map(x => cards[x[0]].name));
         const A = optAnalyze(d, { cmd: "", theme: "", R: null, stat: new Map(), tstat: new Map() }, { combos: null });
         const e2s = e => `${e.cat}/${e.side}${e.direct ? "" : "/incidental"}${e.active ? "" : "/notcounted"}`;
-        const sy = {}, why = {}; for (const r of A.rows) { sy[r.name] = r.sy.map(e2s); why[r.name] = r.sy.map(e => `${e.cat}/${e.side}: ${e.why} · ${e.quote}`); }
-        return { sy, why, weak: A.weak.map(w => `${w.title}: ${w.counts}`), notes: A.notes.map(w => `${w.title}: ${w.counts}`), healthy: A.healthy.map(h => `${h.role} ${h.v}`),
+        const sy = {}, why = {}, roles = {}; for (const r of A.rows) { sy[r.name] = r.sy.map(e2s); why[r.name] = r.sy.map(e => `${e.cat}/${e.side}: ${e.why} · ${e.quote}`); roles[r.name] = r.roles.join(","); }
+        return { sy, why, roles, weak: A.weak.map(w => `${w.title}: ${w.counts}`), notes: A.notes.map(w => `${w.title}: ${w.counts}`), healthy: A.healthy.map(h => `${h.role} ${h.v}`),
           cats: A.strat.cats.map(g => `${g.label}: ${g.cards.length} cards/${g.copies} copies · en ${g.en.length} · pay ${g.pay.length}${g.amp.length ? " · amp " + g.amp.length : ""}${g.fod.length ? " · fodder " + g.fod.length : ""}${g.pot.length ? " · potential " + new Set(g.pot.map(x => x.r)).size : ""}${g.inc.length ? " · incidental " + new Set(g.inc.map(x => x.r)).size : ""}`),
           cmd: A.strat.cmd.map(x => x.e.cat + "/" + x.e.side), multi: A.strat.multi.map(r => r.name), imbKeys: A.strat.imb.map(o => o.key), imbText: A.strat.imb.map(o => o.text),
           imb: A.strat.imb.map(o => `[${o.key}] ${o.text} || ` + o.sides.map(s => `${s.name}: ${s.l.map(y => y.r.name).join(", ")}`).join(" | ")), unknown: A.unknown.map(r => r.name) };
@@ -99,6 +99,27 @@ const FIX = require("./real_decks_fixture.js");
       ok(R.brago.sy["Panharmonicon"].join() === "blink/amplifier" && R.brago.sy[EN].join() === "blink/amplifier" && R.brago.sy["Starfield Vocalist"].join() === "blink/amplifier" && amps(R.brago, "Blink")[1] === "3", `${label}: H3 Brago (enters abilities, no landfall): the three stay Blink amplifiers only`);
       ok(R.tatyova.sy["Ancient Greenwarden"].includes("landfall/amplifier") && R.teysa.sy["Teysa Karlov"].includes("sacrifice/amplifier") && R.teysa.sy["Drivnod, Carnage Dominus"].includes("sacrifice/amplifier"), `${label}: H3 Ancient Greenwarden in the landfall deck, Teysa and Drivnod in the death-trigger deck, unchanged`);
 
+      // ---- Stage 2A: blink over two sentences, "Exile …" then "Return it/that card/those cards to the battlefield …" (at the next end step)
+      const B5 = ["Eerie Interlude", "Flickerwisp", "Charming Prince", "Yorion, Sky Nomad", "Venser, the Sojourner"];
+      for (const n of B5) ok(has("brago", n, "blink/enabler") && R.brago.why[n].some(w => /^blink\/enabler: Exiles and returns your permanents \(blink\) · Exile [^·]+ Return /.test(w)), `${label}: 2A ${n} exiles and returns: a blink enabler, quoting both sentences (${R.brago.why[n].filter(w => /blink\/enabler/.test(w))})`);
+      ok(!R.brago.unknown.includes("Eerie Interlude"), `${label}: 2A Eerie Interlude is no longer under "No role identified"`);
+      ok(["Flickerwisp", "Charming Prince", "Yorion, Sky Nomad"].every(n => has("brago", n, "blink/payoff")), `${label}: 2A Flickerwisp, Charming Prince and Yorion keep their enters-the-battlefield payoff too`);
+      ok(R.brago.roles["Venser, the Sojourner"] === "Removal" && R.brago.roles["Eerie Interlude"] === "" && R.brago.roles["Flickerwisp"] === "Creature", `${label}: 2A functional roles unchanged (Venser ${R.brago.roles["Venser, the Sojourner"]}; Eerie Interlude none; Flickerwisp ${R.brago.roles["Flickerwisp"]})`);
+      ok(R.brago.cats.find(c => c.startsWith("Blink:")) === "Blink: 34 cards/34 copies · en 15 · pay 21 · amp 3", `${label}: 2A Brago's Blink: 15 enabling (was 10), 21 rewarding, 3 amplifying (${R.brago.cats.find(c => c.startsWith("Blink:"))})`);
+      for (const n of ["Ghostly Flicker", "Ephemerate", "Cloudshift", "Momentary Blink", "Restoration Angel", "Felidar Guardian", "Teleportation Circle", "Soulherder", "Deadeye Navigator", "Brago, King Eternal"]) ok(has("brago", n, "blink/enabler"), `${label}: 2A ${n} still a blink enabler`);
+      ok(["Panharmonicon", "Elesh Norn, Mother of Machines", "Starfield Vocalist"].every(n => R.brago.sy[n].join() === "blink/amplifier"), `${label}: 2A Panharmonicon, Elesh Norn and Starfield Vocalist unchanged in Brago`);
+      // temporary exile (until it leaves; returned when this leaves the battlefield) is not blink; their functional roles stay what they were
+      m = await mini("Krenko, Mob Boss", ["Oblivion Ring", "Fiend Hunter", "Banisher Priest", "Journey to Nowhere", "Mulldrifter", "Wall of Omens"]);
+      ok(["Oblivion Ring", "Fiend Hunter", "Banisher Priest", "Journey to Nowhere"].every(n => !m.sy[n].some(x => x.startsWith("blink/enabler"))), `${label}: 2A Oblivion Ring, Fiend Hunter, Banisher Priest and Journey to Nowhere aren't blink enablers (${["Oblivion Ring", "Fiend Hunter", "Banisher Priest", "Journey to Nowhere"].map(n => n + ": " + m.sy[n]).join(" | ")})`);
+      ok(m.roles["Banisher Priest"] === "Removal,Creature" && m.roles["Journey to Nowhere"] === "Removal" && m.roles["Oblivion Ring"] === "" && m.roles["Fiend Hunter"] === "Creature", `${label}: 2A their functional roles are unchanged (Oblivion Ring and Fiend Hunter miss Removal before and after: "exile another target", a Stage 2D item) (${["Oblivion Ring", "Fiend Hunter", "Banisher Priest", "Journey to Nowhere"].map(n => n + ": " + m.roles[n]).join(" | ")})`);
+      ok(["Mulldrifter", "Wall of Omens", "Fiend Hunter"].every(n => m.sy[n].includes("blink/payoff/notcounted")) && !m.imbKeys.length, `${label}: 2A with no blink card, enters abilities stay potential (not counted), and nothing to say`);
+      // one end-step blink card is a blink card: the deck's enters abilities count, as with Cloudshift
+      m = await mini("Krenko, Mob Boss", ["Eerie Interlude", "Mulldrifter", "Wall of Omens", "Panharmonicon"]);
+      ok(m.sy["Eerie Interlude"].join() === "blink/enabler" && ["Mulldrifter", "Wall of Omens"].every(n => m.sy[n].includes("blink/payoff")) && m.sy["Panharmonicon"].join() === "blink/amplifier", `${label}: 2A with Eerie Interlude, the enters abilities and Panharmonicon count, as they do with any blink card (${m.sy["Mulldrifter"]} | ${m.sy["Panharmonicon"]})`);
+      m = await mini("Krenko, Mob Boss", ["Cloudshift", "Mulldrifter", "Wall of Omens", "Panharmonicon"]);
+      const m2 = await mini("Krenko, Mob Boss", ["Eerie Interlude", "Mulldrifter", "Wall of Omens", "Panharmonicon"]);
+      ok(JSON.stringify(m.cats) === JSON.stringify(m2.cats) && JSON.stringify(m.imbKeys) === JSON.stringify(m2.imbKeys), `${label}: 2A Eerie Interlude and Cloudshift give the same Blink sums and observations (${m2.cats.find(c => c.startsWith("Blink"))})`);
+
       // ---- H4: graveyard setup and reanimation
       for (const n of ["Animate Dead", "Reanimate", "Living Death"]) ok(has("meren", n, "graveyard/payoff") && R.meren.why[n].some(w => /reanimation/.test(w)), `${label}: H4 ${n} returns creatures from a graveyard to the battlefield (reanimation) (${R.meren.why[n]})`);
       for (const n of ["Entomb", "Buried Alive", "Grisly Salvage", "Satyr Wayfinder"]) ok(has("meren", n, "graveyard/enabler"), `${label}: H4 ${n} puts cards from the library into the graveyard, counted (${R.meren.sy[n]})`);
@@ -131,7 +152,7 @@ const FIX = require("./real_decks_fixture.js");
       ok(t.t === "Your theme Aristocrats → Sacrifice: 38 cards (38 copies): 11 enabling it, 23 rewarding it.", `${label}: H5 a strategy theme that isn't a card type (Aristocrats) keeps the old line (${t.t})`);
       ok(t.cmd === "Your commander supports: Tokens (rewards it), Sacrifice (amplifies it).", `${label}: H3 Teysa's commander line says she amplifies Sacrifice (${t.cmd})`);
       t = await view("brago"); const bl = await p.$eval("#op-st-blink", e => e.textContent.replace(/\s+/g, " "));
-      ok(/32 cards · 32 copies · 10 enabling · 21 rewarding · 3 amplifying/.test(bl) && /Makes enters-the-battlefield triggers happen twice · “If an artifact or creature entering causes a triggered ability/.test(bl), `${label}: H3 Brago's Blink section lists the 3 amplifiers with why and the quote`);
+      ok(/34 cards · 34 copies · 15 enabling · 21 rewarding · 3 amplifying/.test(bl) && /Makes enters-the-battlefield triggers happen twice · “If an artifact or creature entering causes a triggered ability/.test(bl), `${label}: H3 Brago's Blink section lists the 3 amplifiers with why and the quote`);
       ok(!errs.length, `${label}: no page errors (${errs.join(" | ")})`);
       if (label === "phone") { await view("sythis"); await p.screenshot({ path: "strategies_r2_phone.png" }); }
       await ctx.close();

@@ -7131,6 +7131,18 @@ function optSynergy(T, c, types, main) {
       const incidental = loot || (rider && ((!perm && jobs.length) || (cat === "lifegain" && !granted && !trig && !kw.includes("lifelink"))));
       add(cat, side, loot ? "Discards as part of drawing (card filtering)" : granted ? "Gives a creature lifelink" : why, clause(s0, m.index, m[0].length), !incidental, cat === "blink" && side === "payoff", granted ? { grant: true } : null);
     }
+    // blink over two sentences: "Exile … permanent/creature." then "Return it (that card, those cards) to the battlefield …" (now or at the
+    // next end step: Eerie Interlude, Flickerwisp, Charming Prince, Yorion, Venser). Not exile that lasts "until" something leaves, nor a
+    // return "when this leaves the battlefield" (Oblivion Ring, Fiend Hunter, Banisher Priest, Journey to Nowhere): that's removal.
+    const nx = (sents[i + 1] || "").toLowerCase();
+    if (/^return (it|that card|those cards|the exiled cards?) to the battlefield/.test(nx) && !/leaves the battlefield/.test(nx)) {
+      const bm = s.match(/\bexile (up to \w+ )?(another |any number of (other )?)?(target |other )?[^.]{0,50}\b(permanents?|creatures?|artifacts?)\b[^.]{0,30}\.$/);
+      if (bm && !/\buntil\b|opponents? controls?|you don't control/.test(s)) {
+        let q = (s0.slice(bm.index) + " " + sents[i + 1]).replace(/\s+/g, " ").trim(); q = q[0].toUpperCase() + q.slice(1);
+        if (q.length > 110) { q = q.slice(0, 110); q = q.slice(0, q.lastIndexOf(" ")) + "…"; }
+        add("blink", "enabler", "Exiles and returns your permanents (blink)", q, true);
+      }
+    }
     // sacrifice fodder: a creature that does something when it dies is good to sacrifice; counts only with a way to sacrifice
     const f = s.match(/\bwhen(ever)? this (creature )?(enters or dies|dies)\b/);
     if (f && /\bCreature\b/.test(front)) add("sacrifice", "fodder", "Does something when it dies (good to sacrifice)", clause(s0, f.index, f[0].length), true, true);
