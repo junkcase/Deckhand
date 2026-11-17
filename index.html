@@ -6775,6 +6775,12 @@ function optAnalyze(d, E, X) {
   const hasSy = f => rows.some(r => r.sy.some(e => e.direct && f(e)));
   const trig = { sacrifice: hasSy(e => e.cat === "sacrifice" && (e.side === "payoff" || e.side === "fodder")), landfall: hasSy(e => e.cat === "landfall" && e.side === "payoff"), blink: hasSy(e => e.cat === "blink" && e.side === "payoff") };
   for (const r of rows) r.sy = r.sy.filter(e => !(e.side === "amplifier" && trig[e.cat] === false));
+  // keyword or protective gear is Voltron support only on a Voltron foundation: a commander that rewards Auras or Equipment, two or more
+  // cards that do, or a Voltron theme. Vehicle text ("Vehicles you control have crew 1") says nothing about a deck with no Vehicles.
+  const vPay = rows.filter(r => r.sy.some(e => e.cat === "voltron" && e.side === "payoff" && e.direct));
+  const vBase = vPay.some(r => r.cmdr) || vPay.length >= 2 || (d.themes || []).some(t => themeSyn(t, new Set()) === "voltron");
+  const vehicles = rows.some(r => /\bVehicle\b/.test(((r.T && r.T.type) || r.c.type || "").split("//")[0]));
+  for (const r of rows) r.sy = r.sy.filter(e => !(e.gear === "keyword" && !vBase) && !(e.vehicle && !vehicles));
   const combo = X && X.combos ? new Map() : null;
   if (combo) for (const cb of X.combos) for (const x of cb.cards) { const k = x.name.toLowerCase(); (combo.get(k) || combo.set(k, []).get(k)).push(cb); }
   if (combo) for (const r of rows) { const l = combo.get(r.name.toLowerCase()) || combo.get(r.name.split(" // ")[0].toLowerCase());
@@ -7089,7 +7095,10 @@ const SYN_RULES = [
   ["landfall", "enabler", /play (an|two) additional lands?|additional land|search your library for [^.]{0,50}lands? cards?[^.]{0,40}onto the battlefield|search your library for (a|an|up to \w+) (basic )?(plains|island|swamp|mountain|forest)( or (plains|island|swamp|mountain|forest))? cards?[^.]{0,40}onto the battlefield|put (a|up to \w+|that|those|any number of) (basic )?land cards? [^.]{0,30}onto the battlefield/, "Puts extra lands onto the battlefield", true],
   ["lifegain", "payoff", /whenever you gain life|if you('ve)? gained life this turn|for each (1 )?life you('ve)? gained|life you gained/, "Rewards gaining life"],
   ["lifegain", "enabler", /(?<!(whenever|if|each time) )\byou gain (\d+ life|x life|that much life|life equal|\w+ life)|\blifelink\b/, "Gains you life", true],
-  ["voltron", "payoff", /whenever you cast an? (aura|equipment)|for each (aura|equipment)|(equipped|enchanted) creature you control|whenever (an? )?(equipped|enchanted) creature (you control )?(attacks|deals)|commander damage/, "Rewards Auras and Equipment"],
+  ["voltron", "payoff", /whenever you cast an? (aura|equipment)|for each (aura|equipment)|(equipped|enchanted) creature you control|whenever (an? )?(equipped|enchanted) creature (you control )?(attacks|deals)|commander damage|that('s| are) (enchanted or equipped|equipped or enchanted|equipped|enchanted)\b|with one or more equipped creatures|whenever an? (aura|equipment) (you control )?enters/, "Rewards Auras and Equipment"],
+  ["voltron", "enabler", /\battach (target (aura or )?equipment|any number of (target )?(auras and )?equipment|target aura or equipment|that equipment to target creature|it to target creature you control)/, "Attaches Auras or Equipment"],
+  ["voltron", "enabler", /equip abilities you activate cost|equipment you control (have|has) equip \{\d\}|rather than pay the equip cost/, "Makes Equipment cheaper to attach"],
+  ["voltron", "enabler", /search your library for an? (aura or )?equipment card|reveal an equipment( or vehicle)? card/, "Finds Equipment"],
 ];
 function optSynergy(T, c, types, main) {
   if (!T || !T.text) return [];
@@ -7111,6 +7120,16 @@ function optSynergy(T, c, types, main) {
     // a quoted ability given to a token or creature ("…token with “This token crews Vehicles…”"): end before it, without the dangling word
     let q = s0.slice(a, z).replace(/["“”]/g, "").trim().replace(/\s+(with|and|that has|and has|that have)$/i, ""); if (q.length > 110) { q = q.slice(0, 110); q = q.slice(0, q.lastIndexOf(" ")) + "…"; } return q; };
   const add = (cat, side, why, quote, direct, potential, extra) => { const key = cat + "|" + side; if (seen.has(key)) return; seen.add(key); out.push(Object.assign({ cat, side, why, quote: quote.replace(/\s+/g, " ").trim(), direct, potential: !!potential }, extra || {})); };
+  // Voltron gear: an Equipment or Aura that builds up the creature it's on (stats, double/first strike, trample, evasion; "is legendary, gets…").
+  // Keyword or protective gear (lifelink, deathtouch, vigilance, haste, hexproof, shroud, indestructible, protection) counts only in a deck
+  // with a Voltron foundation (optAnalyze), so Swiftfoot Boots doesn't make a creature deck a Voltron deck. Reach doesn't count.
+  if (/\b(Equipment|Aura)\b/.test(front)) {
+    const m = o.match(/(equipped|enchanted) creature (is [^,.]{0,25}, )?(gets \+\d+\/\+\d+|has (double strike|trample|flying|first strike|menace)|can't be blocked)/i);
+    const k = !m && o.match(/(equipped|enchanted) creature (gets [^.]{0,30}? and )?(has|gains) [^.]{0,40}?\b(lifelink|deathtouch|vigilance|haste|hexproof|shroud|indestructible|protection from)\b/i);
+    if (m) add("voltron", "enabler", "Builds up one creature", m[0], true);
+    else if (k) { let q = o.slice(k.index, (o.indexOf(".", k.index) + 1 || o.length + 1) - 1).trim(); if (q.length > 110) { q = q.slice(0, 110); q = q.slice(0, q.lastIndexOf(" ")) + "…"; }
+      add("voltron", "enabler", "Protects or strengthens the creature you build up", q, true, false, { gear: "keyword" }); }
+  }
   sents.forEach((s0, i) => {
     const s = s0.toLowerCase().replace(/\bcast(ing)? or cop(y|ies|ying)\b/g, "cast"), near = [sents[i - 1], s0, sents[i + 1]].filter(Boolean).join(" ").toLowerCase();
     // who gets it: the clause the match is in, from the last ", " " and " "; " or "then" before it ("target player loses 1 life and you gain 1 life")
@@ -7121,6 +7140,9 @@ function optSynergy(T, c, types, main) {
       if (cat === "blink" && side === "payoff" && !perm) continue;
       if (cat === "sacrifice" && side === "payoff" && /put into/.test(m[0])) { const subj = (s.slice(0, m.index).match(/\bwhen(ever)? ([^.,;]*)$/) || [])[2] || "";
         if (!/\bcreatures?\b/.test(subj) && !types.some(t => new RegExp(`\\b(${t}|${t}s|${t}es|${t.replace(/f$/, "ve")}s)\\b`).test(subj))) continue; }   // an Aura, Equipment or enchantment going there isn't a death
+      if (cat === "voltron" && side === "payoff" && /\b(Equipment|Aura)\b/.test(front) && /^whenever (an? )?(equipped|enchanted) creature/.test(m[0])) continue;
+      if (cat === "voltron" && side === "payoff" && /^whenever an? (aura|equipment)/.test(m[0]) && /\battach\b/.test(s)) continue;
+      if (cat === "gowide" && /blocks it this combat if able/.test(s)) continue;                                   // a forced block (Fighter Class) isn't a reward for many creatures
       if (cat === "gowide" && (/less to cast/.test(s) || /creatures you control of the chosen type/.test(s))) continue;          // a cost that counts creatures; a count of one chosen type                                   // a cost that counts creatures (Blasphemous Act) isn't a go-wide card
       // a lord of one kind ("other Goblin creatures you control get +1/+1", "artifact creatures you control get…") isn't a go-wide card
       if (cat === "gowide" && /^creatures you control/.test(m[0]) && /\b(?!(?:other|all|each|the)\b)[a-z]+ $/.test(s.slice(Math.max(0, m.index - 20), m.index))) continue;
@@ -7129,7 +7151,7 @@ function optSynergy(T, c, types, main) {
       // discarding as part of drawing (loot, rummage) is card filtering: it fills the graveyard only as a side effect
       const loot = cat === "graveyard" && side === "enabler" && /discard/.test(m[0]) && /\bdraws?\b/.test(near);
       const incidental = loot || (rider && ((!perm && jobs.length) || (cat === "lifegain" && !granted && !trig && !kw.includes("lifelink"))));
-      add(cat, side, loot ? "Discards as part of drawing (card filtering)" : granted ? "Gives a creature lifelink" : why, clause(s0, m.index, m[0].length), !incidental, cat === "blink" && side === "payoff", granted ? { grant: true } : null);
+      add(cat, side, loot ? "Discards as part of drawing (card filtering)" : granted ? "Gives a creature lifelink" : why, clause(s0, m.index, m[0].length), !incidental, cat === "blink" && side === "payoff", granted ? { grant: true } : cat === "artifacts" && /vehicle/.test(m[0]) ? { vehicle: true } : null);
     }
     // blink over two sentences: "Exile … permanent/creature." then "Return it (that card, those cards) to the battlefield …" (now or at the
     // next end step: Eerie Interlude, Flickerwisp, Charming Prince, Yorion, Venser). Not exile that lasts "until" something leaves, nor a
@@ -7160,7 +7182,7 @@ function optSynergy(T, c, types, main) {
   if (kw.includes("flashback") && !seen.has("graveyard|payoff")) add("graveyard", "payoff", "Can be cast again from your graveyard (its own flashback)", "Flashback", false);
   const cut = costCut(T.text); if (/instant|sorcery|noncreature/.test(cut)) add("spells", "enabler", "Makes instants and sorceries cheaper", cut + " cost less", true);
   else if (/artifact/.test(cut)) add("artifacts", "enabler", "Makes artifacts cheaper", cut + " cost less", true);
-  if (/\b(Equipment|Aura)\b/.test(front)) { const m = o.match(/(equipped|enchanted) creature (gets \+\d+\/\+\d+|has (double strike|trample|flying|first strike|menace)|can't be blocked)/i); if (m) add("voltron", "enabler", "Builds up one creature", m[0], true); }
+  else if (/\b(aura|equipment)\b/.test(cut)) add("voltron", "enabler", "Makes Auras and Equipment cheaper", cut + " cost less", true);
   // creature types: each type of this deck's creatures, separately
   for (const t of types) {
     const p = `(${t}|${t}s|${t}es|${t.replace(/f$/, "ve")}s)`;

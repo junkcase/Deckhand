@@ -15,7 +15,7 @@ const FIX = require("./real_decks_fixture.js");
   try {
     for (const [label, opts] of [["computer", { viewport: { width: 1280, height: 900 } }], ["phone", devices["Pixel 7"]]]) {
       const ctx = await b.newContext(opts), p = await ctx.newPage(), errs = []; p.on("pageerror", e => errs.push(e.message));
-      const byName = {}; for (const n in FIX.cards) { byName[n] = FIX.cards[n]; byName[FIX.cards[n].name] = FIX.cards[n]; }
+      const byName = {}; for (const n in FIX.cards) { byName[n] = FIX.cards[n]; byName[FIX.cards[n].name] = FIX.cards[n]; byName[FIX.cards[n].name.split(" // ")[0]] = byName[FIX.cards[n].name.split(" // ")[0]] || FIX.cards[n]; }   // the app asks for a two-faced card by its front name
       await p.route("https://api.scryfall.com/**", r => { const u = r.request().url();
         if (u.includes("/cards/collection")) { const ids = JSON.parse(r.request().postData()).identifiers;
           return r.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify({ data: ids.map(i => byName[i.name] || Object.values(FIX.cards).find(c => c.id === i.id)).filter(Boolean), not_found: [] }) }); }
@@ -119,6 +119,55 @@ const FIX = require("./real_decks_fixture.js");
       m = await mini("Krenko, Mob Boss", ["Cloudshift", "Mulldrifter", "Wall of Omens", "Panharmonicon"]);
       const m2 = await mini("Krenko, Mob Boss", ["Eerie Interlude", "Mulldrifter", "Wall of Omens", "Panharmonicon"]);
       ok(JSON.stringify(m.cats) === JSON.stringify(m2.cats) && JSON.stringify(m.imbKeys) === JSON.stringify(m2.imbKeys), `${label}: 2A Eerie Interlude and Cloudshift give the same Blink sums and observations (${m2.cats.find(c => c.startsWith("Blink"))})`);
+
+      // ---- Stage 2B: Voltron. W = Wyleth's cards; v(r, n) = a card's Voltron entries
+      const v = (r, n) => (r.sy[n] || []).filter(x => x.startsWith("voltron")), vw = n => v(R.wyleth, n), vwhy = (r, n) => (r.why[n] || []).filter(w => w.startsWith("voltron"));
+      // payoffs: cards that reward equipped or enchanted creatures
+      for (const n of ["Reyav, Master Smith", "Akiri, Fearless Voyager", "Puresteel Paladin"]) ok(vw(n).includes("voltron/payoff"), `${label}: 2B ${n} rewards Auras and Equipment (${vwhy(R.wyleth, n)})`);
+      for (const n of ["Wyleth, Soul of Steel", "Bruenor Battlehammer", "Mantle of the Ancients", "Thran Power Suit", "Sram, Senior Edificer"]) ok(vw(n).includes("voltron/payoff"), `${label}: 2B ${n} still a Voltron payoff`);
+      ok(["Shared Animosity", "Raid Bombardment", "Battle Cry Goblin"].every(n => !v(R.krenko, n).length), `${label}: 2B rewarding attacking creatures (Shared Animosity, Raid Bombardment) isn't Voltron`);
+      // attach engines
+      for (const n of ["Brass Squire", "Ardenn, Intrepid Archaeologist", "Sigarda's Aid"]) ok(vwhy(R.wyleth, n).some(w => /^voltron\/enabler: Attaches Auras or Equipment · /.test(w)) && !vw(n).includes("voltron/payoff"), `${label}: 2B ${n} attaches Auras or Equipment (${vwhy(R.wyleth, n)})`);
+      const HALVAR = "Halvar, God of Battle // Sword of the Realms";
+      m = await mini("Wyleth, Soul of Steel", ["Kor Outfitter", "Armory Automaton", HALVAR, "Hero's Blade", "Hammer of Nazahn"]);
+      ok(["Kor Outfitter", "Armory Automaton"].every(n => vwhy(m, n).some(w => /Attaches Auras or Equipment/.test(w))) && v(m, HALVAR).includes("voltron/payoff"), `${label}: 2B Kor Outfitter and Armory Automaton attach Equipment; Halvar ("Creatures you control that are enchanted or equipped have double strike") rewards it (${vwhy(m, "Kor Outfitter")} | ${vwhy(m, "Armory Automaton")} | ${vwhy(m, HALVAR)})`);
+      ok(["Hero's Blade", "Hammer of Nazahn"].every(n => vwhy(m, n).some(w => /^voltron\/enabler: Builds up one creature · Equipped creature gets/.test(w))), `${label}: 2B Equipment that attaches itself (Hero's Blade, Hammer of Nazahn) is described as the gear it is`);
+      // equip cost and Aura/Equipment cost
+      for (const n of ["Bruenor Battlehammer", "Forge Anew"]) ok(vwhy(R.wyleth, n).some(w => /^voltron\/enabler: Makes Equipment cheaper to attach · You may pay \{0\} rather than pay the equip cost/.test(w)), `${label}: 2B ${n}: an alternative equip cost (${vwhy(R.wyleth, n)})`);
+      ok(vwhy(R.wyleth, "Puresteel Paladin").some(w => /^voltron\/enabler: Makes Equipment cheaper to attach · Metalcraft — Equipment you control have equip \{0\}/.test(w)) && R.wyleth.sy["Puresteel Paladin"].includes("artifacts/payoff"), `${label}: 2B Puresteel Paladin: equip {0}, an Equipment payoff, and its metalcraft artifacts payoff kept`);
+      ok(vwhy(R.wyleth, "Danitha Capashen, Paragon").some(w => /Makes Auras and Equipment cheaper/.test(w)), `${label}: 2B Danitha ("Aura and Equipment spells you cast cost {1} less") makes Voltron gear cheaper`);
+      // Equipment tutors; other tutors unchanged
+      for (const n of ["Stoneforge Mystic", "Steelshaper's Gift", "Open the Armory", "Relic Seeker", "Fighter Class", "Astor, Bearer of Blades"]) ok(vw(n).includes("voltron/enabler") && vwhy(R.wyleth, n).some(w => /Finds Equipment/.test(w)), `${label}: 2B ${n} finds Equipment, counted (${R.wyleth.sy[n]})`);
+      ok(!v(R.sythis, "Idyllic Tutor").length && !v(R.sythis, "Eladamri's Call").length && !v(R.shorikai, "Enlightened Tutor").length && R.shorikai.sy["Enlightened Tutor"].join() === "artifacts/payoff", `${label}: 2B other tutors aren't Voltron; Enlightened Tutor unchanged (${R.shorikai.sy["Enlightened Tutor"]})`);
+      // gear
+      ok(vwhy(R.wyleth, "On Serra's Wings").some(w => /Builds up one creature · Enchanted creature is legendary, gets \+1\/\+1/.test(w)), `${label}: 2B On Serra's Wings ("is legendary, gets +1/+1") builds up a creature`);
+      for (const [n, q] of [["Basilisk Collar", "Equipped creature has deathtouch and lifelink"], ["Swiftfoot Boots", "Equipped creature has hexproof and haste"], ["Timely Ward", "Enchanted creature has indestructible"], ["Unquestioned Authority", "Enchanted creature has protection from creatures"], ["Ring of Thune", "Equipped creature has vigilance"], ["Ring of Valkas", "Equipped creature has haste"]])
+        ok(vwhy(R.wyleth, n).join() === `voltron/enabler: Protects or strengthens the creature you build up · ${q}`, `${label}: 2B ${n} in Wyleth (a Voltron commander): "${q}" (${vwhy(R.wyleth, n)})`);
+      ok(R.wyleth.cats.find(c => c.startsWith("Voltron:")) === "Voltron: 41 cards/41 copies · en 38 · pay 7" && !R.wyleth.cats.some(c => c.startsWith("Go-wide")), `${label}: 2B Wyleth's Voltron: 41 cards, 38 enabling, 7 rewarding (was 21, 18, 7); no Go-wide category (${R.wyleth.cats.filter(c => /^(Voltron|Go-wide|Artifacts)/.test(c))})`);
+      // protective gear without a Voltron foundation isn't Voltron: Krenko, Brago, Sythis, Mizzix, Meren, Atraxa, Lathril
+      ok(["Lightning Greaves", "Swiftfoot Boots", "Thornbite Staff"].every(n => !v(R.krenko, n).length) && R.krenko.cats.includes("Voltron: 1 cards/1 copies · en 1 · pay 0"), `${label}: 2B Krenko: Lightning Greaves and Swiftfoot Boots don't make it a Voltron deck; Voltron still only Sting (${R.krenko.cats.find(c => c.startsWith("Voltron"))})`);
+      ok(["Lightning Greaves", "Swiftfoot Boots", "Unquestioned Authority"].every(n => !v(R.brago, n).length) && !R.brago.cats.some(c => c.startsWith("Voltron")), `${label}: 2B Brago: its protective gear isn't Voltron`);
+      ok(["Flickering Ward", "Whip Silk"].every(n => !v(R.sythis, n).length) && R.sythis.cats.includes("Voltron: 6 cards/6 copies · en 5 · pay 1"), `${label}: 2B Sythis (one Voltron payoff): Flickering Ward isn't counted, Whip Silk (reach) never is; Voltron unchanged`);
+      ok(["mizzix", "meren", "atraxa", "lathril"].every(id => !v(R[id], "Lightning Greaves").length && !v(R[id], "Swiftfoot Boots").length), `${label}: 2B Lightning Greaves and Swiftfoot Boots aren't Voltron in Mizzix, Meren, Atraxa or Lathril`);
+      const GEAR = ["Swiftfoot Boots", "Lightning Greaves", "Basilisk Collar"];
+      m = await mini("Krenko, Mob Boss", GEAR);
+      ok(GEAR.every(n => !v(m, n).length) && !m.cats.some(c => c.startsWith("Voltron")), `${label}: 2B protective gear alone: no Voltron`);
+      m = await mini("Krenko, Mob Boss", [...GEAR, "Sram, Senior Edificer"]);
+      ok(GEAR.every(n => !v(m, n).length), `${label}: 2B with one Voltron payoff (Sram) the protective gear still doesn't count`);
+      m = await mini("Krenko, Mob Boss", [...GEAR, "Reyav, Master Smith", "Akiri, Fearless Voyager"]);
+      ok(GEAR.every(n => v(m, n).join() === "voltron/enabler"), `${label}: 2B with two Voltron payoffs (Reyav, Akiri) it counts (${GEAR.map(n => v(m, n)).join(" | ")})`);
+      m = await mini("Wyleth, Soul of Steel", GEAR);
+      ok(GEAR.every(n => v(m, n).join() === "voltron/enabler"), `${label}: 2B with a Voltron commander (Wyleth) it counts`);
+      m = await mini("Krenko, Mob Boss", GEAR, "Voltron");
+      ok(GEAR.every(n => v(m, n).join() === "voltron/enabler"), `${label}: 2B with a Voltron theme it counts`);
+      // misleading classifications corrected
+      ok(!v(R.wyleth, "Explorer's Scope").length && R.wyleth.unknown.includes("Explorer's Scope"), `${label}: 2B Explorer's Scope ("Whenever equipped creature attacks, look at the top card…") is not a Voltron payoff (${R.wyleth.sy["Explorer's Scope"]})`);
+      for (const n of ["Sword of Feast and Famine", "Sword of the Animist"]) ok(vw(n).join() === "voltron/enabler", `${label}: 2B ${n}: gear (it builds up the creature), not a payoff for its own combat trigger (${vw(n)})`);
+      ok(!R.wyleth.sy["Fighter Class"].some(x => x.startsWith("gowide")), `${label}: 2B Fighter Class's forced block isn't a go-wide payoff (${R.wyleth.sy["Fighter Class"]})`);
+      ok(!R.wyleth.sy["Astor, Bearer of Blades"].some(x => x.startsWith("artifacts")) && R.wyleth.cats.includes("Artifacts: 2 cards/2 copies · en 0 · pay 2"), `${label}: 2B Astor's "Vehicles you control have crew 1" says nothing in a deck with no Vehicles (${R.wyleth.sy["Astor, Bearer of Blades"]})`);
+      m = await mini("Shorikai, Genesis Engine", ["Astor, Bearer of Blades", "Smuggler's Copter", "Parhelion II"].filter(n => FIX.cards[n]));
+      ok(m.sy["Astor, Bearer of Blades"].includes("artifacts/payoff") && m.sy["Astor, Bearer of Blades"].includes("artifacts/enabler"), `${label}: 2B with Vehicles in the deck, Astor's crew text still counts for Artifacts (${m.sy["Astor, Bearer of Blades"]})`);
+      ok(R.shorikai.cats.find(c => c.startsWith("Artifacts:")) === "Artifacts: 32 cards/32 copies · en 10 · pay 27", `${label}: 2B Shorikai's Artifacts (Vehicles) unchanged`);
 
       // ---- H4: graveyard setup and reanimation
       for (const n of ["Animate Dead", "Reanimate", "Living Death"]) ok(has("meren", n, "graveyard/payoff") && R.meren.why[n].some(w => /reanimation/.test(w)), `${label}: H4 ${n} returns creatures from a graveyard to the battlefield (reanimation) (${R.meren.why[n]})`);

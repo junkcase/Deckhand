@@ -173,7 +173,10 @@ async function run(opts, label) {
   ok(await none("An Offer You Can't Refuse", "artifacts"), `${label}: An Offer You Can't Refuse gives the opponent Treasure: not an artifact card`);
   ok(await none("Swords to Plowshares", "lifegain") && await none("Path to Exile", "landfall"), `${label}: life or a land for the opponent is not lifegain or landfall`);
   // ---- not synergy
-  ok(await none("Blasphemous Act", "gowide") && await none("Lightning Greaves", "voltron") && await none("Blood Moon", "") && (await sy("Grenzo, Havoc Raiser", G)).length === 0, `${label}: Blasphemous Act (a cost that counts creatures), Lightning Greaves (protection), Blood Moon, Grenzo: no strategy`);
+  // Stage 2B: protective gear has a Voltron entry marked as keyword gear, which the deck analysis keeps only on a Voltron foundation
+  // (a Voltron commander, two Voltron payoffs or a Voltron theme); strategies_r2.test.js checks Krenko, Brago and others keep none
+  const lg = await p.evaluate(() => SYQ("Lightning Greaves").map(e => `${e.cat}/${e.side}/${e.gear || ""}`).join());
+  ok(await none("Blasphemous Act", "gowide") && lg === "voltron/enabler/keyword" && await none("Blood Moon", "") && (await sy("Grenzo, Havoc Raiser", G)).length === 0, `${label}: Blasphemous Act (a cost that counts creatures), Blood Moon, Grenzo: no strategy; Lightning Greaves (protection): only gated keyword gear (${lg})`);
   ok(await none("Krenko, Mob Boss", "blink", G) && !(await sy("Goblin Matron", G)).some(x => x.startsWith("type:Goblin/enabler")), `${label}: a card's own name isn't read as a creature type (Goblin Matron doesn't "make Goblins")`);
   // ---- creature types: only those in the deck, each on its own
   ok(await has("Harmonic Prodigy", "type:Wizard/payoff/direct", G) && await none("Elvish Archdruid", "type:Elf", G) && await has("Elvish Archdruid", "type:Elf/payoff/direct", ["elf"]), `${label}: an Elf lord rewards Elves only in a deck with Elves`);
