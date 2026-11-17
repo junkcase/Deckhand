@@ -6770,6 +6770,11 @@ function optAnalyze(d, E, X) {
   // lands: what their rules text supports counts like any card's (their functional role stays "Land"); a land that fetches a land
   // (Flooded Strand) supports landfall only in a deck with a landfall payoff, so it isn't listed as a strategy everywhere else
   if (!rows.some(r => r.sy.some(e => e.cat === "landfall" && e.side === "payoff" && e.direct))) for (const r of rows) if (r.land) r.sy = r.sy.filter(e => !(e.cat === "landfall" && e.side === "enabler"));
+  // a trigger multiplier counts only when the deck has triggers of its kind: death triggers (payoffs, fodder), landfall payoffs,
+  // enters-the-battlefield abilities (which, like those, count once the deck can blink)
+  const hasSy = f => rows.some(r => r.sy.some(e => e.direct && f(e)));
+  const trig = { sacrifice: hasSy(e => e.cat === "sacrifice" && (e.side === "payoff" || e.side === "fodder")), landfall: hasSy(e => e.cat === "landfall" && e.side === "payoff"), blink: hasSy(e => e.cat === "blink" && e.side === "payoff") };
+  for (const r of rows) r.sy = r.sy.filter(e => !(e.side === "amplifier" && trig[e.cat] === false));
   const combo = X && X.combos ? new Map() : null;
   if (combo) for (const cb of X.combos) for (const x of cb.cards) { const k = x.name.toLowerCase(); (combo.get(k) || combo.set(k, []).get(k)).push(cb); }
   if (combo) for (const r of rows) { const l = combo.get(r.name.toLowerCase()) || combo.get(r.name.split(" // ")[0].toLowerCase());
@@ -6949,11 +6954,12 @@ function optImbalance(d, deck, cmdrs) {
   if (aTok.length >= 2 && !aPay.length) obs("artifacts-makers", "Artifacts", [side("Artifact token makers (not Treasure)", aTok, "make Food, Clues, Thopters or other artifact tokens"), side("Artifact payoffs", aPay, "reward artifacts")],
     `This deck has ${n(aTok.length, "card")} that make artifact tokens other than Treasure, but no card that rewards artifacts. That's fine if the tokens are there for what they do themselves; nothing else uses them.`);
   // counters
-  const cEn = ent("counters", "enabler"), cPay = ent("counters", "payoff");
-  check("counters", "Counters", side("Counter payoffs", cPay, "reward counters"), side("Counter makers", cEn, "put counters on things"),
-    `This deck has ${n(cPay.length, "card")} that reward counters, but no card that puts counters on things.`,
-    one => `This deck has ${n(cPay.length, "card")} that reward counters, and only one card that puts counters on things (${one}).`);
-  check("counters-makers", "Counters", side("Counter makers", cEn, "put counters on things"), side("Counter payoffs", cPay, "reward counters"),
+  // amplifiers (Doubling Season, Hardened Scales) are on the payoff side, as for tokens: they need counters put on things, and they make more of them
+  const cEn = ent("counters", "enabler"), cAmp = ent("counters", "amplifier"), cPA = merge(ent("counters", "payoff"), cAmp), cPay = cPA, cAm = cAmp.length ? " or make more of them" : "";
+  check("counters", "Counters", side(cAmp.length ? "Counter payoffs and amplifiers" : "Counter payoffs", cPay, "reward counters" + cAm), side("Counter makers", cEn, "put counters on things"),
+    `This deck has ${n(cPay.length, "card")} that reward counters${cAm}, but no card that puts counters on things.`,
+    one => `This deck has ${n(cPay.length, "card")} that reward counters${cAm}, and only one card that puts counters on things (${one}).`);
+  check("counters-makers", "Counters", side("Counter makers", cEn, "put counters on things"), side(cAmp.length ? "Counter payoffs and amplifiers" : "Counter payoffs", cPay, "reward counters" + cAm),
     `This deck has ${n(cEn.length, "card")} that put counters on things, but no card that rewards counters. The counters still do what they do; nothing makes more of them.`, () => "");
   // landfall
   const lPay = ent("landfall", "payoff"), lEn = ent("landfall", "enabler");
@@ -7036,6 +7042,16 @@ function themeSyn(theme, types) {
     [/counter|proliferat/i, "counters"], [/blink|flicker/i, "blink"], [/clone|copy/i, "copy"], [/untap/i, "untap"], [/landfall/i, "landfall"], [/lifegain|life gain/i, "lifegain"], [/voltron|equipment|aura/i, "voltron"], [/go.wide/i, "gowide"]].find(([re]) => re.test(theme));
   return k ? k[1] : "";
 }
+// how many of the deck's own cards (copies) are of a theme's type: creatures of a creature type, or a card type (enchantments, artifacts,
+// Vehicles, instants and sorceries, Auras and Equipment). Only a count of what is in the deck; not a measure of how well it is supported.
+function themeMembers(k, theme, deck) {
+  const front = r => (r.c.type || "").split("//")[0], n = f => deck.filter(f).reduce((a, r) => a + r.qty, 0), pl = (v, w, p) => `${v} ${v === 1 ? w : p}`;
+  if (k.startsWith("type:")) { const t = k.slice(5).toLowerCase(), v = n(r => ctypesOf(r.c).some(x => x.toLowerCase() === t)); return { n: v, text: pl(v, k.slice(5) + " card", k.slice(5) + " cards") }; }
+  const T = { enchantments: [/\bEnchantment\b/, "enchantment", "enchantments"], spells: [/\b(Instant|Sorcery)\b/, "instant or sorcery", "instants and sorceries"],
+    artifacts: /vehicle/i.test(theme) ? [/\bVehicle\b/, "Vehicle", "Vehicles"] : [/\bArtifact\b/, "artifact", "artifacts"],
+    voltron: /equip/i.test(theme) ? [/\bEquipment\b/, "Equipment", "Equipment"] : /aura/i.test(theme) ? [/\bAura\b/, "Aura", "Auras"] : [/\b(Aura|Equipment)\b/, "Aura or Equipment", "Auras and Equipment"] }[k];
+  if (!T) return null; const v = n(r => T[0].test(front(r))); return { n: v, text: pl(v, T[1], T[2]) };
+}
 // creature types only: a Kindred card's line also holds artifact, enchantment or spell subtypes (Kindred Artifact — Shaman Equipment)
 const NOT_CREATURE_TYPE = new Set(["Equipment", "Aura", "Vehicle", "Fortification", "Treasure", "Food", "Clue", "Blood", "Gold", "Map", "Powerstone", "Incubator", "Junk", "Saga", "Shrine", "Cartouche", "Curse", "Rune", "Class", "Room", "Role", "Background", "Case", "Contraption", "Attraction", "Arcane", "Trap", "Lesson", "Adventure", "Omen", "Chorus", "Spacecraft", "Planet", "Siege"]);
 const ctypesOf = c => /\b(Creature|Kindred|Tribal)\b/.test((c.type || "").split("//")[0].split("—")[0]) ? ((c.type || "").split("//")[0].split("—")[1] || "").trim().split(/\s+/).filter(x => x && !NOT_CREATURE_TYPE.has(x)) : [];
@@ -7058,10 +7074,13 @@ const SYN_RULES = [
   ["artifacts", "enabler", /\bcrews? vehicles\b|\b(is|becomes?) an? vehicle\b|vehicles? you control (have|has) crew/, "Helps crew or make Vehicles"],
   ["artifacts", "payoff", /\bhistoric\b/, "Rewards historic cards (artifacts, legendaries and Sagas)"],
   ["enchantments", "payoff", /whenever you cast an? (aura|enchantment)|whenever an? (aura|enchantment) (you control )?enters|for each enchantment you control|\bconstellation\b|enchantments you control (have|get)|number of enchantments you control/, "Rewards enchantments"],
+  ["graveyard", "enabler", /search your library for [^.]{0,80}?\bput (it|that card|them|those cards) into your graveyard|\b(the rest|the other|the others) into your graveyard/, "Puts cards from your library into your graveyard"],
   ["graveyard", "enabler", /\bmill (a|one|two|three|four|five|six|x|\w+) cards?|\bsurveil \w+|put the top [^.]{0,30}cards? of your library into your graveyard|\bdiscards? (a|two|three|x|\w+) cards?|then discard|discard (a|your) (card|hand)/, "Fills your graveyard", true],
+  ["graveyard", "payoff", /from (a|your) graveyard (on)?to the battlefield|enchant creature card in a graveyard|return enchanted creature card to the battlefield|cards? from (their|all|each player's) graveyards?[^.]{0,120}onto the battlefield/, "Returns cards from a graveyard to the battlefield (reanimation)"],
   ["graveyard", "payoff", /\b(delve|threshold|escape|unearth|embalm|eternalize|disturb|retrace|jump-start|dredge)\b|cards? in your graveyard|from your graveyard|gains? flashback/, "Uses your graveyard"],
-  ["counters", "enabler", /\bput (a|an|one|two|three|x|that many|\w+) \+1\/\+1 counters? on (target|each|up to|another|a creature)|\bproliferate\b|you get (a|an|one) \w+ counters?|put [^.]{0,15}\b\w+ counters? on (each|target|up to)/, "Puts counters on things", true],
-  ["counters", "payoff", /for each (\w+ )?counter(?! on (it|this))|number of (\w+ )?counters(?! on (it|this))|whenever (a |an |one or more )?(\+1\/\+1 |\w+ )?counters? (is|are) (put|placed)|(creatures?|permanents?|artifacts?) (you control )?with (a |an |one or more )?(\+1\/\+1 )?counters? on (it|them)|counters? would be (put|placed) on|creatures? (you control )?with (\+1\/\+1 )?counters/, "Rewards counters"],
+  ["counters", "enabler", /\bput (a|an|one|two|three|x|that many|\w+) \+1\/\+1 counters? on (target|each|up to|another|a creature)|(?<!\b(?:would|you) )\bproliferate\b(?! twice instead)|you get (a|an|one) \w+ counters?|put [^.]{0,15}\b\w+ counters? on (each|target|up to)/, "Puts counters on things", true],
+  ["counters", "payoff", /for each (\w+ )?counter(?! on (it|this))|number of (\w+ )?counters(?! on (it|this))|whenever (a |an |one or more )?(\+1\/\+1 |\w+ )?counters? (is|are) (put|placed)|(creatures?|permanents?|artifacts?) (you control )?with (a |an |one or more )?(\+1\/\+1 )?counters? on (it|them)|creatures? (you control )?with (\+1\/\+1 )?counters|when(ever)? you proliferate/, "Rewards counters"],
+  ["counters", "amplifier", /twice that many [^.]{0,40}counters|that many plus (one|two|\w+) [^.]{0,20}counters|double the number of [^.]{0,30}counters? on (?!(this|it)\b)|proliferate twice instead/, "Makes your counter makers put more counters"],
   ["blink", "enabler", /exile (up to \w+ )?(another )?(target|each|one or more|any number of) [^.]{0,60}(you control|you own)[^.]{0,30}(, then|\. return|then) return|exile [^.]{0,60}then return (it|that card|them|those cards) to the battlefield/, "Exiles and returns your permanents (blink)"],
   ["blink", "payoff", /\bwhen(ever)? this (creature |permanent )?enters( the battlefield)?\b/, "Has an enters-the-battlefield ability (a blink payoff)"],
   ["copy", "enabler", /\bcopy (target|that|it|those|each|the next)\b|token that's a copy|enters?( the battlefield)? as a copy|creates? [^.]{0,20}cop(y|ies) of/, "Copies a spell, ability or permanent"],
@@ -7100,6 +7119,8 @@ function optSynergy(T, c, types, main) {
       const m = s.match(re); if (!m) continue;
       if ((side === "enabler" || side === "amplifier" || cat === "lifegain") && oppAt(m.index, m[0].length)) continue;          // it's the opponent who gets it
       if (cat === "blink" && side === "payoff" && !perm) continue;
+      if (cat === "sacrifice" && side === "payoff" && /put into/.test(m[0])) { const subj = (s.slice(0, m.index).match(/\bwhen(ever)? ([^.,;]*)$/) || [])[2] || "";
+        if (!/\bcreatures?\b/.test(subj) && !types.some(t => new RegExp(`\\b(${t}|${t}s|${t}es|${t.replace(/f$/, "ve")}s)\\b`).test(subj))) continue; }   // an Aura, Equipment or enchantment going there isn't a death
       if (cat === "gowide" && (/less to cast/.test(s) || /creatures you control of the chosen type/.test(s))) continue;          // a cost that counts creatures; a count of one chosen type                                   // a cost that counts creatures (Blasphemous Act) isn't a go-wide card
       // a lord of one kind ("other Goblin creatures you control get +1/+1", "artifact creatures you control get…") isn't a go-wide card
       if (cat === "gowide" && /^creatures you control/.test(m[0]) && /\b(?!(?:other|all|each|the)\b)[a-z]+ $/.test(s.slice(Math.max(0, m.index - 20), m.index))) continue;
@@ -7114,6 +7135,15 @@ function optSynergy(T, c, types, main) {
     const f = s.match(/\bwhen(ever)? this (creature )?(enters or dies|dies)\b/);
     if (f && /\bCreature\b/.test(front)) add("sacrifice", "fodder", "Does something when it dies (good to sacrifice)", clause(s0, f.index, f[0].length), true, true);
   });
+  // a card that makes another permanent's triggered abilities trigger an additional time: death, landfall or enters-the-battlefield
+  sents.forEach(s0 => { const tm = s0.toLowerCase().match(/\bif (?:a|an|one or more) ([a-z ]+?) (entering(?: the battlefield)?|dying) causes a triggered ability of (?:a|any) permanent you control to trigger, that ability triggers an additional time/);
+    if (!tm) return;
+    // what has to die or enter: a creature dying is a death trigger; a land entering is landfall; a creature, artifact or enchantment
+    // entering is an enters-the-battlefield ability; "a permanent" (Elesh Norn, Starfield Vocalist) covers lands and the others, so it can
+    // amplify both. Each kind counts only when the deck has triggers of it (optAnalyze); a "nonland permanent" isn't a land.
+    const subj = tm[1], ks = tm[2] === "dying" ? (/\bcreatures?\b/.test(subj) ? ["sacrifice"] : [])
+      : [/\b(?<!non)lands?\b|(?<!nonland )\bpermanents?\b/.test(subj) && "landfall", /\b(creatures?|artifacts?|enchantments?|permanents?)\b/.test(subj) && "blink"].filter(Boolean);
+    for (const k of ks) add(k, "amplifier", { sacrifice: "Makes death triggers happen twice", landfall: "Makes landfall triggers happen twice", blink: "Makes enters-the-battlefield triggers happen twice" }[k], clause(s0, tm.index, tm[0].length), true, k === "blink"); });
   if (kw.includes("prowess")) add("spells", "payoff", "Rewards casting instants and sorceries", "Prowess", true);
   if (kw.includes("flashback") && !seen.has("graveyard|payoff")) add("graveyard", "payoff", "Can be cast again from your graveyard (its own flashback)", "Flashback", false);
   const cut = costCut(T.text); if (/instant|sorcery|noncreature/.test(cut)) add("spells", "enabler", "Makes instants and sorceries cheaper", cut + " cost less", true);
@@ -7246,11 +7276,14 @@ async function drawOptimizer(d) {
     if (!k) return `<p class="small" style="margin:0" data-theme="${esc(t)}">Your theme <b>${esc(t)}</b> has no strategy category here; the sections above cover it.</p>`;
     if (k === "type:*") { const ts = ST.cats.filter(g => g.key.startsWith("type:") && g.pay.length); return `<p class="small" style="margin:0" data-theme="${esc(t)}">Your theme <b>${esc(t)}</b>: ${ts.length ? ts.map(g => `${esc(g.label.slice(15))} (${cnt(g.cards.length, "card")})`).join(", ") : "no card here rewards a creature type"}.</p>`; }
     const g = ST.cats.find(x => x.key === k), lab = k.startsWith("type:") ? "Creature type: " + k.slice(5) : SYN_CAT[k];
-    return `<p class="small" style="margin:0" data-theme="${esc(t)}">Your theme <b>${esc(t)}</b> → ${esc(lab)}: ${g && g.cards.length ? `${cnt(g.cards.length, "card")} (${cnt(g.copies, "copy").replace("copys", "copies")}): ${g.en.length} enabling it, ${g.pay.length} rewarding it` : "no card in the deck supports it directly"}.</p>`; });
+    // the deck's own cards of the theme's type (its Elves, its enchantments): what the payoffs work with, apart from the cards that enable or reward it
+    const mem = themeMembers(k, t, A.deck);
+    const sup = g && g.cards.length ? `${cnt(g.cards.length, "card")} (${cnt(g.copies, "copy").replace("copys", "copies")}): ${mem ? [g.en.length && `${g.en.length} enabling it`, g.pay.length && `${g.pay.length} rewarding it`, g.amp.length && `${g.amp.length} amplifying it`].filter(Boolean).join(", ") || `${g.cards.length} supporting it` : `${g.en.length} enabling it, ${g.pay.length} rewarding it`}` : "no card in the deck supports it directly";
+    return `<p class="small" style="margin:0" data-theme="${esc(t)}">Your theme <b>${esc(t)}</b> → ${esc(lab)}: ${mem ? `<span class="num" data-members="${mem.n}">${esc(mem.text)}</span> in the deck. ` + sup[0].toUpperCase() + sup.slice(1) : sup}.</p>`; });
   const catHTML = g => `<details class="an-group op-strat" id="op-st-${esc(g.key.replace(/\W+/g, "-").toLowerCase())}" data-g="st-${esc(g.key)}" ${st.open.has("st-" + g.key) ? "open" : ""}>
       <summary><span class="label">${esc(g.label)}</span> <span class="small muted num">${g.cards.length ? `${cnt(g.cards.length, "card")} · ${g.copies} ${g.copies === 1 ? "copy" : "copies"} · ${g.en.length} enabling · ${g.pay.length} rewarding${g.amp.length ? ` · ${g.amp.length} amplifying` : ""}${g.fod.length ? ` · ${g.fod.length} fodder` : ""}` : "not active"}</span></summary>
       <div class="stack" style="gap:6px;margin-top:6px">${g.on.length ? sRows(g.on) : ""}
-      ${g.pot.length ? `<div class="op-pot"><span class="small"><b>${g.key === "blink" ? "Potential payoffs" : g.key === "sacrifice" ? "Sacrifice fodder" : "Not counted"}</b> · ${cnt([...new Set(g.pot.map(x => x.r))].length, "card")}, not counted</span><p class="small muted" style="margin:2px 0">${g.key === "blink" ? "They have an enters-the-battlefield ability, which pays off only with a blink card, and this deck has none." : g.key === "sacrifice" ? "They do something when they die, which pays off only with a way to sacrifice them, and this deck has none." : `They make ${esc(g.key.slice(5))} creatures, but no card in the deck rewards ${esc(g.key.slice(5))}s.`}</p>${sRows(g.pot)}</div>` : ""}
+      ${g.pot.length ? `<div class="op-pot"><span class="small"><b>${g.key === "blink" ? (g.pot.some(x => x.e.side === "amplifier") ? "Potential payoffs and amplifiers" : "Potential payoffs") : g.key === "sacrifice" ? "Sacrifice fodder" : "Not counted"}</b> · ${cnt([...new Set(g.pot.map(x => x.r))].length, "card")}, not counted</span><p class="small muted" style="margin:2px 0">${g.key === "blink" ? (g.pot.some(x => x.e.side === "amplifier") ? "They have an enters-the-battlefield ability or make one trigger again, which pays off fully only with a blink card, and this deck has none." : "They have an enters-the-battlefield ability, which pays off only with a blink card, and this deck has none.") : g.key === "sacrifice" ? "They do something when they die, which pays off only with a way to sacrifice them, and this deck has none." : `They make ${esc(g.key.slice(5))} creatures, but no card in the deck rewards ${esc(g.key.slice(5))}s.`}</p>${sRows(g.pot)}</div>` : ""}
       ${g.inc.length ? `<div class="op-inc"><span class="small"><b>Incidental</b> · ${cnt([...new Set(g.inc.map(x => x.r))].length, "card")}, not counted</span><p class="small muted" style="margin:2px 0">A side effect of a card that does another job.</p>${sRows(g.inc)}</div>` : ""}</div></details>`;
   const blinkShown = ST.blinkOn || (d.themes || []).some(t => themeSyn(t, ST.types) === "blink");
   const activeCats = ST.cats.filter(g => g.cards.length > 1), single = ST.cats.filter(g => g.cards.length === 1), quiet = ST.cats.filter(g => !g.cards.length && (g.key !== "blink" || blinkShown));
@@ -7258,7 +7291,8 @@ async function drawOptimizer(d) {
     <p class="small muted" id="opStratIntro" style="margin:0">What the cards support, read from their rules text. Counts only, not targets.</p>
     <details class="op-help" id="opStratHelp"><summary class="small">What the words mean</summary><p class="small muted" style="margin:4px 0 0">An <b>enabler</b> supplies something (tokens, a way to sacrifice, cheaper spells), a <b>payoff</b> rewards it, an <b>amplifier</b> makes the enablers do more (token doublers), and <b>fodder</b> is good to sacrifice. This is separate from the roles above, and a card can be in several. Counts are cards in the main deck without the commander, then copies.</p></details>
     ${!A.sorted ? `<p class="small" id="opStratNo" style="margin:0">Card text isn't loaded, so strategies can't be read.</p>` : ""}
-    ${ST.cmd.length ? `<p class="small" id="opStratCmd" style="margin:0">Your commander supports: ${[...new Set(ST.cmd.map(x => x.e.cat))].map(k => { const sides = new Set(ST.cmd.filter(x => x.e.cat === k).map(x => x.e.side)); return (k.startsWith("type:") ? "Creature type: " + k.slice(5) : SYN_CAT[k]) + ` (${sides.size > 1 ? "enables and rewards it" : sides.has("payoff") ? "rewards it" : "enables it"})`; }).map(esc).join(", ")}.</p>` : A.cmdName && A.sorted ? `<p class="small" id="opStratCmd" style="margin:0">No strategy found in your commander's text.</p>` : ""}
+    ${ST.cmd.length ? `<p class="small" id="opStratCmd" style="margin:0">Your commander supports: ${[...new Set(ST.cmd.map(x => x.e.cat))].map(k => { const sides = new Set(ST.cmd.filter(x => x.e.cat === k).map(x => x.e.side)); const v = [(sides.has("enabler") || sides.has("fodder")) && "enables", sides.has("payoff") && "rewards", sides.has("amplifier") && "amplifies"].filter(Boolean);
+      return (k.startsWith("type:") ? "Creature type: " + k.slice(5) : SYN_CAT[k]) + ` (${v.length > 2 ? v.slice(0, -1).join(", ") + " and " + v[v.length - 1] : v.join(" and ")} it)`; }).map(esc).join(", ")}.</p>` : A.cmdName && A.sorted ? `<p class="small" id="opStratCmd" style="margin:0">No strategy found in your commander's text.</p>` : ""}
     <div id="opStratTheme">${themeLines.join("")}</div>
     ${A.sorted ? `<div id="opImb" class="stack" style="gap:6px"><span class="small"><b>Enablers and payoffs</b></span>${ST.imb.length ? ST.imb.map(o => `<details class="an-group op-imb" id="op-imb-${esc(o.key)}" data-g="imb-${esc(o.key)}" ${st.open.has("imb-" + o.key) ? "open" : ""}>
       <summary><span class="chip warn">Worth a look</span> <span class="label">${esc(o.label)}</span> <span class="small muted num">${o.sides.map(x => `${esc(x.name.toLowerCase())}: ${x.n}`).join(" · ")}</span></summary>
