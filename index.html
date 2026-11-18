@@ -744,22 +744,26 @@ function cardRoles(text, type) {
   const t = (text || "").toLowerCase().replace(/\([^)]*\)/g, ""), ty = (type || "").split("//")[0], r = [];
   const land = /\bLand\b/.test(ty);
   if (land) r.push("Land");
-  if (!land && (/\badd (\{|one mana|two mana|three mana|x mana|an amount of)|adds? .{0,30}mana of any|search your library for (a|up to \w+|two) (basic )?(land|forest|plains|island|swamp|mountain)|create (a|two|\w+) treasure|put (a|up to \w+) land cards? .{0,40}onto the battlefield|additional land/.test(t))) r.push("Ramp");
+  if (!land && (/\badd (\{|one mana|two mana|three mana|x mana|an amount of)|adds? .{0,30}mana of any|adds? an additional (\{[wubrgc]\}|one mana|two mana|\w+ mana)|search your library for (a|up to \w+|two) (basic )?(land|forest|plains|island|swamp|mountain)|create (a|two|\w+) treasure|put (a|up to \w+) land cards? .{0,40}onto the battlefield|additional land/.test(t))) r.push("Ramp");
   // card draw: you draw (not "an opponent draws"; "target player draws" can be you), wheels, and "reveal the top N, put all the X into your hand"
   if (/(?<!(opponent|player|players|opponents) )\bdraws? (a|an additional|two|three|four|x|\w+) cards?|draw cards equal|investigate|connives?|\btarget player draws (a|x|two|three|\w+) cards?|discards? (their|your) hand[^.]{0,40}draws? (cards equal|that many cards|\w+ cards?)|(reveal|look at) the top [^.]{0,40}cards? of your library\. put (all|any number of) [^.]{0,60}into your hand/.test(t)) r.push("Card draw");
   // removal: sentences that only touch your own permanent (a flicker, a bounce of your own creature) don't count
-  const rt = t.split(/(?<=\.)\s+|\n/).filter(x => !(/(exile|return) (up to \w+ )?target [^,.]{0,30}you (control|own)/.test(x) && !/fights?|you don't control|an opponent controls/.test(x))).join(" ");
-  if (/(destroy|exile) (up to \w+ )?target (\w+ )?(creature|artifact|enchantment|planeswalker|permanent|nonland|battle)/.test(rt)
+  const ts = t.split(/(?<=\.)\s+|\n/).map(x => x.trim()).filter(Boolean);
+  const rt = ts.filter((x, i) => !(/(exile|return) (up to \w+ )?(another )?target [^,.]{0,30}you (control|own)/.test(x) && !/fights?|you don't control|an opponent controls/.test(x))
+    && !(/\bexile\b/.test(x) && /^return (it|that card|those cards|the exiled cards?) to the battlefield/.test(ts[i + 1] || "") && !/leaves the battlefield/.test(ts[i + 1] || ""))).join(" ");
+  if (/(destroy|exile) (up to \w+ )?(another )?target ([\w-]+,? ){0,3}(creature|artifact|enchantment|planeswalker|permanent|nonland|battle)/.test(rt)
     || /deals? [^.]{0,70}?damage [^.]{0,110}?(to|among) (any target|any number of targets|each of (them|[^.]{0,20}targets?)|(up to \w+ )?target(?!s? (player|opponent))|\w+ targets\b)/.test(rt)
     || /target creature (an opponent controls )?gets -\d|fights? (up to one )?target|target (player|opponent) sacrifices/.test(rt)
+    || /enchanted (creature|permanent) [^.]{0,140}loses all (other )?abilities|enchanted (creature|permanent) is a colorless [^.]{0,20}land/.test(rt)
+    || /each (player|opponent|other player) sacrifices (a|an|one|two|three) (nontoken )?(creature|planeswalker|permanent|artifact|nonland)/.test(rt)
     || /return (up to \w+ )?target (creature|nonland permanent|permanent|artifact|enchantment|spell or permanent|nonland)[^.]{0,40}to (its|their) owner'?s'? hands?/.test(rt)
     || /owner of target [^.]{0,40}(shuffles|puts) it (into|on)|put target [^.]{0,40}(on|into) [^.]{0,20}its owner's library|\btarget (\w+ )?creature\.[^.]{0,80}(exile|destroy) that creature/.test(rt)) r.push("Removal");
-  if (/(destroy|exile) (all|each) (?![^.]{0,40}\bcards?\b)[^.]{0,40}(creatures?|permanents?|artifacts|enchantments|planeswalkers|nonland|nontoken)|all (other )?creatures get -|each (other )?creature gets -|deals? (\w+|x) damage to each (other )?creature|return all [^.]{0,30}(creatures|permanents|artifacts)[^.]{0,30}to (their|its) owners?'s? hands?|each (player|opponent) sacrifices (all|a creature)/.test(t)
+  if (/(destroy|exile) (all|each) (?![^.]{0,40}\bcards?\b)[^.]{0,40}(creatures?|permanents?|artifacts|enchantments|planeswalkers|nonland|nontoken)|all (other )?creatures get -|each (other )?creature gets -|deals? (\w+|x) damage to each (other )?creature|return all [^.]{0,30}(creatures|permanents|artifacts)[^.]{0,30}to (their|its) owners?'s? hands?|each (player|opponent) sacrifices all\b/.test(t)
     || (/\boverload\b/.test(t) && r.includes("Removal"))) r.push("Board wipe");
   if (/counter target [^.]{0,50}?\b(spell|ability)/.test(t)) r.push("Counterspell");
   // protection: something of yours is kept safe. A spell that merely can't be countered itself doesn't protect anything.
   if (/(you control|target creature you control|creatures you control|permanents you control|equipped creature|enchanted creature) (gain|gains|have|has|get|gets) [^.]{0,40}(hexproof|indestructible|protection from|shroud|ward)|phases? out|prevent all (combat )?damage|regenerate (target|each|all)|spells you (control|cast) can't be countered/.test(t)) r.push("Protection");
-  if (/search your library for (a|an|up to \w+|any number of|two|three|x) (?![^.]{0,50}\b(land|forest|plains|island|swamp|mountain)\b)[^.]{0,50}?\bcards?\b/.test(t)) r.push("Tutor");
+  if (/search your library( and\/or (your )?graveyard)? for (a|an|up to \w+|any number of|two|three|x) (?![^.]{0,50}\b(land|forest|plains|island|swamp|mountain)\b)[^.]{0,50}?\bcards?\b/.test(t)) r.push("Tutor");
   if (/(return|put) [^.]{0,110}from (your|a|any) graveyard (on)?to (your hand|the battlefield)|(cast|play) [^.]{0,60}from your graveyard|in your graveyard (gains?|has|have) (flashback|escape|retrace|jump-start)|target [^.]{0,40}card in your graveyard\. you may (cast|play) (that card|it)|exile target [^.]{0,50}from your graveyard\. [^.]{0,80}(copy it|cast (it|the copy|that card))/.test(t)) r.push("Recursion");
   if (/\bCreature\b/.test(ty)) r.push("Creature");
   return r;

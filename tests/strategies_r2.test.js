@@ -111,7 +111,7 @@ const FIX = require("./real_decks_fixture.js");
       // temporary exile (until it leaves; returned when this leaves the battlefield) is not blink; their functional roles stay what they were
       m = await mini("Krenko, Mob Boss", ["Oblivion Ring", "Fiend Hunter", "Banisher Priest", "Journey to Nowhere", "Mulldrifter", "Wall of Omens"]);
       ok(["Oblivion Ring", "Fiend Hunter", "Banisher Priest", "Journey to Nowhere"].every(n => !m.sy[n].some(x => x.startsWith("blink/enabler"))), `${label}: 2A Oblivion Ring, Fiend Hunter, Banisher Priest and Journey to Nowhere aren't blink enablers (${["Oblivion Ring", "Fiend Hunter", "Banisher Priest", "Journey to Nowhere"].map(n => n + ": " + m.sy[n]).join(" | ")})`);
-      ok(m.roles["Banisher Priest"] === "Removal,Creature" && m.roles["Journey to Nowhere"] === "Removal" && m.roles["Oblivion Ring"] === "" && m.roles["Fiend Hunter"] === "Creature", `${label}: 2A their functional roles are unchanged (Oblivion Ring and Fiend Hunter miss Removal before and after: "exile another target", a Stage 2D item) (${["Oblivion Ring", "Fiend Hunter", "Banisher Priest", "Journey to Nowhere"].map(n => n + ": " + m.roles[n]).join(" | ")})`);
+      ok(m.roles["Banisher Priest"] === "Removal,Creature" && m.roles["Journey to Nowhere"] === "Removal" && m.roles["Oblivion Ring"] === "Removal" && m.roles["Fiend Hunter"] === "Removal,Creature", `${label}: 2A their functional roles: all four Removal (Oblivion Ring and Fiend Hunter since Stage 2D's "exile another target") (${["Oblivion Ring", "Fiend Hunter", "Banisher Priest", "Journey to Nowhere"].map(n => n + ": " + m.roles[n]).join(" | ")})`);
       ok(["Mulldrifter", "Wall of Omens", "Fiend Hunter"].every(n => m.sy[n].includes("blink/payoff/notcounted")) && !m.imbKeys.length, `${label}: 2A with no blink card, enters abilities stay potential (not counted), and nothing to say`);
       // one end-step blink card is a blink card: the deck's enters abilities count, as with Cloudshift
       m = await mini("Krenko, Mob Boss", ["Eerie Interlude", "Mulldrifter", "Wall of Omens", "Panharmonicon"]);
@@ -202,6 +202,73 @@ const FIX = require("./real_decks_fixture.js");
       // Treasure: makers whose only artifact tokens are Treasure still don't count as artifact token makers
       m = await mini("Teysa Karlov", ["Marionette Apprentice", "Smothering Tithe", "Pitiless Plunderer", "Deadly Dispute"]);
       ok(!m.imbKeys.includes("artifacts-makers") && ["Smothering Tithe", "Pitiless Plunderer"].every(n => m.sy[n].includes("artifacts/enabler")) && !m.sy["Marionette Apprentice"].some(x => x.startsWith("artifacts")), `${label}: 2C Treasure makers keep their artifacts entry and still don't make an "artifact tokens without payoffs" observation; a Servo adds none (${m.imbKeys})`);
+
+      // ---- Stage 2D: functional roles (fresh, from the rules text). rl(r, n) = the card's roles in that analysis
+      const rl = (r, n) => r.roles[n];
+      // A. Ramp: Auras that make a land add an additional mana; not land Auras that don't
+      for (const n of ["Wild Growth", "Overgrowth", "Utopia Sprawl", "Fertile Ground"]) ok(rl(R.sythis, n) === "Ramp", `${label}: 2D ${n} ("its controller adds an additional …") is Ramp (${rl(R.sythis, n)})`);
+      ok(R.sythis.healthy.includes("Ramp 15") && !R.sythis.unknown.some(n => /Wild Growth|Overgrowth|Utopia Sprawl/.test(n)), `${label}: 2D Sythis: Ramp 15 (was 12); the three Auras leave "No role identified"`);
+      m = await mini("Sythis, Harvest's Hand", ["Spreading Algae", "Genju of the Cedars", "Fertile Ground"]);
+      ok(!/Ramp/.test(m.roles["Spreading Algae"]) && !/Ramp/.test(m.roles["Genju of the Cedars"]) && m.roles["Fertile Ground"] === "Ramp", `${label}: 2D land Auras that add no mana (Spreading Algae, Genju of the Cedars) aren't Ramp (${m.roles["Spreading Algae"] || "none"} | ${m.roles["Genju of the Cedars"]})`);
+      ok(R.tatyova.healthy.includes("Ramp 36"), `${label}: 2D Tatyova's Ramp (36) unchanged (${R.tatyova.healthy})`);
+      // B. Removal: Shriekmaw; "exile another target" (Oblivion Ring, Fiend Hunter) is Removal, and not blink; Banisher Priest and Journey to Nowhere unchanged
+      ok(rl(R.meren, "Shriekmaw") === "Removal,Creature" && !R.meren.unknown.includes("Shriekmaw"), `${label}: 2D Shriekmaw ("destroy target nonartifact, nonblack creature") is Removal`);
+      m = await mini("Krenko, Mob Boss", ["Oblivion Ring", "Fiend Hunter", "Banisher Priest", "Journey to Nowhere"]);
+      ok(m.roles["Oblivion Ring"] === "Removal" && m.roles["Fiend Hunter"] === "Removal,Creature", `${label}: 2D Oblivion Ring and Fiend Hunter ("exile another target …") are Removal (${m.roles["Oblivion Ring"]} | ${m.roles["Fiend Hunter"]})`);
+      ok(m.roles["Banisher Priest"] === "Removal,Creature" && m.roles["Journey to Nowhere"] === "Removal", `${label}: 2D Banisher Priest and Journey to Nowhere still Removal`);
+      ok(["Oblivion Ring", "Fiend Hunter", "Banisher Priest", "Journey to Nowhere"].every(n => !m.sy[n].some(x => x.startsWith("blink/enabler"))), `${label}: 2D none of the four is a blink enabler (${["Oblivion Ring", "Fiend Hunter"].map(n => m.sy[n]).join(" | ")})`);
+      ok(rl(R.brago, "Flickerwisp") === "Creature" && rl(R.brago, "Charming Prince") === "Creature" && rl(R.brago, "Eerie Interlude") === "" && rl(R.brago, "Restoration Angel") === "Creature" && rl(R.brago, "Ephemerate") === "", `${label}: 2D a flicker (Flickerwisp's "exile another target permanent. Return that card…", Charming Prince's "Exile another target creature you own") isn't Removal`);
+      // C. Removal: Auras that strip the creature of its abilities; not Pacifism-style Auras
+      ok(rl(R.sythis, "Darksteel Mutation") === "Removal" && rl(R.sythis, "Kenrith's Transformation") === "Card draw,Removal", `${label}: 2D Darksteel Mutation and Kenrith's Transformation ("loses all (other) abilities") are Removal (${rl(R.sythis, "Darksteel Mutation")} | ${rl(R.sythis, "Kenrith's Transformation")})`);
+      m = await mini("Sythis, Harvest's Hand", ["Pacifism", "Arrest", "Claustrophobia"]);
+      ok(["Pacifism", "Arrest", "Claustrophobia"].every(n => !/Removal/.test(m.roles[n])), `${label}: 2D Pacifism, Arrest and Claustrophobia stay non-Removal (${["Pacifism", "Arrest", "Claustrophobia"].map(n => m.roles[n] || "none").join(" | ")})`);
+      ok(rl(R.sythis, "Ethereal Armor") === "" && rl(R.sythis, "Ancestral Mask") === "", `${label}: 2D stat-changing Auras aren't Removal`);
+      ok(R.sythis.healthy.includes("Removal 8") && !R.sythis.weak.some(w => /Little removal/.test(w)), `${label}: 2D Sythis: Removal 8 (was 6), so no "Little removal" warning`);
+      // D. Edicts are Removal; Board wipe needs mass removal
+      for (const [id, n, want] of [["meren", "Fleshbag Marauder", "Removal,Creature"], ["meren", "Accursed Marauder", "Removal,Creature"], ["meren", "Plaguecrafter", "Removal,Creature"], ["meren", "Butcher of Malakir", "Removal,Creature"], ["meren", "Dictate of Erebos", "Removal"], ["atraxa", "Vraska's Fall", "Removal"], ["teysa", "Grave Pact", "Removal"], ["teysa", "Liliana, Dreadhorde General", "Card draw,Removal"]])
+        ok(rl(R[id], n) === want, `${label}: 2D ${n} (one creature per player): ${want}, not Board wipe (${rl(R[id], n)})`);
+      for (const [id, n] of [["meren", "Toxic Deluge"], ["meren", "Culling Ritual"], ["brago", "Farewell"], ["brago", "Supreme Verdict"], ["brago", "Time Wipe"], ["teysa", "Damn"]]) ok(/Board wipe/.test(rl(R[id], n)), `${label}: 2D ${n} is still a Board wipe (${rl(R[id], n)})`);
+      m = await mini("Teysa Karlov", ["All Is Dust"]);
+      ok(m.roles["All Is Dust"] === "Board wipe", `${label}: 2D "Each player sacrifices all colored permanents" (All Is Dust) is still a Board wipe (${m.roles["All Is Dust"]})`);
+      ok(R.meren.healthy.includes("Board wipe 2") && R.meren.healthy.includes("Removal 16") && R.teysa.healthy.includes("Board wipe 3") && R.teysa.healthy.includes("Removal 11"), `${label}: 2D Meren: Board wipe 2, Removal 16 (were 6, 8); Teysa: Board wipe 3, Removal 11 (were 4, 8)`);
+      ok(R.atraxa.notes.some(w => /^Few board wipes: 1 board wipe/.test(w)) && R.atraxa.healthy.includes("Removal 7"), `${label}: 2D Atraxa: Vraska's Fall moves to Removal (7), leaving 1 board wipe (${R.atraxa.notes})`);
+      // E. Tutor: "Search your library and/or graveyard for a creature card"
+      ok(rl(R.lathril, "Finale of Devastation") === "Tutor" && !R.lathril.unknown.includes("Finale of Devastation"), `${label}: 2D Finale of Devastation is a Tutor`);
+      for (const [id, n] of [["meren", "Entomb"], ["meren", "Buried Alive"], ["meren", "Diabolic Intent"], ["sythis", "Idyllic Tutor"], ["sythis", "Enlightened Tutor"], ["wyleth", "Stoneforge Mystic"], ["wyleth", "Steelshaper's Gift"], ["lathril", "Elvish Harbinger"]]) ok(/Tutor/.test(rl(R[id], n)), `${label}: 2D ${n} still a Tutor`);
+      ok(!/Tutor/.test(rl(R.tatyova, "Cultivate")) && !/Tutor/.test(rl(R.tatyova, "Oracle of Mul Daya")), `${label}: 2D searching for lands isn't a Tutor`);
+      // F. names: functional roles are read from rules text only, never from a card's name
+      ok(rl(R.brago, "Loran of the Third Path") === "Card draw,Removal,Creature" && rl(R.brago, "Lavinia of the Tenth") === "Creature", `${label}: 2D Loran's and Lavinia's roles don't depend on name matching (${rl(R.brago, "Loran of the Third Path")} | ${rl(R.brago, "Lavinia of the Tenth")})`);
+      // the strategy analysis is untouched: every deck's strategy sums equal the snapshots checked above (Krenko, Mizzix, Shorikai) and the stage checks
+      ok(R.krenko.healthy.join() === FIX.before.krenko.healthy.join() && R.mizzix.healthy.join() === FIX.before.mizzix.healthy.join() && R.shorikai.healthy.join() === FIX.before.shorikai.healthy.join(), `${label}: 2D Krenko, Mizzix and Shorikai role counts unchanged`);
+
+      // ---- Stage 2D: saved roles and your own fixes. Old roles (as the rules before Stage 2D read them) are saved on the deck's cards
+      const sr = await p.evaluate(async ({ cards }) => {
+        const OLD = { "Wild Growth": [], "Fleshbag Marauder": ["Board wipe", "Creature"], "Oblivion Ring": [], "Finale of Devastation": [], "Shriekmaw": ["Creature"] };
+        S.roles = S.roles || {}; const custom0 = S.roles["Shriekmaw"];
+        const d = { id: "sr2d", name: "sr2d", format: "commander", cmdr: [], cards: {}, themes: [], created: 1, updated: 1 }; S.decks.sr2d = d;
+        addToDeck(d, cards["Meren of Clan Nel Toth"], 1, false, true); d.cmdr = Object.keys(d.cards);
+        for (const n of Object.keys(OLD)) addToDeck(d, cards[n], 1, false, true);
+        const mine = () => Object.values(d.cards).filter(c => OLD[c.name]), saved = () => Object.fromEntries(mine().map(c => [c.name, (c.roles || []).join(",")]));
+        for (const c of mine()) c.roles = OLD[c.name].slice();
+        S.roles["Shriekmaw"] = ["Creature", "Card draw"];                                              // your own fix
+        await optTexts(Object.keys(OLD).concat("Meren of Clan Nel Toth"));
+        const A = optAnalyze(d, { cmd: "", theme: "", R: null, stat: new Map(), tstat: new Map() }, { combos: null }), row = n => A.rows.find(r => r.name === n);
+        const res = { analysis: Object.fromEntries(Object.keys(OLD).map(n => [n, row(n).roles.join(",")])), stale: A.rows.filter(r => r.stale).map(r => r.name).sort(), savedAfterAnalysis: saved(), gaps: deckGaps(d).n };
+        res.refresh = await refreshRoles(Object.keys(OLD)); res.savedAfterRefresh = saved();
+        res.custom = rolesOf(mine().find(c => c.name === "Shriekmaw")).join(","); res.customKept = JSON.stringify(S.roles["Shriekmaw"]);
+        res.backup = ((ROLEBK.mem && ROLEBK.mem.items) || []).filter(x => x.deck === "sr2d").map(x => x.name + ":" + (x.roles || []).join(",")).sort();
+        await restoreRoles(); res.savedAfterRestore = saved(); res.backupAfterRestore = ROLEBK.has;
+        if (custom0 === undefined) delete S.roles["Shriekmaw"]; else S.roles["Shriekmaw"] = custom0; delete S.decks.sr2d;
+        return res; }, { cards: FIX.cards });
+      const OLDS = { "Wild Growth": "", "Fleshbag Marauder": "Board wipe,Creature", "Oblivion Ring": "", "Finale of Devastation": "", "Shriekmaw": "Creature" };
+      ok(JSON.stringify(sr.analysis) === JSON.stringify({ "Wild Growth": "Ramp", "Fleshbag Marauder": "Removal,Creature", "Oblivion Ring": "Removal", "Finale of Devastation": "Tutor", "Shriekmaw": "Creature,Card draw" }), `${label}: 2D Deck analysis reads the new rules, and your own fix (Shriekmaw) wins over them (${JSON.stringify(sr.analysis)})`);
+      ok(sr.stale.join() === "Finale of Devastation,Fleshbag Marauder,Oblivion Ring,Shriekmaw,Wild Growth", `${label}: 2D it marks the 5 cards whose saved roles are from the older rules (${sr.stale})`);
+      ok(JSON.stringify(sr.savedAfterAnalysis) === JSON.stringify(OLDS), `${label}: 2D analysing the deck doesn't change any saved role (${JSON.stringify(sr.savedAfterAnalysis)})`);
+      ok(sr.gaps["Board wipe"] === 1 && !sr.gaps.Ramp && !sr.gaps.Removal && !sr.gaps.Tutor && sr.gaps["Card draw"] === 1, `${label}: 2D Role balance still counts the saved roles (Fleshbag's Board wipe) and your fix (Shriekmaw's Card draw) until roles are updated (${JSON.stringify(sr.gaps)})`);
+      ok(sr.refresh.changed === 5 && JSON.stringify(sr.savedAfterRefresh) === JSON.stringify({ "Wild Growth": "Ramp", "Fleshbag Marauder": "Removal,Creature", "Oblivion Ring": "Removal", "Finale of Devastation": "Tutor", "Shriekmaw": "Removal,Creature" }), `${label}: 2D updating roles (the existing refresh) saves the new roles for the 5 cards (${JSON.stringify(sr.refresh)} ${JSON.stringify(sr.savedAfterRefresh)})`);
+      ok(sr.custom === "Creature,Card draw" && sr.customKept === '["Creature","Card draw"]', `${label}: 2D your own fix still wins after the refresh, and is untouched (${sr.custom})`);
+      ok(sr.backup.join(" | ") === "Finale of Devastation: | Fleshbag Marauder:Board wipe,Creature | Oblivion Ring: | Shriekmaw:Creature | Wild Growth:", `${label}: 2D the refresh keeps a backup of exactly the old roles (${sr.backup.join(" | ")})`);
+      ok(JSON.stringify(sr.savedAfterRestore) === JSON.stringify(OLDS) && sr.backupAfterRestore === false, `${label}: 2D restoring puts every old role back and clears the backup (${JSON.stringify(sr.savedAfterRestore)})`);
 
       // ---- H4: graveyard setup and reanimation
       for (const n of ["Animate Dead", "Reanimate", "Living Death"]) ok(has("meren", n, "graveyard/payoff") && R.meren.why[n].some(w => /reanimation/.test(w)), `${label}: H4 ${n} returns creatures from a graveyard to the battlefield (reanimation) (${R.meren.why[n]})`);
