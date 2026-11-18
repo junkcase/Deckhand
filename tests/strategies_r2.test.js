@@ -169,6 +169,40 @@ const FIX = require("./real_decks_fixture.js");
       ok(m.sy["Astor, Bearer of Blades"].includes("artifacts/payoff") && m.sy["Astor, Bearer of Blades"].includes("artifacts/enabler"), `${label}: 2B with Vehicles in the deck, Astor's crew text still counts for Artifacts (${m.sy["Astor, Bearer of Blades"]})`);
       ok(R.shorikai.cats.find(c => c.startsWith("Artifacts:")) === "Artifacts: 32 cards/32 copies · en 10 · pay 27", `${label}: 2B Shorikai's Artifacts (Vehicles) unchanged`);
 
+      // ---- Stage 2C: making tokens, being sacrifice fodder and being a sacrifice outlet are three different things
+      const SEPH = "Sephiroth, Fabled SOLDIER // Sephiroth, One-Winged Angel", sx = (r, n, pre) => (r.why[n] || []).filter(w => w.startsWith(pre));
+      // Afterlife: a token maker and fodder; Fabricate: a token maker only. Read from Scryfall's keyword list (the reminder text is removed)
+      for (const [n, k] of [["Ministrant of Obligation", "Afterlife 2"], ["Orzhov Enforcer", "Afterlife 1"]]) {
+        ok(R.teysa.sy[n].join() === "tokens/enabler,sacrifice/fodder" && sx(R.teysa, n, "tokens").join() === `tokens/enabler: Creates creature tokens (Afterlife: Spirit tokens when it dies) · ${k}` && sx(R.teysa, n, "sacrifice").join() === `sacrifice/fodder: Does something when it dies (good to sacrifice) · ${k}`, `${label}: 2C ${n} ("${k}"): makes Spirit tokens when it dies, and is sacrifice fodder; not an outlet (${R.teysa.why[n]})`);
+        ok(!R.teysa.unknown.includes(n), `${label}: 2C ${n} is no longer under "No role identified"`); }
+      ok(R.teysa.sy["Marionette Apprentice"].join() === "sacrifice/payoff,tokens/enabler" && sx(R.teysa, "Marionette Apprentice", "tokens").join() === "tokens/enabler: Creates creature tokens (Fabricate: a Servo, or a +1/+1 counter) · Fabricate 1", `${label}: 2C Marionette Apprentice ("Fabricate 1"): a token maker, keeping its death payoff; not fodder, not an outlet (${R.teysa.sy["Marionette Apprentice"]})`);
+      ok(!R.teysa.sy["Marionette Apprentice"].some(x => /^(artifacts|counters)\//.test(x)), `${label}: 2C Fabricate's Servo doesn't make Marionette Apprentice an artifact (or counter) maker`);
+      // Braids and Sephiroth: outlets inside a repeating trigger, "you may sacrifice …. If you do, …"
+      ok(sx(R.teysa, "Braids, Arisen Nightmare", "sacrifice").join() === "sacrifice/enabler: A way to sacrifice permanents · You may sacrifice an artifact, creature, enchantment, land, or planeswalker" && R.meren.sy["Braids, Arisen Nightmare"].includes("sacrifice/enabler"), `${label}: 2C Braids ("At the beginning of your end step, you may sacrifice an artifact, creature, …. If you do, …") is a sacrifice outlet, in Teysa and Meren`);
+      ok(sx(R.teysa, SEPH, "sacrifice/enabler").join() === "sacrifice/enabler: A way to sacrifice permanents · You may sacrifice another creature" && sx(R.teysa, SEPH, "sacrifice/payoff").join() === "sacrifice/payoff: Rewards creatures dying or being sacrificed · Whenever another creature dies", `${label}: 2C Sephiroth ("Whenever Sephiroth enters or attacks, you may sacrifice another creature. If you do, draw a card.") is a sacrifice outlet; it keeps the death payoff it already had for "Whenever another creature dies" (${R.teysa.why[SEPH]})`);
+      ok(!R.teysa.sy["Braids, Arisen Nightmare"].some(x => /^tokens\/|^sacrifice\/(fodder|payoff)/.test(x)) && !R.teysa.sy[SEPH].some(x => /^tokens\/|^sacrifice\/fodder/.test(x)), `${label}: 2C an outlet isn't thereby a token maker or fodder (nor, for Braids, a payoff)`);
+      m = await mini("Krenko, Mob Boss", ["Sephiroth, Fabled SOLDIER", "Doomed Traveler"]);
+      ok(m.sy[SEPH].includes("sacrifice/enabler") && m.sy["Doomed Traveler"].includes("sacrifice/fodder"), `${label}: 2C Sephiroth alone is a way to sacrifice, so fodder (Doomed Traveler) counts (${m.sy[SEPH]} | ${m.sy["Doomed Traveler"]})`);
+      // not outlets: a one-time land sacrifice, and a sacrifice-ten finisher
+      ok(!R.tatyova.sy["Springbloom Druid"].some(x => x.startsWith("sacrifice")), `${label}: 2C Springbloom Druid ("When this creature enters, you may sacrifice a land. If you do, …") isn't a sacrifice outlet (${R.tatyova.sy["Springbloom Druid"]})`);
+      m = await mini("Teysa Karlov", ["Springbloom Druid", "Blood Artist", "Zulaport Cutthroat"]);
+      ok(!m.sy["Springbloom Druid"].some(x => x.startsWith("sacrifice")) && m.imbKeys.includes("sacrifice"), `${label}: 2C beside death payoffs, Springbloom Druid still isn't an outlet: the deck still has none (${m.imbKeys})`);
+      ok(!R.teysa.sy["Bolas's Citadel"].some(x => x.startsWith("sacrifice")), `${label}: 2C Bolas's Citadel ("{T}, Sacrifice ten nonland permanents: …") stays out of sacrifice outlets (${R.teysa.sy["Bolas's Citadel"]})`);
+      for (const n of ["Viscera Seer", "Carrion Feeder", "Ashnod's Altar", "Phyrexian Altar", "Yahenni, Undying Partisan", "Priest of Forgotten Gods"]) ok(R.teysa.sy[n].includes("sacrifice/enabler"), `${label}: 2C ${n} still a sacrifice outlet`);
+      // the deck sums: Teysa and Meren change only by these cards
+      ok(R.teysa.cats.includes("Sacrifice: 41 cards/41 copies · en 13 · pay 23 · amp 1 · fodder 7 · incidental 5") && R.teysa.cats.includes("Tokens: 15 cards/15 copies · en 14 · pay 1"), `${label}: 2C Teysa: Sacrifice 41 cards (13 enabling, 7 fodder; was 38, 11, 5), Tokens 15 (14 enabling; was 12, 11) (${R.teysa.cats.filter(c => /^(Sacrifice|Tokens)/.test(c))})`);
+      ok(R.meren.cats.includes("Sacrifice: 24 cards/24 copies · en 10 · pay 12 · fodder 3 · incidental 2"), `${label}: 2C Meren: Sacrifice gains Braids as its 10th outlet (${R.meren.cats.find(c => c.startsWith("Sacrifice"))})`);
+      ok(R.teysa.cats.find(c => c.startsWith("Artifacts")) === "Artifacts: 3 cards/3 copies · en 3 · pay 0 · incidental 1", `${label}: 2C Teysa's Artifacts unchanged from 16ac469e (${R.teysa.cats.find(c => c.startsWith("Artifacts"))})`);
+      // fodder without a way to sacrifice stays uncounted (the existing rule), and tokens alone say nothing (the existing rule)
+      m = await mini("Krenko, Mob Boss", ["Ministrant of Obligation", "Orzhov Enforcer"]);
+      ok(m.sy["Ministrant of Obligation"].join() === "tokens/enabler,sacrifice/fodder/notcounted" && m.sy["Orzhov Enforcer"].join() === "tokens/enabler,sacrifice/fodder/notcounted", `${label}: 2C with no outlet or death payoff, Afterlife's fodder isn't counted; its tokens are (${m.sy["Ministrant of Obligation"]})`);
+      ok(!m.imbKeys.some(k => /^tokens/.test(k)) && !m.imbKeys.some(k => /^artifacts/.test(k)), `${label}: 2C token makers alone give no token or artifact observation (${m.imbKeys})`);
+      m = await mini("Krenko, Mob Boss", ["Marionette Apprentice", "Ministrant of Obligation"]);
+      ok(m.sy["Marionette Apprentice"].join() === "sacrifice/payoff,tokens/enabler" && m.sy["Ministrant of Obligation"].join() === "tokens/enabler,sacrifice/fodder", `${label}: 2C beside a death payoff (Marionette Apprentice), Afterlife's fodder counts, as any fodder does (${m.sy["Ministrant of Obligation"]})`);
+      // Treasure: makers whose only artifact tokens are Treasure still don't count as artifact token makers
+      m = await mini("Teysa Karlov", ["Marionette Apprentice", "Smothering Tithe", "Pitiless Plunderer", "Deadly Dispute"]);
+      ok(!m.imbKeys.includes("artifacts-makers") && ["Smothering Tithe", "Pitiless Plunderer"].every(n => m.sy[n].includes("artifacts/enabler")) && !m.sy["Marionette Apprentice"].some(x => x.startsWith("artifacts")), `${label}: 2C Treasure makers keep their artifacts entry and still don't make an "artifact tokens without payoffs" observation; a Servo adds none (${m.imbKeys})`);
+
       // ---- H4: graveyard setup and reanimation
       for (const n of ["Animate Dead", "Reanimate", "Living Death"]) ok(has("meren", n, "graveyard/payoff") && R.meren.why[n].some(w => /reanimation/.test(w)), `${label}: H4 ${n} returns creatures from a graveyard to the battlefield (reanimation) (${R.meren.why[n]})`);
       for (const n of ["Entomb", "Buried Alive", "Grisly Salvage", "Satyr Wayfinder"]) ok(has("meren", n, "graveyard/enabler"), `${label}: H4 ${n} puts cards from the library into the graveyard, counted (${R.meren.sy[n]})`);
@@ -198,7 +232,7 @@ const FIX = require("./real_decks_fixture.js");
       t = await view("lathril");
       ok(t.t === `Your theme Elves → Creature type: Elf: ${expect.lathril} in the deck. 34 cards (34 copies): 9 enabling it, 33 rewarding it.`, `${label}: H5 Lathril: Elf cards in the deck, then the cards that enable and reward Elves (${t.t})`);
       t = await view("teysa");
-      ok(t.t === "Your theme Aristocrats → Sacrifice: 38 cards (38 copies): 11 enabling it, 23 rewarding it.", `${label}: H5 a strategy theme that isn't a card type (Aristocrats) keeps the old line (${t.t})`);
+      ok(t.t === "Your theme Aristocrats → Sacrifice: 41 cards (41 copies): 13 enabling it, 23 rewarding it.", `${label}: H5 a strategy theme that isn't a card type (Aristocrats) keeps the old line (${t.t})`);
       ok(t.cmd === "Your commander supports: Tokens (rewards it), Sacrifice (amplifies it).", `${label}: H3 Teysa's commander line says she amplifies Sacrifice (${t.cmd})`);
       t = await view("brago"); const bl = await p.$eval("#op-st-blink", e => e.textContent.replace(/\s+/g, " "));
       ok(/34 cards · 34 copies · 15 enabling · 21 rewarding · 3 amplifying/.test(bl) && /Makes enters-the-battlefield triggers happen twice · “If an artifact or creature entering causes a triggered ability/.test(bl), `${label}: H3 Brago's Blink section lists the 3 amplifiers with why and the quote`);

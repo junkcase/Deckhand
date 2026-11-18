@@ -7165,6 +7165,15 @@ function optSynergy(T, c, types, main) {
         add("blink", "enabler", "Exiles and returns your permanents (blink)", q, true);
       }
     }
+    // a sacrifice outlet inside a repeating trigger: "At the beginning of your end step, you may sacrifice an artifact, creature, …. If you do, …"
+    // (Braids), "Whenever this enters or attacks, you may sacrifice another creature. If you do, …" (Sephiroth). It must be able to sacrifice a
+    // creature or artifact and repeat (whenever / at the beginning of): not a one-time land sacrifice (Springbloom Druid: "When this enters,
+    // you may sacrifice a land"). Costs ("{T}, Sacrifice ten nonland permanents:", Bolas's Citadel) stay with the existing outlet rule.
+    const ms = s.match(/\byou may sacrifice (a|an|another|any number of) (other )?(?!this\b)([^.]{0,80})\.$/);
+    if (ms && /^(whenever|at the beginning of)\b/.test(s) && /^if you do\b/.test((sents[i + 1] || "").toLowerCase()) && /\b(creatures?|artifacts?)\b/.test(ms[3])) {
+      let q = s0.slice(ms.index).replace(/\.$/, "").trim(); q = q[0].toUpperCase() + q.slice(1); if (q.length > 110) { q = q.slice(0, 110); q = q.slice(0, q.lastIndexOf(" ")) + "…"; }
+      add("sacrifice", "enabler", "A way to sacrifice permanents", q, true);
+    }
     // sacrifice fodder: a creature that does something when it dies is good to sacrifice; counts only with a way to sacrifice
     const f = s.match(/\bwhen(ever)? this (creature )?(enters or dies|dies)\b/);
     if (f && /\bCreature\b/.test(front)) add("sacrifice", "fodder", "Does something when it dies (good to sacrifice)", clause(s0, f.index, f[0].length), true, true);
@@ -7179,6 +7188,13 @@ function optSynergy(T, c, types, main) {
       : [/\b(?<!non)lands?\b|(?<!nonland )\bpermanents?\b/.test(subj) && "landfall", /\b(creatures?|artifacts?|enchantments?|permanents?)\b/.test(subj) && "blink"].filter(Boolean);
     for (const k of ks) add(k, "amplifier", { sacrifice: "Makes death triggers happen twice", landfall: "Makes landfall triggers happen twice", blink: "Makes enters-the-battlefield triggers happen twice" }[k], clause(s0, tm.index, tm[0].length), true, k === "blink"); });
   if (kw.includes("prowess")) add("spells", "payoff", "Rewards casting instants and sorceries", "Prowess", true);
+  // Afterlife N: when this creature dies, it creates N Spirit creature tokens: a token maker, and fodder (it does something when it dies;
+  // fodder counts only with a way to sacrifice or a payoff). Fabricate N: when it enters, a +1/+1 counter or a Servo token: a token maker only
+  // (not fodder, and not an artifact maker: the Servo is there as a creature). Neither is a sacrifice outlet.
+  const kwN = k => (o.match(new RegExp(`\\b${k} (\\d+|x)\\b`, "i")) || [])[0];
+  if (kw.includes("afterlife") && kwN("afterlife")) { add("tokens", "enabler", "Creates creature tokens (Afterlife: Spirit tokens when it dies)", kwN("afterlife"), true);
+    if (/\bCreature\b/.test(front)) add("sacrifice", "fodder", "Does something when it dies (good to sacrifice)", kwN("afterlife"), true, true); }
+  if (kw.includes("fabricate") && kwN("fabricate")) add("tokens", "enabler", "Creates creature tokens (Fabricate: a Servo, or a +1/+1 counter)", kwN("fabricate"), true);
   if (kw.includes("flashback") && !seen.has("graveyard|payoff")) add("graveyard", "payoff", "Can be cast again from your graveyard (its own flashback)", "Flashback", false);
   const cut = costCut(T.text); if (/instant|sorcery|noncreature/.test(cut)) add("spells", "enabler", "Makes instants and sorceries cheaper", cut + " cost less", true);
   else if (/artifact/.test(cut)) add("artifacts", "enabler", "Makes artifacts cheaper", cut + " cost less", true);
