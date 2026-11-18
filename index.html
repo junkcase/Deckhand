@@ -7110,6 +7110,10 @@ function optSynergy(T, c, types, main) {
   const names = [c.name, c.name.split(" // ")[0], c.name.split(",")[0]].filter((x, i, a) => x && a.indexOf(x) === i).sort((a, b) => b.length - a.length);
   let o = T.text.replace(/\([^)]*\)/g, "");
   for (const n of names) o = o.split(n + "'s").join("its").split(n).join("this");                  // a card's own name is not a creature type or a token
+  // Oracle text shortens a legendary name with no comma, "X of (the) Y", to X: "When Lavinia enters" (Lavinia of the Tenth), "When Loran
+  // enters" (Loran of the Third Path). Only that one capitalised word, matched whole and case-sensitive, after the full names above.
+  const fn = c.name.split(" // ")[0], al = /\bLegendary\b/.test(front) && !fn.includes(",") && / of /.test(fn) ? fn.split(" of ")[0] : "";
+  if (/^[A-Z][A-Za-z'-]{2,}$/.test(al)) { const e = al.replace(/[-']/g, "\\$&"); o = o.replace(new RegExp(`\\b${e}'s\\b`, "g"), "its").replace(new RegExp(`\\b${e}\\b`, "g"), "this"); }
   const sents = o.split(/(?<=\.)\s+|\n/).map(x => x.trim()).filter(Boolean), out = [], seen = new Set();
   const jobs = cardRoles(T.text, T.type || c.type).filter(x => x !== "Creature" && x !== "Land");
   // the quote: the whole clause the match sits in (from the last , ; : • . or quote mark before it to the next , ; . or quote mark after it), never cut mid-word

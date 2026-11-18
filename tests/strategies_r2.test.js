@@ -105,7 +105,7 @@ const FIX = require("./real_decks_fixture.js");
       ok(!R.brago.unknown.includes("Eerie Interlude"), `${label}: 2A Eerie Interlude is no longer under "No role identified"`);
       ok(["Flickerwisp", "Charming Prince", "Yorion, Sky Nomad"].every(n => has("brago", n, "blink/payoff")), `${label}: 2A Flickerwisp, Charming Prince and Yorion keep their enters-the-battlefield payoff too`);
       ok(R.brago.roles["Venser, the Sojourner"] === "Removal" && R.brago.roles["Eerie Interlude"] === "" && R.brago.roles["Flickerwisp"] === "Creature", `${label}: 2A functional roles unchanged (Venser ${R.brago.roles["Venser, the Sojourner"]}; Eerie Interlude none; Flickerwisp ${R.brago.roles["Flickerwisp"]})`);
-      ok(R.brago.cats.find(c => c.startsWith("Blink:")) === "Blink: 34 cards/34 copies · en 15 · pay 21 · amp 3", `${label}: 2A Brago's Blink: 15 enabling (was 10), 21 rewarding, 3 amplifying (${R.brago.cats.find(c => c.startsWith("Blink:"))})`);
+      ok(R.brago.cats.find(c => c.startsWith("Blink:")) === "Blink: 36 cards/36 copies · en 15 · pay 23 · amp 3", `${label}: 2A Brago's Blink: 15 enabling (was 10), 23 rewarding (21 before Stage 2E's Lavinia and Loran), 3 amplifying (${R.brago.cats.find(c => c.startsWith("Blink:"))})`);
       for (const n of ["Ghostly Flicker", "Ephemerate", "Cloudshift", "Momentary Blink", "Restoration Angel", "Felidar Guardian", "Teleportation Circle", "Soulherder", "Deadeye Navigator", "Brago, King Eternal"]) ok(has("brago", n, "blink/enabler"), `${label}: 2A ${n} still a blink enabler`);
       ok(["Panharmonicon", "Elesh Norn, Mother of Machines", "Starfield Vocalist"].every(n => R.brago.sy[n].join() === "blink/amplifier"), `${label}: 2A Panharmonicon, Elesh Norn and Starfield Vocalist unchanged in Brago`);
       // temporary exile (until it leaves; returned when this leaves the battlefield) is not blink; their functional roles stay what they were
@@ -270,6 +270,22 @@ const FIX = require("./real_decks_fixture.js");
       ok(sr.backup.join(" | ") === "Finale of Devastation: | Fleshbag Marauder:Board wipe,Creature | Oblivion Ring: | Shriekmaw:Creature | Wild Growth:", `${label}: 2D the refresh keeps a backup of exactly the old roles (${sr.backup.join(" | ")})`);
       ok(JSON.stringify(sr.savedAfterRestore) === JSON.stringify(OLDS) && sr.backupAfterRestore === false, `${label}: 2D restoring puts every old role back and clears the backup (${JSON.stringify(sr.savedAfterRestore)})`);
 
+      // ---- Stage 2E: a legendary "X of (the) Y" is called X in its own text ("When Lavinia enters", "When Loran enters")
+      for (const n of ["Lavinia of the Tenth", "Loran of the Third Path"]) {
+        ok(R.brago.sy[n].join() === "blink/payoff" && R.brago.why[n].join() === "blink/payoff: Has an enters-the-battlefield ability (a blink payoff) · When this enters", `${label}: 2E ${n} ("When ${n.split(" ")[0]} enters, …") is a blink payoff, counted in Brago (${R.brago.why[n]})`);
+        ok(!R.brago.sy[n].some(x => x.startsWith("blink/enabler")), `${label}: 2E ${n} is not a blink enabler`); }
+      ok(!R.brago.unknown.includes("Lavinia of the Tenth") && rl(R.brago, "Lavinia of the Tenth") === "Creature" && rl(R.brago, "Loran of the Third Path") === "Card draw,Removal,Creature", `${label}: 2E Lavinia leaves "No role identified"; both keep their functional roles`);
+      ok(R.brago.cats.find(c => c.startsWith("Blink:")) === "Blink: 36 cards/36 copies · en 15 · pay 23 · amp 3", `${label}: 2E Brago's Blink: 23 rewarding (was 21); enabling 15 and amplifying 3 unchanged (${R.brago.cats.find(c => c.startsWith("Blink:"))})`);
+      // the other blink cards keep exactly their entries
+      for (const [n, want] of [["Brago, King Eternal", "blink/enabler"], ["Eerie Interlude", "blink/enabler"], ["Flickerwisp", "blink/payoff,blink/enabler"], ["Charming Prince", "blink/payoff,lifegain/enabler/incidental/notcounted,blink/enabler"], ["Yorion, Sky Nomad", "blink/payoff,blink/enabler"], ["Venser, the Sojourner", "blink/enabler"], ["Restoration Angel", "blink/enabler,blink/payoff"], ["Ephemerate", "blink/enabler"]])
+        ok(R.brago.sy[n].join() === want, `${label}: 2E ${n} unchanged (${R.brago.sy[n]})`);
+      // other legendary names: a comma name (Venser, Teysa Karlov), and "of" names whose text doesn't use the short name (Meren, Mizzix)
+      ok(R.meren.sy["Meren of Clan Nel Toth"].join() === "sacrifice/payoff,counters/enabler,graveyard/payoff,counters/payoff" && R.mizzix.sy["Mizzix of the Izmagnus"].join() === "spells/payoff,counters/enabler,counters/payoff,spells/enabler" && R.teysa.sy["Teysa Karlov"].join() === "tokens/payoff,sacrifice/amplifier", `${label}: 2E Meren, Mizzix and Teysa Karlov unchanged`);
+      // the same rule for another "X of the Y" legend, and not for a non-legendary card (its "Knight" token stays a Knight)
+      m = await mini("Brago, King Eternal", ["Teysa of the Ghost Council", "Knight of the New Coalition", "Ephemerate"]);
+      ok(m.sy["Teysa of the Ghost Council"].includes("blink/payoff") && m.sy["Teysa of the Ghost Council"].includes("tokens/enabler") && m.why["Teysa of the Ghost Council"].some(w => /^blink\/payoff: .* · When this enters/.test(w)), `${label}: 2E Teysa of the Ghost Council ("When Teysa enters, create a 1/1 … Spirit token") gets the same reading (${m.sy["Teysa of the Ghost Council"]})`);
+      ok(m.why["Knight of the New Coalition"].some(w => /Knight creature token/.test(w)) && m.sy["Knight of the New Coalition"].some(x => x.startsWith("type:Knight/enabler")), `${label}: 2E Knight of the New Coalition isn't legendary: "Knight" in its text keeps its meaning (a Knight token) (${m.why["Knight of the New Coalition"]})`);
+
       // ---- H4: graveyard setup and reanimation
       for (const n of ["Animate Dead", "Reanimate", "Living Death"]) ok(has("meren", n, "graveyard/payoff") && R.meren.why[n].some(w => /reanimation/.test(w)), `${label}: H4 ${n} returns creatures from a graveyard to the battlefield (reanimation) (${R.meren.why[n]})`);
       for (const n of ["Entomb", "Buried Alive", "Grisly Salvage", "Satyr Wayfinder"]) ok(has("meren", n, "graveyard/enabler"), `${label}: H4 ${n} puts cards from the library into the graveyard, counted (${R.meren.sy[n]})`);
@@ -302,7 +318,7 @@ const FIX = require("./real_decks_fixture.js");
       ok(t.t === "Your theme Aristocrats → Sacrifice: 41 cards (41 copies): 13 enabling it, 23 rewarding it.", `${label}: H5 a strategy theme that isn't a card type (Aristocrats) keeps the old line (${t.t})`);
       ok(t.cmd === "Your commander supports: Tokens (rewards it), Sacrifice (amplifies it).", `${label}: H3 Teysa's commander line says she amplifies Sacrifice (${t.cmd})`);
       t = await view("brago"); const bl = await p.$eval("#op-st-blink", e => e.textContent.replace(/\s+/g, " "));
-      ok(/34 cards · 34 copies · 15 enabling · 21 rewarding · 3 amplifying/.test(bl) && /Makes enters-the-battlefield triggers happen twice · “If an artifact or creature entering causes a triggered ability/.test(bl), `${label}: H3 Brago's Blink section lists the 3 amplifiers with why and the quote`);
+      ok(/36 cards · 36 copies · 15 enabling · 23 rewarding · 3 amplifying/.test(bl) && /Makes enters-the-battlefield triggers happen twice · “If an artifact or creature entering causes a triggered ability/.test(bl), `${label}: H3 Brago's Blink section lists the 3 amplifiers with why and the quote`);
       ok(!errs.length, `${label}: no page errors (${errs.join(" | ")})`);
       if (label === "phone") { await view("sythis"); await p.screenshot({ path: "strategies_r2_phone.png" }); }
       await ctx.close();
