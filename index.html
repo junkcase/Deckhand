@@ -6774,6 +6774,9 @@ function optAnalyze(d, E, X) {
   // lands: what their rules text supports counts like any card's (their functional role stays "Land"); a land that fetches a land
   // (Flooded Strand) supports landfall only in a deck with a landfall payoff, so it isn't listed as a strategy everywhere else
   if (!rows.some(r => r.sy.some(e => e.cat === "landfall" && e.side === "payoff" && e.direct))) for (const r of rows) if (r.land) r.sy = r.sy.filter(e => !(e.cat === "landfall" && e.side === "enabler"));
+  // ...and in a deck with a landfall payoff, a ramp spell that puts a land onto the battlefield (Cultivate, Farseek) or lets you play an
+  // extra land (Explore) is a landfall enabler, not an incidental one; its other entries (Harrow's sacrifice) stay as they are
+  if (rows.some(r => r.sy.some(e => e.cat === "landfall" && e.side === "payoff" && e.direct))) for (const r of rows) for (const e of r.sy) if (e.cat === "landfall" && e.side === "enabler" && !e.direct) e.direct = true;
   // a trigger multiplier counts only when the deck has triggers of its kind: death triggers (payoffs, fodder), landfall payoffs,
   // enters-the-battlefield abilities (which, like those, count once the deck can blink)
   const hasSy = f => rows.some(r => r.sy.some(e => e.direct && f(e)));
@@ -7106,7 +7109,7 @@ const SYN_RULES = [
   ["copy", "enabler", /\bcopy (target|that|it|those|each|the next)\b|token that's a copy|enters?( the battlefield)? as a copy|creates? [^.]{0,20}cop(y|ies) of/, "Copies a spell, ability or permanent"],
   ["untap", "enabler", /\buntap (target|another target|all|each|up to (one|two|three|\w+) target|that creature|equipped creature)\b|untap all (creatures|artifacts|permanents|nonland permanents)|during each other player's untap step|\buntap up to \w+ lands/, "Untaps permanents", true],
   ["landfall", "payoff", /\blandfall\b|whenever (a|one or more) (\w+ )?lands? (you control )?enters?( the battlefield)? under your control|whenever (a|one or more) lands? you control enters?/, "Rewards lands entering"],
-  ["landfall", "enabler", /play (an|two) additional lands?|additional land|search your library for [^.]{0,50}lands? cards?[^.]{0,40}onto the battlefield|search your library for (a|an|up to \w+) (basic )?(plains|island|swamp|mountain|forest)( or (plains|island|swamp|mountain|forest))? cards?[^.]{0,40}onto the battlefield|put (a|up to \w+|that|those|any number of) (basic )?land cards? [^.]{0,30}onto the battlefield/, "Puts extra lands onto the battlefield", true],
+  ["landfall", "enabler", /play (an|two) additional lands?|additional land|search your library for [^.]{0,50}lands? cards?[^.]{0,40}onto the battlefield|search your library for (a|an|up to \w+) (basic )?(plains|island|swamp|mountain|forest)((, |,? or )(plains|island|swamp|mountain|forest)){0,4} cards?[^.]{0,40}onto the battlefield|put (a|up to \w+|that|those|any number of) (basic )?land cards? [^.]{0,30}onto the battlefield/, "Puts extra lands onto the battlefield", true],
   ["lifegain", "payoff", /whenever you gain life|if you('ve)? gained life this turn|for each (1 )?life you('ve)? gained|life you gained/, "Rewards gaining life"],
   ["lifegain", "enabler", /(?<!(whenever|if|each time) )\byou gain (\d+ life|x life|that much life|life equal|\w+ life)|\blifelink\b/, "Gains you life", true],
   ["voltron", "payoff", /whenever you cast an? (aura|equipment)|for each (aura|equipment)|(equipped|enchanted) creature you control|whenever (an? )?(equipped|enchanted) creature (you control )?(attacks|deals)|commander damage|that('s| are) (enchanted or equipped|equipped or enchanted|equipped|enchanted)\b|with one or more equipped creatures|whenever an? (aura|equipment) (you control )?enters/, "Rewards Auras and Equipment"],
