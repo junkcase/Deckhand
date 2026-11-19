@@ -286,6 +286,39 @@ const FIX = require("./real_decks_fixture.js");
       ok(m.sy["Teysa of the Ghost Council"].includes("blink/payoff") && m.sy["Teysa of the Ghost Council"].includes("tokens/enabler") && m.why["Teysa of the Ghost Council"].some(w => /^blink\/payoff: .* · When this enters/.test(w)), `${label}: 2E Teysa of the Ghost Council ("When Teysa enters, create a 1/1 … Spirit token") gets the same reading (${m.sy["Teysa of the Ghost Council"]})`);
       ok(m.why["Knight of the New Coalition"].some(w => /Knight creature token/.test(w)) && m.sy["Knight of the New Coalition"].some(x => x.startsWith("type:Knight/enabler")), `${label}: 2E Knight of the New Coalition isn't legendary: "Knight" in its text keeps its meaning (a Knight token) (${m.why["Knight of the New Coalition"]})`);
 
+      // ---- Stage 2F: two false "Worth a look" observations. Only the observations change; every strategy entry and count stays
+      // A. one +1/+1 counter on one target (Calix, Heliod) is a lasting pump: not counted by "counter makers with no payoff"
+      ok(!R.sythis.imbKeys.includes("counters-makers") && !R.sythis.imbKeys.length, `${label}: 2F Sythis has no "counter makers but no payoff" observation (${R.sythis.imbKeys})`);
+      ok(R.sythis.cats.includes("Counters: 2 cards/2 copies · en 2 · pay 0") && R.sythis.sy["Calix, Guided by Fate"].includes("counters/enabler") && R.sythis.sy["Heliod, Sun-Crowned"].join() === "counters/enabler,lifegain/payoff", `${label}: 2F Calix and Heliod still put counters (Counters: 2 enabling), unchanged`);
+      m = await mini("Sythis, Harvest's Hand", ["Calix, Guided by Fate", "Heliod, Sun-Crowned"]);
+      ok(!m.imbKeys.includes("counters-makers"), `${label}: 2F two single-counter pumps alone: no counter-makers observation (${m.imbKeys})`);
+      m = await mini("Sythis, Harvest's Hand", ["Calix, Guided by Fate", "Evolution Sage", "Brokers Ascendancy"]);
+      ok(m.imbKeys.includes("counters-makers") && m.imbText[m.imbKeys.indexOf("counters-makers")] === "This deck has 2 cards that put counters on things, but no card that rewards counters. The counters still do what they do; nothing makes more of them." && m.imb[m.imbKeys.indexOf("counters-makers")].includes("Counter makers: Brokers Ascendancy, Evolution Sage"), `${label}: 2F proliferate and counters on each creature (Evolution Sage, Brokers Ascendancy) still count; Calix beside them doesn't (${m.imb[m.imbKeys.indexOf("counters-makers")]})`);
+      m = await mini("Sythis, Harvest's Hand", ["Phyresis Outbreak", "Voidwing Hybrid", "Calix, Guided by Fate", "Heliod, Sun-Crowned"]);
+      // Contagion Engine ("put a -1/-1 counter on each creature …", "Proliferate twice") counts on its own merits: it alone takes Flux Channeler to the threshold
+      m = await mini("Sythis, Harvest's Hand", ["Contagion Engine", "Flux Channeler"]);
+      const ce = m.imb[m.imbKeys.indexOf("counters-makers")] || "";
+      ok(ce === "[counters-makers] This deck has 2 cards that put counters on things, but no card that rewards counters. The counters still do what they do; nothing makes more of them. || Counter makers: Contagion Engine, Flux Channeler | Counter payoffs: ", `${label}: 2F Contagion Engine and Flux Channeler: "2 cards that put counters on things", both listed as makers (${ce})`);
+      m = await mini("Teysa Karlov", ["Evolution Sage", "Brokers Ascendancy", "Contagion Engine"]);
+      const c3 = m.imb[m.imbKeys.indexOf("counters-makers")] || "";
+      ok(/^\[counters-makers\] This deck has 3 cards that put counters on things, but no card that rewards counters\./.test(c3) && /Counter makers: [^|]*\bContagion Engine\b/.test(c3), `${label}: 2F the three-maker deck says "3 cards" and lists Contagion Engine among the makers (${c3})`);
+      ok(!m.imbKeys.includes("counters"), `${label}: 2F the reverse check ("payoffs but no counter makers") still counts Calix and Heliod as makers (${m.imbKeys})`);
+      m = await mini("Sythis, Harvest's Hand", ["Phyresis Outbreak", "Voidwing Hybrid"]);
+      ok(m.imbKeys.includes("counters"), `${label}: 2F and without them the reverse observation still appears (${m.imbKeys})`);
+      // B. Skullclamp kills a 1/1 it's put on: the deck's way to make creatures die, when the deck makes 1/1 creature tokens (not one of the payoffs)
+      ok(R.lathril.imb.join() === "[sacrifice] This deck has 3 cards that reward creatures dying, and only one way to sacrifice (Skullclamp). You may want more ways to sacrifice your creatures. || Sacrifice payoffs: Moldervine Reclamation, Poison-Tip Archer, Prowess of the Fair | Sacrifice outlets: Skullclamp", `${label}: 2F Lathril: "3 cards that reward creatures dying, and only one way to sacrifice (Skullclamp)", no longer "no way to sacrifice them … only in combat or to removal" (${R.lathril.imb})`);
+      ok(R.lathril.cats.includes("Sacrifice: 5 cards/5 copies · en 0 · pay 4 · fodder 1"), `${label}: 2F Lathril's Sacrifice category is unchanged (Skullclamp stays a payoff there; only the observation reads it as the outlet)`);
+      ok(["krenko", "shorikai", "teysa", "meren", "lathril"].every(id => R[id].sy["Skullclamp"].join() === "sacrifice/payoff"), `${label}: 2F Skullclamp's strategy entry is unchanged in all five decks that run it`);
+      ok(["krenko", "shorikai", "teysa", "meren"].every(id => !R[id].imbKeys.length), `${label}: 2F no observation appears in Krenko, Shorikai, Teysa or Meren`);
+      m = await mini("Sythis, Harvest's Hand", ["Skullclamp", "Blood Artist", "Zulaport Cutthroat"]);
+      ok(m.imbText[m.imbKeys.indexOf("sacrifice")] === "This deck has 3 cards that reward creatures dying, but no way to sacrifice them. They will trigger only when creatures die in combat or to removal. You may want ways to sacrifice your creatures.", `${label}: 2F with no 1/1 token makers, Skullclamp isn't counted as an outlet (${m.imbKeys})`);
+      m = await mini("Sythis, Harvest's Hand", ["Skullclamp", "Blood Artist", "Zulaport Cutthroat", "Cruel Celebrant", "Doomed Traveler"]);
+      ok(m.imbText[m.imbKeys.indexOf("sacrifice")] === "This deck has 3 cards that reward creatures dying, and only one way to sacrifice (Skullclamp). You may want more ways to sacrifice your creatures.", `${label}: 2F with a 1/1 token maker (Doomed Traveler), Skullclamp is the one outlet (${m.imb})`);
+      m = await mini("Sythis, Harvest's Hand", ["Skullclamp", "Blood Artist", "Zulaport Cutthroat", "Doomed Traveler"]);
+      ok(!m.imbKeys.some(k => /^sacrifice/.test(k)), `${label}: 2F two payoffs and Skullclamp as the outlet: nothing to say (${m.imbKeys})`);
+      m = await mini("Sythis, Harvest's Hand", ["Skullclamp", "Doomed Traveler", "Orzhov Enforcer"]);
+      ok(m.imbKeys.join() === "sacrifice-fodder", `${label}: 2F Skullclamp's outlet credit is only for the payoffs observation: two fodder creatures that make 1/1 tokens still get "no way to sacrifice them" (${m.imbKeys})`);
+
       // ---- H4: graveyard setup and reanimation
       for (const n of ["Animate Dead", "Reanimate", "Living Death"]) ok(has("meren", n, "graveyard/payoff") && R.meren.why[n].some(w => /reanimation/.test(w)), `${label}: H4 ${n} returns creatures from a graveyard to the battlefield (reanimation) (${R.meren.why[n]})`);
       for (const n of ["Entomb", "Buried Alive", "Grisly Salvage", "Satyr Wayfinder"]) ok(has("meren", n, "graveyard/enabler"), `${label}: H4 ${n} puts cards from the library into the graveyard, counted (${R.meren.sy[n]})`);
@@ -298,7 +331,7 @@ const FIX = require("./real_decks_fixture.js");
       for (const id of ["krenko", "mizzix", "shorikai"]) for (const f of Object.keys(FIX.before[id])) { const same = JSON.stringify(R[id][f]) === JSON.stringify(FIX.before[id][f]);
         ok(same, `${label}: ${id} ${f} unchanged${same ? "" : ": now " + JSON.stringify(R[id][f])}`); }
       const imbAll = Object.keys(FIX.decks).map(k => k + ":" + R[k].imbKeys.join("+")).join(" ");
-      ok(imbAll === "krenko: mizzix: shorikai: teysa: meren: atraxa: sythis:counters-makers tatyova: wyleth: brago: lathril:sacrifice", `${label}: the observations in all eleven decks (${imbAll})`);
+      ok(imbAll === "krenko: mizzix: shorikai: teysa: meren: atraxa: sythis: tatyova: wyleth: brago: lathril:sacrifice", `${label}: the observations in all eleven decks; since Stage 2F Sythis has none and Lathril's is the one-outlet kind (${imbAll})`);
 
       // ---- H5: the theme line counts the deck's own cards of the theme's type, apart from what supports it (in the app, at this width)
       const front = c => (c.type_line || "").split("//")[0], typeN = (id, f) => FIX.decks[id].slice(1).reduce((a, [n, q]) => a + (f(FIX.cards[n]) ? q : 0), 0);
