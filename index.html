@@ -7097,6 +7097,7 @@ const SYN_RULES = [
   ["artifacts", "enabler", /\bcrews? vehicles\b|\b(is|becomes?) an? vehicle\b|vehicles? you control (have|has) crew/, "Helps crew or make Vehicles"],
   ["artifacts", "payoff", /\bhistoric\b/, "Rewards historic cards (artifacts, legendaries and Sagas)"],
   ["enchantments", "payoff", /whenever you cast an? (aura|enchantment)|whenever an? (aura|enchantment) (you control )?enters|for each enchantment you control|\bconstellation\b|enchantments you control (have|get)|number of enchantments you control/, "Rewards enchantments"],
+  ["enchantments", "payoff", /search your library for (an?|up to \w+) (artifact or )?enchantment cards?/, "Finds enchantment cards"],
   ["graveyard", "enabler", /search your library for [^.]{0,80}?\bput (it|that card|them|those cards) into your graveyard|\b(the rest|the other|the others) into your graveyard/, "Puts cards from your library into your graveyard"],
   ["graveyard", "enabler", /\bmill (a|one|two|three|four|five|six|x|\w+) cards?|\bsurveil \w+|put the top [^.]{0,30}cards? of your library into your graveyard|\bdiscards? (a|two|three|x|\w+) cards?|then discard|discard (a|your) (card|hand)/, "Fills your graveyard", true],
   ["graveyard", "payoff", /from (a|your) graveyard (on)?to the battlefield|enchant creature card in a graveyard|return enchanted creature card to the battlefield|cards? from (their|all|each player's) graveyards?[^.]{0,120}onto the battlefield/, "Returns cards from a graveyard to the battlefield (reanimation)"],

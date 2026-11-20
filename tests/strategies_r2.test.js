@@ -138,7 +138,7 @@ const FIX = require("./real_decks_fixture.js");
       ok(vwhy(R.wyleth, "Danitha Capashen, Paragon").some(w => /Makes Auras and Equipment cheaper/.test(w)), `${label}: 2B Danitha ("Aura and Equipment spells you cast cost {1} less") makes Voltron gear cheaper`);
       // Equipment tutors; other tutors unchanged
       for (const n of ["Stoneforge Mystic", "Steelshaper's Gift", "Open the Armory", "Relic Seeker", "Fighter Class", "Astor, Bearer of Blades"]) ok(vw(n).includes("voltron/enabler") && vwhy(R.wyleth, n).some(w => /Finds Equipment/.test(w)), `${label}: 2B ${n} finds Equipment, counted (${R.wyleth.sy[n]})`);
-      ok(!v(R.sythis, "Idyllic Tutor").length && !v(R.sythis, "Eladamri's Call").length && !v(R.shorikai, "Enlightened Tutor").length && R.shorikai.sy["Enlightened Tutor"].join() === "artifacts/payoff", `${label}: 2B other tutors aren't Voltron; Enlightened Tutor unchanged (${R.shorikai.sy["Enlightened Tutor"]})`);
+      ok(!v(R.sythis, "Idyllic Tutor").length && !v(R.sythis, "Eladamri's Call").length && !v(R.shorikai, "Enlightened Tutor").length && R.shorikai.sy["Enlightened Tutor"].join() === "artifacts/payoff,enchantments/payoff", `${label}: 2B other tutors aren't Voltron; Enlightened Tutor keeps its Artifacts entry (and since Stage 2H also finds enchantments) (${R.shorikai.sy["Enlightened Tutor"]})`);
       // gear
       ok(vwhy(R.wyleth, "On Serra's Wings").some(w => /Builds up one creature · Enchanted creature is legendary, gets \+1\/\+1/.test(w)), `${label}: 2B On Serra's Wings ("is legendary, gets +1/+1") builds up a creature`);
       for (const [n, q] of [["Basilisk Collar", "Equipped creature has deathtouch and lifelink"], ["Swiftfoot Boots", "Equipped creature has hexproof and haste"], ["Timely Ward", "Enchanted creature has indestructible"], ["Unquestioned Authority", "Enchanted creature has protection from creatures"], ["Ring of Thune", "Equipped creature has vigilance"], ["Ring of Valkas", "Equipped creature has haste"]])
@@ -328,8 +328,12 @@ const FIX = require("./real_decks_fixture.js");
       ok(R.meren.why["Eternal Witness"].some(w => /Uses your graveyard/.test(w)) && !R.meren.why["Eternal Witness"].some(w => /reanimation/.test(w)), `${label}: H4 returning a card to the hand is graveyard use, not reanimation`);
 
       // ---- preserved: Krenko, Mizzix, Shorikai exactly as before
-      for (const id of ["krenko", "mizzix", "shorikai"]) for (const f of Object.keys(FIX.before[id])) { const same = JSON.stringify(R[id][f]) === JSON.stringify(FIX.before[id][f]);
-        ok(same, `${label}: ${id} ${f} unchanged${same ? "" : ": now " + JSON.stringify(R[id][f])}`); }
+      // Shorikai's two approved Stage 2H differences: Enlightened Tutor also finds enchantment cards, so Enchantments has two cards (and so moves up the
+      // list, which is sorted by number of cards) and the tutor supports two strategies; every other line is the snapshot's, in the snapshot's order
+      const H2rest = FIX.before.shorikai.cats.filter(c => c !== "Enchantments: 1 cards/1 copies · en 0 · pay 1"), H2at = H2rest.findIndex(c => +c.match(/: (\d+) cards\//)[1] < 2);
+      const H2 = { shorikai: { cats: [...H2rest.slice(0, H2at), "Enchantments: 2 cards/2 copies · en 0 · pay 2", ...H2rest.slice(H2at)], multi: [...FIX.before.shorikai.multi, "Enlightened Tutor"].sort() } };
+      for (const id of ["krenko", "mizzix", "shorikai"]) for (const f of Object.keys(FIX.before[id])) { const want = (H2[id] || {})[f] || FIX.before[id][f], same = JSON.stringify(R[id][f]) === JSON.stringify(want);
+        ok(same, `${label}: ${id} ${f} unchanged${(H2[id] || {})[f] ? " apart from the approved Stage 2H Enchantments difference" : ""}${same ? "" : ": now " + JSON.stringify(R[id][f])}`); }
       const imbAll = Object.keys(FIX.decks).map(k => k + ":" + R[k].imbKeys.join("+")).join(" ");
       ok(imbAll === "krenko: mizzix: shorikai: teysa: meren: atraxa: sythis: tatyova: wyleth: brago: lathril:sacrifice", `${label}: the observations in all eleven decks; since Stage 2F Sythis has none and Lathril's is the one-outlet kind (${imbAll})`);
 
@@ -343,8 +347,8 @@ const FIX = require("./real_decks_fixture.js");
         return p.evaluate(() => ({ t: document.querySelector("#opStratTheme p").textContent.replace(/\s+/g, " ").trim(), cmd: (document.querySelector("#opStratCmd") || {}).textContent.replace(/\s+/g, " ").trim(), over: document.documentElement.scrollWidth > innerWidth + 1 })); };
       for (const id of Object.keys(expect)) { const t = await view(id); ok(t.t.includes(`: ${expect[id]} in the deck. `) && !t.over, `${label}: H5 ${id}: "${t.t}" (counted from the fixture: "${expect[id]}"; no sideways scrolling)`); }
       let t = await view("sythis");
-      ok(t.t === `Your theme Enchantments → Enchantments: ${expect.sythis} in the deck. 20 cards (20 copies): 20 rewarding it.` && !/0 enabling/.test(t.t), `${label}: H5 Sythis no longer says "0 enabling it" (${t.t})`);
-      ok(+expect.sythis.split(" ")[0] >= 40, `${label}: H5 the count is the deck's enchantments (${expect.sythis}), not its payoffs (20)`);
+      ok(t.t === `Your theme Enchantments → Enchantments: ${expect.sythis} in the deck. 23 cards (23 copies): 23 rewarding it.` && !/0 enabling/.test(t.t), `${label}: H5 Sythis no longer says "0 enabling it" (${t.t})`);
+      ok(+expect.sythis.split(" ")[0] >= 40, `${label}: H5 the count is the deck's enchantments (${expect.sythis}), not its payoffs (23)`);
       t = await view("lathril");
       ok(t.t === `Your theme Elves → Creature type: Elf: ${expect.lathril} in the deck. 34 cards (34 copies): 9 enabling it, 33 rewarding it.`, `${label}: H5 Lathril: Elf cards in the deck, then the cards that enable and reward Elves (${t.t})`);
       t = await view("teysa");
@@ -380,6 +384,25 @@ const FIX = require("./real_decks_fixture.js");
       ok(m.sy["Cultivate"].join() === "landfall/enabler" && m.sy["Kodama's Reach"].join() === "landfall/enabler", `${label}: 2G Cultivate and Kodama's Reach (one land onto the battlefield, one to hand) qualify (${m.sy["Cultivate"]} | ${m.sy["Kodama's Reach"]})`);
       t = await view("tatyova");
       ok(t.t === "Your theme Landfall → Landfall: 48 cards (48 copies): 38 enabling it, 13 rewarding it.", `${label}: 2G Tatyova's theme line (${t.t})`);
+
+      // ---- Stage 2H: a card that searches for an enchantment card is an Enchantments payoff ("Finds enchantment cards"), as artifact and
+      // instant/sorcery tutors already are for theirs; where it puts the card (hand, top of library, battlefield) doesn't matter
+      {
+        ok(R.sythis.sy["Idyllic Tutor"].join() === "enchantments/payoff" && R.sythis.why["Idyllic Tutor"].join().startsWith("enchantments/payoff: Finds enchantment cards"), `${label}: 2H Sythis: Idyllic Tutor finds enchantment cards (${R.sythis.why["Idyllic Tutor"]})`);
+        ok(R.sythis.sy["Moon-Blessed Cleric"].join() === "enchantments/payoff,blink/payoff/notcounted", `${label}: 2H Sythis: Moon-Blessed Cleric (puts it on top) finds enchantment cards; its potential blink entry is unchanged (${R.sythis.sy["Moon-Blessed Cleric"]})`);
+        for (const id of ["sythis", "shorikai"]) ok(R[id].sy["Enlightened Tutor"].join() === "artifacts/payoff,enchantments/payoff", `${label}: 2H ${id}: Enlightened Tutor ("an artifact or enchantment card") counts for both Artifacts and Enchantments (${R[id].sy["Enlightened Tutor"]})`);
+        ok(R.sythis.sy["Sterling Grove"].join() === "enchantments/payoff" && R.sythis.why["Sterling Grove"].join().startsWith("enchantments/payoff: Rewards enchantments"), `${label}: 2H Sterling Grove keeps its one Enchantments entry (${R.sythis.why["Sterling Grove"]})`);
+        ok(R.sythis.cats.find(c => c.startsWith("Enchantments:")) === "Enchantments: 23 cards/23 copies · en 0 · pay 23", `${label}: 2H Sythis's Enchantments: 23 cards, all rewarding it, no enablers (${R.sythis.cats.find(c => c.startsWith("Enchantments:"))})`);
+        ok(R.shorikai.cats.find(c => c.startsWith("Enchantments:")) === "Enchantments: 2 cards/2 copies · en 0 · pay 2" && R.shorikai.cats.find(c => c.startsWith("Artifacts:")) === "Artifacts: 32 cards/32 copies · en 10 · pay 27", `${label}: 2H Shorikai's Enchantments goes from 1 card to 2; Artifacts unchanged (${R.shorikai.cats.filter(c => /^(Enchantments|Artifacts):/.test(c))})`);
+        ok(R.wyleth.cats.find(c => c.startsWith("Enchantments:")) === "Enchantments: 1 cards/1 copies · en 0 · pay 1", `${label}: 2H Wyleth (an enchantment payoff, no enchantment tutor) unchanged`);
+        for (const [id, n] of [["shorikai", "Fabricate"], ["brago", "Tribute Mage"], ["wyleth", "Open the Armory"]]) ok(!R[id].sy[n].some(x => x.startsWith("enchantments")), `${label}: 2H ${n} doesn't search for an enchantment card: no Enchantments entry (${R[id].sy[n]})`);
+        for (const [id, n, r] of [["sythis", "Idyllic Tutor", "Tutor"], ["sythis", "Moon-Blessed Cleric", "Tutor,Creature"], ["sythis", "Enlightened Tutor", "Tutor"], ["shorikai", "Enlightened Tutor", "Tutor"]]) ok(R[id].roles[n] === r, `${label}: 2H ${id}: ${n}'s functional role is unchanged (${R[id].roles[n]})`);
+        const m2 = await mini("Sythis, Harvest's Hand", ["Plea for Guidance", "Enduring Ideal", "Academy Rector", "Zur the Enchanter", "Lost Auramancers", "Wild Research", "Heliod's Pilgrim", "Brightglass Gearhulk"]);
+        for (const n of ["Plea for Guidance", "Enduring Ideal", "Academy Rector", "Zur the Enchanter", "Lost Auramancers", "Wild Research"]) ok(m2.sy[n].includes("enchantments/payoff") && m2.why[n].join().includes("Finds enchantment cards"), `${label}: 2H ${n} finds enchantment cards (${m2.why[n]})`);
+        for (const n of ["Heliod's Pilgrim", "Brightglass Gearhulk"]) ok(!m2.sy[n].some(x => x.startsWith("enchantments")), `${label}: 2H ${n} (an Aura card; "artifact, creature, and/or enchantment cards") isn't counted: Aura and general tutors are out of scope (${m2.sy[n]})`);
+        await view("shorikai"); const head = await p.$eval("#op-strat > summary .num", e => e.textContent.trim());
+        ok(head === "7 strategies · 3 with one card", `${label}: 2H Shorikai's Strategies header: Enchantments joins the main list (${head})`);
+      }
 
       ok(!errs.length, `${label}: no page errors (${errs.join(" | ")})`);
       if (label === "phone") { await view("sythis"); await p.screenshot({ path: "strategies_r2_phone.png" }); }
