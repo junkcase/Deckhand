@@ -53,7 +53,8 @@ const FIX = require("./real_decks_fixture.js");
       for (const [id, n] of [["atraxa", "Doubling Season"], ["atraxa", "Vorinclex, Monstrous Raider"], ["atraxa", "Deepglow Skate"], ["atraxa", "Tekuthal, Inquiry Dominus"], ["atraxa", "Innkeeper's Talent"], ["lathril", "Doubling Season"]])
         ok(has(id, n, "counters/amplifier"), `${label}: H2 ${n} makes counter makers put more counters (${R[id].sy[n]})`);
       ok(!any("atraxa", "Tekuthal, Inquiry Dominus", "counters/enabler"), `${label}: H2 Tekuthal ("If you would proliferate, proliferate twice instead") multiplies proliferate; it doesn't proliferate itself`);
-      ok(!any("atraxa", "Voidwing Hybrid", "counters/enabler") && has("atraxa", "Voidwing Hybrid", "counters/payoff") && has("atraxa", "Ezuri, Stalker of Spheres", "counters/payoff") && has("atraxa", "Ezuri, Stalker of Spheres", "counters/enabler"), `${label}: H2 "When you proliferate" rewards proliferating; Ezuri both proliferates and rewards it`);
+      // since Stage 2I Voidwing Hybrid is a counter maker through its Toxic 1, never through "When you proliferate"
+      ok(R.atraxa.why["Voidwing Hybrid"].includes("counters/enabler: Gives poison counters · Toxic 1") && !R.atraxa.why["Voidwing Hybrid"].some(w => w.startsWith("counters/enabler") && /proliferate/i.test(w)) && R.atraxa.why["Voidwing Hybrid"].includes("counters/payoff: Rewards counters · When you proliferate") && has("atraxa", "Ezuri, Stalker of Spheres", "counters/payoff") && has("atraxa", "Ezuri, Stalker of Spheres", "counters/enabler"), `${label}: H2 "When you proliferate" rewards proliferating; Ezuri both proliferates and rewards it (${R.atraxa.why["Voidwing Hybrid"]})`);
       ok(has("atraxa", "Doubling Season", "tokens/amplifier") && !any("atraxa", "Doubling Season", "counters/payoff") && !any("atraxa", "Doubling Season", "counters/enabler"), `${label}: H2 Doubling Season amplifies tokens and counters, and is neither a counter maker nor a payoff`);
       ok(!any("tatyova", "Mossborn Hydra", "counters/amplifier"), `${label}: H2 Mossborn Hydra doubles only its own counters: not an amplifier for the deck (${R.tatyova.sy["Mossborn Hydra"]})`);
       for (const n of ["Evolution Sage", "Flux Channeler", "Brokers Ascendancy", "Contagion Engine"]) ok(has("atraxa", n, "counters/enabler") && !any("atraxa", n, "counters/amplifier"), `${label}: H2 ${n} still puts counters on things and isn't an amplifier`);
@@ -294,7 +295,7 @@ const FIX = require("./real_decks_fixture.js");
       ok(!m.imbKeys.includes("counters-makers"), `${label}: 2F two single-counter pumps alone: no counter-makers observation (${m.imbKeys})`);
       m = await mini("Sythis, Harvest's Hand", ["Calix, Guided by Fate", "Evolution Sage", "Brokers Ascendancy"]);
       ok(m.imbKeys.includes("counters-makers") && m.imbText[m.imbKeys.indexOf("counters-makers")] === "This deck has 2 cards that put counters on things, but no card that rewards counters. The counters still do what they do; nothing makes more of them." && m.imb[m.imbKeys.indexOf("counters-makers")].includes("Counter makers: Brokers Ascendancy, Evolution Sage"), `${label}: 2F proliferate and counters on each creature (Evolution Sage, Brokers Ascendancy) still count; Calix beside them doesn't (${m.imb[m.imbKeys.indexOf("counters-makers")]})`);
-      m = await mini("Sythis, Harvest's Hand", ["Phyresis Outbreak", "Voidwing Hybrid", "Calix, Guided by Fate", "Heliod, Sun-Crowned"]);
+      const mCH = await mini("Sythis, Harvest's Hand", ["Herald of Secret Streams", "Metropolis Angel", "Calix, Guided by Fate", "Heliod, Sun-Crowned"]);
       // Contagion Engine ("put a -1/-1 counter on each creature …", "Proliferate twice") counts on its own merits: it alone takes Flux Channeler to the threshold
       m = await mini("Sythis, Harvest's Hand", ["Contagion Engine", "Flux Channeler"]);
       const ce = m.imb[m.imbKeys.indexOf("counters-makers")] || "";
@@ -302,8 +303,9 @@ const FIX = require("./real_decks_fixture.js");
       m = await mini("Teysa Karlov", ["Evolution Sage", "Brokers Ascendancy", "Contagion Engine"]);
       const c3 = m.imb[m.imbKeys.indexOf("counters-makers")] || "";
       ok(/^\[counters-makers\] This deck has 3 cards that put counters on things, but no card that rewards counters\./.test(c3) && /Counter makers: [^|]*\bContagion Engine\b/.test(c3), `${label}: 2F the three-maker deck says "3 cards" and lists Contagion Engine among the makers (${c3})`);
-      ok(!m.imbKeys.includes("counters"), `${label}: 2F the reverse check ("payoffs but no counter makers") still counts Calix and Heliod as makers (${m.imbKeys})`);
-      m = await mini("Sythis, Harvest's Hand", ["Phyresis Outbreak", "Voidwing Hybrid"]);
+      ok(!mCH.imbKeys.includes("counters"), `${label}: 2F the reverse check ("payoffs but no counter makers") still counts Calix and Heliod as makers (${mCH.imbKeys})`);
+      // (two payoffs that put no counters on anything themselves: since Stage 2I Phyresis Outbreak and Voidwing Hybrid also give poison counters)
+      m = await mini("Sythis, Harvest's Hand", ["Herald of Secret Streams", "Metropolis Angel"]);
       ok(m.imbKeys.includes("counters"), `${label}: 2F and without them the reverse observation still appears (${m.imbKeys})`);
       // B. Skullclamp kills a 1/1 it's put on: the deck's way to make creatures die, when the deck makes 1/1 creature tokens (not one of the payoffs)
       ok(R.lathril.imb.join() === "[sacrifice] This deck has 3 cards that reward creatures dying, and only one way to sacrifice (Skullclamp). You may want more ways to sacrifice your creatures. || Sacrifice payoffs: Moldervine Reclamation, Poison-Tip Archer, Prowess of the Fair | Sacrifice outlets: Skullclamp", `${label}: 2F Lathril: "3 cards that reward creatures dying, and only one way to sacrifice (Skullclamp)", no longer "no way to sacrifice them … only in combat or to removal" (${R.lathril.imb})`);
@@ -402,6 +404,29 @@ const FIX = require("./real_decks_fixture.js");
         for (const n of ["Heliod's Pilgrim", "Brightglass Gearhulk"]) ok(!m2.sy[n].some(x => x.startsWith("enchantments")), `${label}: 2H ${n} (an Aura card; "artifact, creature, and/or enchantment cards") isn't counted: Aura and general tutors are out of scope (${m2.sy[n]})`);
         await view("shorikai"); const head = await p.$eval("#op-strat > summary .num", e => e.textContent.trim());
         ok(head === "7 strategies · 3 with one card", `${label}: 2H Shorikai's Strategies header: Enchantments joins the main list (${head})`);
+      }
+
+      // ---- Stage 2I: poison counters for opponents (infect, toxic, poisonous, "each opponent gets a poison counter") are counters the deck puts
+      // on things: Counters enablers, incidental on a spell with another job, as other counter makers are; a card that only gives poison
+      // counters doesn't need a payoff, so it doesn't count toward "counter makers but no payoffs"
+      {
+        for (const n of ["Ajani, Sleeper Agent", "Blighted Agent", "Ichor Rats", "Ixhel, Scion of Atraxa", "Norn's Decree", "Plague Stinger", "Skithiryx, the Blight Dragon", "Skrelv, Defector Mite", "Venerated Rotpriest"]) ok(has("atraxa", n, "counters/enabler") && R.atraxa.why[n].some(w => w.startsWith("counters/enabler: Gives poison counters")), `${label}: 2I Atraxa: ${n} gives poison counters (${R.atraxa.why[n]})`);
+        for (const n of ["Infectious Bite", "Infectious Inquiry", "Prologue to Phyresis", "Vraska's Fall"]) ok(R.atraxa.sy[n].join() === "counters/enabler/incidental/notcounted", `${label}: 2I Atraxa: ${n} gives poison counters, but it's a ${R.atraxa.roles[n]} spell first: incidental (${R.atraxa.sy[n]})`);
+        ok(R.atraxa.sy["Phyresis Outbreak"].join() === "counters/enabler,counters/payoff" && R.atraxa.why["Phyresis Outbreak"].join() === "counters/enabler: Gives poison counters · Each opponent gets a poison counter,counters/payoff: Rewards counters · Then each creature your opponents control gets -1/-1 until end of turn for each poison counter its controller…", `${label}: 2I Phyresis Outbreak gives poison counters and rewards them (${R.atraxa.why["Phyresis Outbreak"]})`);
+        ok(R.atraxa.cats.find(c => c.startsWith("Counters:")) === "Counters: 34 cards/34 copies · en 30 · pay 5 · amp 5 · incidental 7" && !R.atraxa.unknown.length && !R.atraxa.imbKeys.length, `${label}: 2I Atraxa's Counters: 34 cards, 30 enabling; nothing left under "No role identified"; still no observations (${R.atraxa.cats.find(c => c.startsWith("Counters:"))} | ${R.atraxa.unknown} | ${R.atraxa.imbKeys})`);
+        for (const id of Object.keys(FIX.decks).filter(id => id !== "atraxa")) ok(!Object.values(R[id].why).some(ws => ws.some(w => w.includes("Gives poison counters"))), `${label}: 2I ${id} has no poison counters: nothing changes`);
+        const m3 = await mini("Sythis, Harvest's Hand", ["Vivisection Evangelist", "Mycosynth Fiend", "Porcelain Zealot", "Mox Poison"]);
+        for (const n of ["Vivisection Evangelist", "Mycosynth Fiend", "Porcelain Zealot", "Mox Poison"]) ok(!m3.sy[n].some(x => x.startsWith("counters/enabler")), `${label}: 2I ${n} doesn't give opponents poison counters: not a counter maker (${m3.sy[n]})`);
+        ok(m3.sy["Mycosynth Fiend"].join() === "counters/payoff", `${label}: 2I Mycosynth Fiend ("for each poison counter your opponents have") stays a payoff (${m3.sy["Mycosynth Fiend"]})`);
+        const m4 = await mini("Sythis, Harvest's Hand", ["Blighted Agent", "Plague Stinger", "Ichor Rats"]);
+        ok(!m4.imbKeys.includes("counters-makers"), `${label}: 2I three poison-only makers and no payoff: no "counter makers but no payoffs" observation (${m4.imbKeys})`);
+        const m5 = await mini("Sythis, Harvest's Hand", ["Blighted Agent", "Plague Stinger", "Evolution Sage", "Brokers Ascendancy"]);
+        const c5 = m5.imb[m5.imbKeys.indexOf("counters-makers")] || "";
+        ok(c5 === "[counters-makers] This deck has 2 cards that put counters on things, but no card that rewards counters. The counters still do what they do; nothing makes more of them. || Counter makers: Brokers Ascendancy, Evolution Sage | Counter payoffs: ", `${label}: 2I beside poison-only makers, the other makers still get the observation, and only they are listed (${c5})`);
+        const m6 = await mini("Sythis, Harvest's Hand", ["Herald of Secret Streams", "Metropolis Angel", "Blighted Agent"]);
+        ok(!m6.imbKeys.includes("counters"), `${label}: 2I the reverse check ("payoffs but no counter makers") still counts a poison-only maker (${m6.imbKeys})`);
+        t = await view("atraxa");
+        ok(t.t === "Your theme Counters (+1/+1) → Counters: 34 cards (34 copies): 30 enabling it, 5 rewarding it.", `${label}: 2I Atraxa's theme line (${t.t})`);
       }
 
       ok(!errs.length, `${label}: no page errors (${errs.join(" | ")})`);

@@ -6981,7 +6981,9 @@ function optImbalance(d, deck, cmdrs) {
     one => `This deck has ${n(cPay.length, "card")} that reward counters${cAm}, and only one card that puts counters on things (${one}).`);
   const pump1 = x => { const t = txt(x.r), puts = t.match(/\b(put|puts)\b[^.]*?\bcounters?\b[^.]*/g) || [];
     return puts.length > 0 && !/\bproliferate\b/.test(t) && puts.every(p => /^put a \+1\/\+1 counter on target [^.]*$/.test(p) && !/\bfor each\b|\beach\b/.test(p)); };
-  const cEnM = cEn.filter(x => !pump1(x));                                                         // the reverse check above still counts them as makers
+  // a card whose only counters are poison counters for opponents (infect, toxic, "each opponent gets a poison counter") needs no payoff: poison wins on its own
+  const cPut = SYN_RULES.find(r => r[0] === "counters" && r[1] === "enabler" && r[3] === "Puts counters on things")[2], poison1 = x => !cPut.test(txt(x.r).replace(/\([^)]*\)/g, ""));
+  const cEnM = cEn.filter(x => !pump1(x) && !poison1(x));                                                         // the reverse check above still counts them as makers
   check("counters-makers", "Counters", side("Counter makers", cEnM, "put counters on things"), side(cAmp.length ? "Counter payoffs and amplifiers" : "Counter payoffs", cPay, "reward counters" + cAm),
     `This deck has ${n(cEnM.length, "card")} that put counters on things, but no card that rewards counters. The counters still do what they do; nothing makes more of them.`, () => "");
   // landfall
@@ -7103,6 +7105,7 @@ const SYN_RULES = [
   ["graveyard", "payoff", /from (a|your) graveyard (on)?to the battlefield|enchant creature card in a graveyard|return enchanted creature card to the battlefield|cards? from (their|all|each player's) graveyards?[^.]{0,120}onto the battlefield/, "Returns cards from a graveyard to the battlefield (reanimation)"],
   ["graveyard", "payoff", /\b(delve|threshold|escape|unearth|embalm|eternalize|disturb|retrace|jump-start|dredge)\b|cards? in your graveyard|from your graveyard|gains? flashback/, "Uses your graveyard"],
   ["counters", "enabler", /\bput (a|an|one|two|three|x|that many|\w+) \+1\/\+1 counters? on (target|each|up to|another|a creature)|(?<!\b(?:would|you) )\bproliferate\b(?! twice instead)|you get (a|an|one) \w+ counters?|put [^.]{0,15}\b\w+ counters? on (each|target|up to)/, "Puts counters on things", true],
+  ["counters", "enabler", /(?<!\byou )(?<!—)\bgets? (a|an|one|two|three|four|five|x|\w+) (additional )?poison counters?|\binfect\b|\btoxic \d+|\bpoisonous \d+/, "Gives poison counters", true],
   ["counters", "payoff", /for each (\w+ )?counter(?! on (it|this))|number of (\w+ )?counters(?! on (it|this))|whenever (a |an |one or more )?(\+1\/\+1 |\w+ )?counters? (is|are) (put|placed)|(creatures?|permanents?|artifacts?) (you control )?with (a |an |one or more )?(\+1\/\+1 )?counters? on (it|them)|creatures? (you control )?with (\+1\/\+1 )?counters|when(ever)? you proliferate/, "Rewards counters"],
   ["counters", "amplifier", /twice that many [^.]{0,40}counters|that many plus (one|two|\w+) [^.]{0,20}counters|double the number of [^.]{0,30}counters? on (?!(this|it)\b)|proliferate twice instead/, "Makes your counter makers put more counters"],
   ["blink", "enabler", /exile (up to \w+ )?(another )?(target|each|one or more|any number of) [^.]{0,60}(you control|you own)[^.]{0,30}(, then|\. return|then) return|exile [^.]{0,60}then return (it|that card|them|those cards) to the battlefield/, "Exiles and returns your permanents (blink)"],
