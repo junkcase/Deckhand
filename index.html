@@ -6055,6 +6055,50 @@ function deckStats(d) {
   return { main, side, mainN: n(main), sideN: n(side), value, curve, colors, missing, target, done: target ? Math.min(1, n(main) / target) : null };
 }
 function cmdrCI(d) { const s = new Set(); for (const k of d.cmdr) { const c = d.cards[k]; if (c) (c.ci || []).forEach(x => s.add(x)); } return [..."WUBRG"].filter(x => s.has(x)); }
+// Two commanders (CR 702.124): the pairing abilities a commander has, read from its saved rules text and type line. A card can
+// have more than one (Amy Pond: Partner with Rory Williams and Doctor's companion); two commanders are allowed when one ability
+// of the first matches one of the second. null: a legendary card saved without its rules text, so its abilities can't be read.
+function pairAbilities(c) {
+  const front = String(c.type || "").split("//")[0], sub = (front.split("—")[1] || "").trim(), leg = /\bLegendary\b/.test(front), out = [];
+  if (leg && /\bEnchantment\b/.test(front) && /\bBackground\b/.test(sub)) out.push({ k: "background" });
+  if (leg && /\bCreature\b/.test(front) && sub === "Time Lord Doctor") out.push({ k: "doctor" });       // a Time Lord Doctor with no other creature types
+  if (typeof c.text !== "string") return out.length || !leg ? out : null;
+  for (const raw of c.text.split("\n")) {
+    const l = raw.trim(); let m;
+    if (/^Partner(?= \(|$)/.test(l)) out.push({ k: "partner" });
+    else if ((m = l.match(/^Partner with (.+?)(?= \(|$)/))) out.push({ k: "with", name: m[1] });
+    else if ((m = l.match(/^Partner—(.+?)(?= \(|$)/) || l.match(/^(Friends forever)(?= \(|$)/i))) out.push({ k: "variant", v: m[1] });
+    else if (/^Choose a Background(?= \(|$)/.test(l)) out.push({ k: "cab" });
+    else if (/^Doctor's companion(?= \(|$)/.test(l)) out.push({ k: "companion" });
+  }
+  return out;
+}
+const sameCard = (A, B) => A.oid && B.oid ? A.oid === B.oid : String(A.name).toLowerCase() === String(B.name).toLowerCase();
+function pairMatch(a, A, b, B) {
+  const named = (n, c) => [c.name, String(c.name || "").split(" // ")[0]].some(x => String(x).toLowerCase() === n.toLowerCase());
+  return a.k === "partner" && b.k === "partner" || a.k === "with" && b.k === "with" && named(a.name, B) && named(b.name, A)
+    || a.k === "variant" && b.k === "variant" && a.v.toLowerCase() === b.v.toLowerCase()
+    || a.k === "cab" && b.k === "background" || a.k === "background" && b.k === "cab"
+    || a.k === "companion" && b.k === "doctor" || a.k === "doctor" && b.k === "companion";
+}
+// null when A and B can be commanders together; otherwise why they can't, or that it couldn't be checked
+function pairIssue(A, B) {
+  const a = pairAbilities(A), b = pairAbilities(B);
+  if (a && b && a.some(x => b.some(y => pairMatch(x, A, y, B)))) return null;
+  const unknown = [[A, a], [B, b]].filter(([, x]) => !x).map(([c]) => c);
+  // an older deck: unless what is known already rules the pair out, say it wasn't checked rather than guess either way
+  if (unknown.length && unknown.every(c => c.partner !== false) && [a, b].every(x => !x || x.length))
+    return `Couldn't verify that ${A.name} and ${B.name} can be commanders together: ${unknown.length > 1 ? "neither card's rules text was saved with this deck." : `${unknown[0].name}'s rules text wasn't saved with this deck.`}`;
+  const one = x => x.k === "partner" ? "Partner" : x.k === "with" ? `Partner with ${x.name}` : x.k === "variant" ? `Partner—${x.v}` : x.k === "cab" ? "Choose a Background"
+    : x.k === "background" ? "a Background" : x.k === "companion" ? "Doctor's companion" : "a Time Lord Doctor";
+  const desc = (c, x) => !x ? (c.partner === false ? "no pairing ability" : "rules text not saved") : x.length ? x.map(one).join(", ") : "no pairing ability";
+  const ks = new Set([...(a || []), ...(b || [])].map(x => x.k)), why = [];
+  if (ks.has("with")) why.push("Partner with only pairs with the card it names, and that card has to name it back.");
+  if (ks.has("variant")) why.push("A Partner— ability only pairs with the same Partner— ability.");
+  if (ks.has("cab") || ks.has("background")) why.push("Choose a Background only pairs with a legendary Background, and a Background can only be a commander that way.");
+  if (ks.has("companion") || ks.has("doctor")) why.push("Doctor's companion only pairs with a legendary Time Lord Doctor creature.");
+  return `${A.name} (${desc(A, a)}) and ${B.name} (${desc(B, b)}) can't be commanders together. ${why.length ? why.join(" ") : "Two commanders need matching pairing abilities, such as Partner on both."}`;
+}
 function checkDeck(d) {
   const F = d.format, issues = [], flags = {};
   if (!F || F === "casual") return { issues, flags, pending: false, checked: false };
@@ -6090,8 +6134,11 @@ function checkDeck(d) {
     const cm = d.cmdr.map(k => d.cards[k]).filter(Boolean);
     if (!cm.length) issues.push("Choose your commander below so colors can be checked.");
     else {
-      for (const c of cm) if (c.canCmdr === false) issues.push(`${c.name} can't be a commander. It has to be a legendary creature or say it can be your commander.`);
-      if (cm.length === 2 && !cm.every(c => c.partner)) issues.push("Two commanders are only allowed when both have Partner or a similar ability.");
+      const two = cm.length === 2, dup = two && sameCard(cm[0], cm[1]);
+      // a Background can be a commander only alongside one with Choose a Background: with two commanders, the pairing check says whether it is
+      for (const c of dup ? [cm[0]] : cm) if (c.canCmdr === false && !(two && !dup && (pairAbilities(c) || []).some(x => x.k === "background"))) issues.push(`${c.name} can't be a commander. It has to be a legendary creature or say it can be your commander.`);
+      if (dup) issues.push(`${cm[0].name} is chosen as both commanders. Choose a different second commander.`);
+      else if (two) { const pi = pairIssue(cm[0], cm[1]); if (pi) issues.push(pi); }
       const ci = new Set(cmdrCI(d));
       for (const [k, c] of main) if (!d.cmdr.includes(k) && (c.ci || []).some(x => !ci.has(x))) { ciBad++; flag(k, "Outside your commander's colors"); }
       if (ciBad) issues.push(`${ciBad} card${ciBad > 1 ? "s are" : " is"} outside your commander's colors.`);
