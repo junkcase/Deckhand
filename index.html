@@ -7546,7 +7546,40 @@ function upgFit(U, c, gaps, opts = {}) {
   let w = 0, v = 0; for (const k in UPG_W) if (parts[k] != null) { w += UPG_W[k]; v += UPG_W[k] * parts[k]; }   // missing data left out, the rest rescaled
   return { fit: w ? v / w : 0, parts, st, roles };
 }
-function analyzeDeck(d, U) {
+// The deck's strategies for the swap suggestions, read by the Deck analysis' own functions (memory only, nothing is saved).
+// Counted: a strategy the Deck analysis lists (two or more cards in it) or one the commander supports. A card whose rules text
+// didn't load gets nothing here, so it is judged exactly as before; if none of the deck's text loaded, nothing changes at all (off).
+async function upgStrategy(d, U) {
+  const main = Object.values(d.cards).filter(c => !c.side), cand = [...U.meta.values()];
+  await optTexts([...main, ...cand].map(c => c.name));
+  const has = n => !!OPT.text.get(n), names = [...new Set(main.map(c => c.name))];
+  const missDeck = names.filter(n => !has(n)).length, missCand = cand.filter(c => !has(c.name)).length;
+  if (!names.some(has)) return { off: true, missDeck, missCand };
+  const A = optAnalyze(d, { cmd: "", theme: "", R: null, stat: new Map(), tstat: new Map() }, { combos: null }), rows = A.rows;
+  const counted = new Set([...A.strat.cats.filter(g => g.cards.length > 1).map(g => g.key), ...A.strat.cmd.map(x => x.e.cat)]);
+  const deck = new Map(), job = new Set(rows.filter(r => r.sy.some(e => e.active)).map(r => r.name));
+  for (const r of rows) if (!r.cmdr) { const es = r.sy.filter(e => e.active && counted.has(e.cat) && ["enabler", "payoff", "amplifier"].includes(e.side)); if (es.length) deck.set(r.name, es); }
+  // a candidate is read as one more card in this deck, with the conditions the Deck analysis applies to the deck's own cards
+  const tc = {}; for (const r of rows) for (const x of ctypesOf(r.c)) tc[x.toLowerCase()] = (tc[x.toLowerCase()] || 0) + r.qty;
+  const mainType = Object.keys(tc).sort((a, b) => tc[b] - tc[a])[0] || "", types = [...A.strat.types];
+  const paid = k => rows.some(r => r.sy.some(e => e.cat === k && e.side === "payoff" && e.direct));
+  const vPay = rows.filter(r => r.sy.some(e => e.cat === "voltron" && e.side === "payoff" && e.direct));
+  const vBase = vPay.some(r => r.cmdr) || vPay.length >= 2 || (d.themes || []).some(t => themeSyn(t, new Set()) === "voltron");
+  const vehicles = rows.some(r => /\bVehicle\b/.test(((r.T && r.T.type) || r.c.type || "").split("//")[0]));
+  const candSy = new Map();
+  for (const c of cand) { const T = OPT.text.get(c.name); if (!T) continue;
+    candSy.set(c.name, optSynergy(T, c, types, tc[mainType] >= 2 ? mainType : "").filter(e => {
+      if (e.cat === "landfall" && e.side === "enabler" && paid("landfall")) e.direct = true;
+      return e.direct && (!e.potential || (e.cat === "blink" && A.strat.blinkOn)) && (e.side === "enabler" || e.side === "payoff") && counted.has(e.cat)
+        && !(e.grant && !paid("lifegain")) && !(e.gear === "keyword" && !vBase) && !(e.vehicle && !vehicles); })); }
+  return { off: false, counted, deck, cand: candSy, job, missDeck, missCand };
+}
+const upgStratLab = k => k.startsWith("type:") ? k.slice(5) : SYN_CAT[k];
+// "your Blink strategy (payoff)", once per strategy
+const upgStratList = es => { const by = new Map(); for (const e of es) (by.get(e.cat) || by.set(e.cat, new Set()).get(e.cat)).add(e.side);
+  return [...by].map(([k, s]) => `your ${upgStratLab(k)} strategy (${[...s].join(" and ")})`); };
+function analyzeDeck(d, U, SC) {
+  const on = SC && !SC.off ? SC : null;          // null: strategy wasn't checked, and everything below is exactly as before
   const gaps = deckGaps(d), cmdKeys = new Set(d.cmdr), up = d.upg || {};
   const deckCards = Object.entries(d.cards).filter(([k, c]) => !c.side && !cmdKeys.has(k) && !c.basic && typeOf(c.type) !== "Land");
   const health = { n: deckCards.length, inData: 0, syn: [], incl: [] };
@@ -7555,6 +7588,10 @@ function analyzeDeck(d, U) {
     const st = U.stat.get(c.name), incl = st && st.pot ? st.num / st.pot : null, syn = st ? st.syn : null, fn = rolesOf(c).filter(r => r !== "Creature");
     if (st) { health.inData++; if (syn != null) health.syn.push(syn); if (incl != null) health.incl.push(incl); }
     if ((up.keep || []).includes(c.name)) continue;
+    // a card a counted strategy uses is cut only on EDHREC's evidence: in under 10% of the commander's decks, or negative synergy.
+    // Cost, roles above range and not being on EDHREC's lists aren't evidence (EDHREC lists only so many cards).
+    const sy = on ? on.deck.get(c.name) || null : null;
+    if (sy && !(st && ((incl != null && incl < 0.1) || (syn != null && syn < 0)))) continue;
     let score = 0; const why = [];
     if (U.src === "EDHREC" && U.cmd) {
       if (!st) { score += 0.45; why.push(`Not among the cards EDHREC lists for ${U.cmd}`); }
@@ -7562,9 +7599,10 @@ function analyzeDeck(d, U) {
     }
     if (U.theme && U.tstat.size && !U.tstat.has(c.name) && !(syn != null && syn > 0.2)) { score += 0.1; why.push(`Rarely played in ${U.theme} decks`); }
     if (fn.length && fn.every(r => gaps.high.includes(r))) { score += 0.15; why.push(`You already have more ${fn[0].toLowerCase()} than usual`); }
-    if (!fn.length && typeOf(c.type) !== "Creature" && !(syn != null && syn > 0.15)) { score += 0.1; why.push("No clear job in the deck (no ramp, draw, removal…)"); }
+    if (!fn.length && typeOf(c.type) !== "Creature" && !(syn != null && syn > 0.15) && !(on && on.job.has(c.name))) { score += 0.1; why.push("No clear job in the deck (no ramp, draw, removal…)"); }
     if ((c.cmc || 0) >= 6 && !(syn != null && syn > 0.3)) { score += 0.1; why.push(`Expensive at ${c.cmc} mana`); }
-    if (score >= 0.25) cuts.push({ key: k, card: c, score, why, ...upgFit(U, c, gaps, { inDeck: true }) });
+    if (sy) why.push(`It supports ${upgStratList(sy).join(" and ")}, and is suggested only because of the EDHREC figures above`);
+    if (score >= 0.25) cuts.push({ key: k, card: c, score, why, sy, sc: !!on, ...upgFit(U, c, gaps, { inDeck: true }) });
   }
   cuts.sort((a, b) => b.score - a.score || a.fit - b.fit);
   // pair each cut with the best card that does a similar job, at a similar cost, and fits better
@@ -7582,8 +7620,12 @@ function analyzeDeck(d, U) {
       if (fn.length ? !share.length && !fillsGap : isCre ? !roles.includes("Creature") && !fillsGap : false) continue;
       const f = upgFit(U, c, gaps, { ref: cut.card.cmc || 0, deckId: d.id });
       if (f.fit - cut.fit < 0.05) continue;
-      const rank = f.fit - cut.fit + (share.length ? 0.15 : isCre && roles.includes("Creature") ? 0.05 : 0);   // same job ranks higher
-      opts.push({ card: c, ...f, gain: f.fit - cut.fit, rank, share });
+      let rank = f.fit - cut.fit + (share.length ? 0.15 : isCre && roles.includes("Creature") ? 0.05 : 0);   // same job ranks higher
+      // rank only (fit and gain stay as they are): +0.15 once for a card a counted strategy uses (none if its text didn't load),
+      // −0.15 for each role the deck is short on that the cut card has and this one doesn't
+      const sy = on ? (on.cand.get(n) || []) : [], lost = on ? fn.filter(r => gaps.low.includes(r) && !roles.includes(r)) : [];
+      rank += (sy.length ? 0.15 : 0) - 0.15 * lost.length;
+      opts.push({ card: c, ...f, gain: f.fit - cut.fit, rank, share, sy: sy.length ? sy : null, lost });
     }
     opts.sort((a, b) => b.rank - a.rank);
     if (opts.length) plan.push({ cut, opts });
@@ -7591,8 +7633,10 @@ function analyzeDeck(d, U) {
   plan.sort((a, b) => a.opts.length - b.opts.length || b.cut.score - a.cut.score);
   for (const { cut, opts } of plan) {
     const free = opts.filter(o => !used.has(o.card.name)); if (!free.length) continue;
-    used.add(free[0].card.name);
-    swaps.push({ cut, best: free[0], alts: free.slice(1, 4) });
+    // a creature is replaced by the best creature that passed the same checks, when there is one, ahead of a higher-ranked noncreature
+    const cre = on && cut.roles.includes("Creature"), best = (cre && free.find(o => o.roles.includes("Creature"))) || free[0];
+    used.add(best.card.name);
+    swaps.push({ cut, best, alts: free.filter(o => o !== best).slice(0, 3), noCre: !!(cre && !best.roles.includes("Creature")) });
   }
   swaps.sort((a, b) => b.cut.score - a.cut.score);
   // weaknesses, with reasons
@@ -7616,7 +7660,10 @@ function upgExplain(sw, U) {
   if (bIn != null && (cIn == null || bIn > cIn)) plus.push(`In ${pct0(bIn)} of ${U.cmd} decks${cIn != null ? ` vs ${pct0(cIn)}` : ""}`);
   if (U.theme && b.parts.theme) plus.push(`Common in ${U.theme} decks (${pct0(b.parts.theme)})`);
   for (const r of b.roles) if (!c.roles.includes(r) && r !== "Creature") plus.push((sw.gaps || []).includes(r) ? `Adds ${r.toLowerCase()}, which the deck is short on` : `Adds ${r.toLowerCase()}`);
-  for (const r of c.roles) if (!b.roles.includes(r) && r !== "Creature") minus.push(`You lose a ${r.toLowerCase()} card`);
+  if (c.sc && b.sy) for (const t of upgStratList(b.sy)) plus.push(`Supports ${t}`);
+  for (const r of c.roles) if (!b.roles.includes(r) && r !== "Creature") minus.push(`You lose a ${r.toLowerCase()} card` + (c.sc && (sw.gaps || []).includes(r) ? `, and the deck is already short on ${r.toLowerCase()}` : ""));
+  if (c.sc && c.sy) for (const k of new Set(c.sy.map(e => e.cat))) { const l = upgStratLab(k), s = [...new Set(c.sy.filter(e => e.cat === k).map(e => e.side))].join(" and "); minus.push(`Removes ${/^[AEIOU]/.test(l) ? "an" : "a"} ${l} ${s}`); }
+  if (c.sc && c.roles.includes("Creature") && !b.roles.includes("Creature")) minus.push(sw.noCre ? "Reduces your creature count by one: no creature replacement fits" : "This alternative reduces your creature count by one");
   const dm = (b.card.cmc || 0) - (c.card.cmc || 0);
   if (dm < 0) plus.push(`Costs ${-dm} less mana`); else if (dm > 0) minus.push(`Costs ${dm} more mana`);
   const al = allocFor(b.card.name, null);
@@ -7636,9 +7683,18 @@ async function drawUpgrade(d) {
   const st = upgState[d.id] = upgState[d.id] || {};
   d.upg = d.upg || {};
   const key = deckCommanderName(d) + "|" + ((d.themes || [])[0] || null);
-  if (!st.U || st.U.key !== key) { el.innerHTML = `<p class="small muted">Looking at your deck…</p>`; st.U = await upgradeData(d); if (!$("#dPane")) return; }
-  const U = st.U, A = analyzeDeck(d, U), ds = deckStats(d);
-  if (!d.upg.base) { d.upg.base = upgSnapshot(d, U, A); save(); }
+  if (!st.U || st.U.key !== key) { el.innerHTML = `<p class="small muted">Looking at your deck…</p>`; st.U = await upgradeData(d); if ($("#dPane") !== el) return; }
+  // the rules text the strategy check needs: while it loads, the tab shows everything but the swaps, then draws again
+  const need = [...Object.values(d.cards).filter(c => !c.side), ...st.U.meta.values()].map(c => c.name).filter(n => !OPT.text.has(n) && !OPT.failed.has(n)), pending = need.length > 0;
+  if (pending && !st.texts) st.texts = optTexts(need).catch(() => {}).finally(() => { st.texts = null;
+    if ($("#dPane") && tab === "decks" && deckOpen === d.id && deckTab[d.id] === "upgrade" && upgMode[d.id] !== "analyze") drawUpgrade(d); });
+  let SC = null; if (!pending) { try { SC = await upgStrategy(d, st.U); } catch (e) { SC = null; } if ($("#dPane") !== el) return; }     // redrawn meanwhile
+  const U = st.U, A = analyzeDeck(d, U, SC), ds = deckStats(d), miss = SC ? SC.missDeck + SC.missCand : 0, cnt = (v, w) => `${v} ${w}${v === 1 ? "" : "s"}`;
+  // one line: whether strategy was checked, and for how many cards it couldn't be
+  const stratLine = pending ? "" : !SC ? "Strategy couldn't be checked: the cards' rules text couldn't be loaded, so these suggestions don't take the deck's strategies into account."
+    : SC.off ? `Strategy couldn't be checked: the rules text of ${cnt(SC.missDeck, "card")} in this deck couldn't be loaded from Scryfall, so these suggestions don't take the deck's strategies into account.`
+    : miss ? `Strategy wasn't checked for ${cnt(miss, "card")} (${SC.missDeck} in this deck, ${SC.missCand} suggested): ${miss === 1 ? "its" : "their"} rules text couldn't be loaded from Scryfall, so ${miss === 1 ? "it is" : "they are"} judged without ${miss === 1 ? "its" : "their"} strategy.` : "";
+  if (!d.upg.base && !pending) { d.upg.base = upgSnapshot(d, U, A); save(); }
   const budget = d.upg.budget ?? null, swaps = A.swaps.filter(s => !(d.upg.later || []).some(x => x.cut === s.cut.card.name && x.add === s.best.card.name));
   swaps.forEach(s => { s.gaps = A.gaps.low; s.group = upgGroup(s, d); s.price = s.group === "buy" ? priceOf(s.best.card) : 0; s.diff = (priceOf(s.best.card) || 0) - (priceOf(s.cut.card) || 0); });
   // budget: owned upgrades cost nothing; buys picked by improvement per dollar until the budget runs out
@@ -7676,7 +7732,9 @@ async function drawUpgrade(d) {
       <div class="row wrap" style="gap:6px"><span class="small">Budget for cards to buy</span><span class="seg" id="uBud">${[10, 25, 50, 100].map(v => `<button data-b="${v}" aria-pressed="${budget === v}">$${v}</button>`).join("")}<button data-b="" aria-pressed="${budget == null}">Any</button></span>
       <input type="number" id="uBudC" min="0" step="1" placeholder="Other $" style="width:100px" value="${budget != null && ![10, 25, 50, 100].includes(budget) ? budget : ""}"></div>
       <span class="small muted">Prices are TCGplayer market prices from Scryfall${S.meta.pricedAt ? `, updated ${esc(dayLabel(S.meta.pricedAt))}` : ""}. Cards you own count as free.</span>
-      ${swaps.length ? groups.map(([g, title, sub]) => { const list = swaps.map((s, i) => [s, i]).filter(([s]) => s.group === g); return list.length ? `<div class="group-h"><span>${title}</span><span class="num">${list.length}</span></div><p class="small muted" style="margin:2px 0 6px">${esc(sub)}</p>${list.map(([s, i]) => swapRow(s, i)).join("")}` : ""; }).join("")
+      ${U.src !== "EDHREC" ? `<p class="small gold" id="uSource" style="margin:0">${U.cmd ? "Suggested from cards popular in these colors, not with this commander." : U.ci ? "Suggested from cards popular in these colors." : "Suggested from cards popular in Commander decks generally."}</p>` : ""}
+      ${stratLine ? `<p class="small gold" id="uStrat" style="margin:0">${esc(stratLine)}</p>` : ""}
+      ${pending ? `<p class="small muted" id="uPending" style="margin:0">Checking the deck's strategies…</p>` : swaps.length ? groups.map(([g, title, sub]) => { const list = swaps.map((s, i) => [s, i]).filter(([s]) => s.group === g); return list.length ? `<div class="group-h"><span>${title}</span><span class="num">${list.length}</span></div><p class="small muted" style="margin:2px 0 6px">${esc(sub)}</p>${list.map(([s, i]) => swapRow(s, i)).join("")}` : ""; }).join("")
         : `<p class="small">${A.cuts.length ? "No better-fitting replacements found for the weaker cards right now." : "No cards stand out as weak spots."}</p>`}
     </div>
     ${(d.upg.later || []).length ? `<details class="box"><summary class="label">Saved for later (${d.upg.later.length})</summary><div class="list">${d.upg.later.map((x, i) => `<div class="item"><div class="tap" style="cursor:default"><div class="name">${esc(x.cut)} → ${esc(x.add)}</div><div class="meta small muted">saved ${esc(dayLabel(x.at))}</div></div><div class="right"><button class="btn sm" data-lback="${i}">Show again</button></div></div>`).join("")}</div></details>` : ""}
@@ -7839,7 +7897,7 @@ function swapCompareSheet(d, s, U) {      // a suggested swap: the card out next
       <div class="kv small"><span>Yours</span><span>${isCut ? "in this deck" : al.own ? (shareCopies() || al.free ? `own ${al.own}` : `own ${al.own}, in ${esc(al.where.map(w => w.name).join(", "))}`) : "not owned"}</span></div></div>`; };
   openSheet(`<h2>Compare</h2><p class="small muted">Replacing ${esc(c.card.name)}. Pick the option that suits your deck; the best match isn't right for every deck.</p>
     <div class="cmpgrid">${col(c, true)}${all.map(x => col(x, false)).join("")}</div>
-    <div class="stack" style="gap:8px;margin-top:10px">${all.map((x, i) => { const ex = upgExplain({ cut: c, best: x, gaps: s.gaps }, U); return `<div class="box"><b>${esc(x.card.name)}</b><div class="small">${ex.plus.map(t => `<span class="up">+ ${esc(t)}</span>`).join("<br>")}${ex.minus.length ? "<br>" + ex.minus.map(t => `<span class="down">− ${esc(t)}</span>`).join("<br>") : ""}</div>
+    <div class="stack" style="gap:8px;margin-top:10px">${all.map((x, i) => { const ex = upgExplain({ cut: c, best: x, gaps: s.gaps, noCre: i === 0 && s.noCre }, U); return `<div class="box"><b>${esc(x.card.name)}</b><div class="small">${ex.plus.map(t => `<span class="up">+ ${esc(t)}</span>`).join("<br>")}${ex.minus.length ? "<br>" + ex.minus.map(t => `<span class="down">− ${esc(t)}</span>`).join("<br>") : ""}</div>
       <div class="row wrap" style="gap:6px;margin-top:6px"><button class="btn sm primary" data-cpick="${i}">Replace with this</button><button class="btn sm" data-cadd="${i}">Add without cutting</button></div></div>`; }).join("")}
       <button class="btn ghost" id="cKeep">Keep ${esc(c.card.name)} (stop suggesting it)</button></div>`, () => { if (tab === "decks") renderDeck(d); });
   document.querySelectorAll("[data-cpick]").forEach(b => b.onclick = () => { const x = all[+b.dataset.cpick]; applyUpgrade(d, Object.assign({}, s, { best: x, group: upgGroup({ best: x }, d) }), "replace"); closeSheet(); });
