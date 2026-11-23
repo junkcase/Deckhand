@@ -6554,12 +6554,17 @@ function bracketOf(d, L) {
   if (xt.length >= 4) add(4, `${xt.length} extra-turn cards (Deckhand's estimate: 4 or more could chain extra turns; Wizards asks brackets 1–3 not to chain them but sets no number)`);
   return { b, why, ev, gc, mld, xt, tutors };
 }
+// the bracket with the qualifying two-card combos counted (tc null: the combo list hasn't loaded, so combos weren't counted)
+function bracketFull(d, L) {
+  const r = bracketOf(d, L), tc = twoCardCombos(d);
+  if (tc && tc.length) { const w = `${tc.length} two-card combo${tc.length === 1 ? "" : "s"} (brackets 1–2 allow none; bracket 3 none early in the game)`; r.b = Math.max(r.b, 3); r.why.push(w); r.ev.push({ b: 3, why: w }); }
+  return { r, tc };
+}
 function bracketHTML(d) {
   if (d.format !== "commander") return "";
   if (!BRK.lists) return `<div class="box" id="brBox"><span class="label">Commander bracket</span><p class="small muted" style="margin:4px 0 0">Checking the deck against the current Game Changers list…</p></div>`;
-  const r = bracketOf(d, BRK.lists), list = (lab, a, note) => a.length ? `<div class="small"><b>${lab} (${a.length}):</b> ${a.map(esc).join(", ")}${note ? ` <span class="muted">${note}</span>` : ""}</div>` : "";
-  const tc = twoCardCombos(d), tx = twoCardOther(d), pair = o => o.cards.map(c => c.name).join(" + ");
-  if (tc && tc.length) { const w = `${tc.length} two-card combo${tc.length === 1 ? "" : "s"} (brackets 1–2 allow none; bracket 3 none early in the game)`; r.b = Math.max(r.b, 3); r.why.push(w); r.ev.push({ b: 3, why: w }); }
+  const { r, tc } = bracketFull(d, BRK.lists), list = (lab, a, note) => a.length ? `<div class="small"><b>${lab} (${a.length}):</b> ${a.map(esc).join(", ")}${note ? ` <span class="muted">${note}</span>` : ""}</div>` : "";
+  const tx = twoCardOther(d), pair = o => o.cards.map(c => c.name).join(" + ");
   const lvl = b => b === 2 ? "2 (Core) or lower" : b + " (" + BRACKETS[b] + ") or higher";
   // until the combo list has loaded the result can only go up, so it's marked as preliminary; a failed load says so instead of passing for "no combos"
   const prelim = tc ? "" : `<div class="small" id="brPrelim"><b>${CMB.err ? "Preliminary result — two-card combos couldn't be checked" : "Preliminary result — combos not checked yet"}.</b> ${CMB.err ? "The combo list didn't load, so" : "Until the combo list has loaded,"} a two-card combo in the deck could still make the minimum higher.</div>`;
@@ -7509,6 +7514,10 @@ async function drawOptimizer(d) {
 
 const pct0 = x => x == null ? "—" : Math.round(x * 100) + "%";
 const sgn = x => x == null ? "—" : (x >= 0 ? "+" : "") + Math.round(x * 100) + "%";
+// a candidate fits the deck: inside the commanders' colors, and legal in the deck's format (its saved legality)
+const upgEligible = (d, c, ci) => !(ci && (c.ci || []).some(x => !ci.includes(x))) && !(d.format !== "casual" && c.leg && c.leg[d.format] && c.leg[d.format] !== "l");
+// the candidate pool depends on the commanders' combined colors and the format, not only the first commander and theme
+const upgKey = d => deckCommanderName(d) + "|" + ((d.themes || [])[0] || null) + "|" + (deckCI(d) || []).join("") + "|" + d.format;
 async function upgradeData(d) {
   const cmd = deckCommanderName(d), theme = (d.themes || [])[0] || null, ci = deckCI(d);
   let cmdE = null, thE = null, bothE = null, err = null;
@@ -7528,11 +7537,10 @@ async function upgradeData(d) {
   for (let i = 0; i < names.length; i += 75) {
     const got = await lookupCards(names.slice(i, i + 75).map(n => ({ name: n }))).catch(() => ({}));
     for (const n of names.slice(i, i + 75)) { const c = got[identKey({ name: n })]; if (!c) continue;
-      if (ci && (c.ci || []).some(x => !ci.includes(x))) continue;
-      if (d.format !== "casual" && c.leg && c.leg[d.format] && c.leg[d.format] !== "l") continue;
+      if (!upgEligible(d, c, ci)) continue;
       meta.set(n, c); }
   }
-  return { cmd, theme, ci, stat, tstat, meta, names, src, at: cmdE ? cmdE.at : Date.now(), decks: cmdE ? cmdE.data.decks : null, err, key: cmd + "|" + theme };
+  return { cmd, theme, ci, stat, tstat, meta, names, src, at: cmdE ? cmdE.at : Date.now(), decks: cmdE ? cmdE.data.decks : null, err, key: upgKey(d) };
 }
 function upgFit(U, c, gaps, opts = {}) {
   const st = U.stat.get(c.name), roles = rolesOf(c), al = opts.inDeck ? null : allocFor(c.name, opts.deckId);
@@ -7606,7 +7614,7 @@ function analyzeDeck(d, U, SC) {
   }
   cuts.sort((a, b) => b.score - a.score || a.fit - b.fit);
   // pair each cut with the best card that does a similar job, at a similar cost, and fits better
-  const inDeck = new Set(Object.values(d.cards).map(c => c.name)), used = new Set(), rej = new Set(up.rejected || []), swaps = [];
+  const inDeck = new Set(Object.values(d.cards).map(c => c.name)), used = new Set(), rej = new Set(up.rejected || []), swaps = [], ci = deckCI(d);
   // options for every weak card first, then pair them up starting with the card that has the fewest
   // good options, so a like-for-like swap (ramp for ramp) isn't taken by a card that could use anything
   const plan = [];
@@ -7615,6 +7623,7 @@ function analyzeDeck(d, U, SC) {
     const opts = [];
     for (const [n, c] of U.meta) {
       if (inDeck.has(n) || used.has(n) || rej.has(cut.card.name + "→" + n) || typeOf(c.type) === "Land") continue;
+      if (!upgEligible(d, c, ci)) continue;                 // the same check as the pool, against the deck as it is now
       const roles = rolesOf(c), share = fn.filter(r => roles.includes(r));
       const fillsGap = roles.some(r => gaps.low.includes(r));
       if (fn.length ? !share.length && !fillsGap : isCre ? !roles.includes("Creature") && !fillsGap : false) continue;
@@ -7677,12 +7686,59 @@ function upgGroup(sw, d) {
   const al = allocFor(sw.best.card.name, d.id);
   return !al.own ? "buy" : (shareCopies() || al.free) ? "free" : "other";
 }
+// What applying a swap would change, judged on a copy of the deck made with Replace's steps (nothing is saved, the deck isn't
+// touched): problems it adds or removes (checkDeck), and the bracket evidence and estimate before and after (bracketFull).
+const UPG_AGG = /^\d+ cards? (has|have) too many copies\.$|^\d+ cards? (isn't|aren't) legal in |^\d+ cards? (is|are) outside your commander's colors\.$/;   // counts of per-card flags: compared through the flags
+function upgAfter(d, cutKey, card) {
+  const x = { id: d.id, name: d.name, format: d.format, themes: d.themes, cmdr: d.cmdr.slice(), cards: Object.assign({}, d.cards) }, c = x.cards[cutKey];
+  if (c) { if (c.qty > 1) x.cards[cutKey] = Object.assign({}, c, { qty: c.qty - 1 }); else delete x.cards[cutKey]; }
+  const s = isSlim(card) ? card : slim(card), k = s.id + "|0";      // added as addToDeck adds it, without saving or touching anything else
+  if (x.cards[k]) x.cards[k] = Object.assign({}, x.cards[k], { qty: x.cards[k].qty + 1 }); else { const n = { qty: 1, side: false }; DECK_FIELDS.forEach(f => n[f] = s[f]); x.cards[k] = n; }
+  return x;
+}
+// the current deck's side of the comparison; B is null while the bracket lists or the combo list aren't loaded
+const upgImpactBase = d => ({ ck: checkDeck(d), B: d.format === "commander" && BRK.lists && CMB.data ? bracketFull(d, BRK.lists) : null });
+function upgImpact(d, cutKey, card, base) {
+  const x = upgAfter(d, cutKey, card), b = base.ck, a = checkDeck(x), nm = k => (x.cards[k] || d.cards[k] || {}).name;
+  const pairs = ck => new Set(Object.entries(ck.flags).flatMap(([k, v]) => v.map(m => k + "\u0001" + m))), fb = pairs(b), fa = pairs(a);
+  const one = p => { const [k, msg] = p.split("\u0001"); return { name: nm(k), msg }; };
+  const legal = { checked: a.checked && !a.pending && !b.pending, pending: a.pending || b.pending,
+    added: [...fa].filter(p => !fb.has(p)).map(one), removed: [...fb].filter(p => !fa.has(p)).map(one),
+    deckAdded: a.issues.filter(i => !UPG_AGG.test(i) && !b.issues.includes(i)), deckRemoved: b.issues.filter(i => !UPG_AGG.test(i) && !a.issues.includes(i)) };
+  let bracket = null;
+  if (base.B) {
+    const B1 = bracketFull(x, BRK.lists), B0 = base.B, ev = [], lab = { gc: "Game Changer", mld: "mass land denial", xt: "extra turns" };
+    for (const t of ["gc", "mld", "xt"]) { for (const n of B1.r[t]) if (!B0.r[t].includes(n)) ev.push(`adds ${n} (${lab[t]})`); for (const n of B0.r[t]) if (!B1.r[t].includes(n)) ev.push(`removes ${n} (${lab[t]})`); }
+    const ids = tc => new Set(tc.map(o => o.id)), i0 = ids(B0.tc), i1 = ids(B1.tc), pair = o => o.cards.map(c => c.name).join(" + ");
+    for (const o of B1.tc) if (!i0.has(o.id)) ev.push(`completes the two-card combo ${pair(o)}`);
+    for (const o of B0.tc) if (!i1.has(o.id)) ev.push(`breaks the two-card combo ${pair(o)}`);
+    bracket = { from: B0.r.b, to: B1.r.b, ev };
+  }
+  return { legal, bracket };
+}
+// the lines a swap shows: [text, class]. state: "ok", "pending", "fail" (bracket data), or "na" (not a Commander deck)
+function upgImpactLines(I, state) {
+  const out = [], L = I.legal, said = m => m === "Banned in " + FORMATS.commander || /^Banned in /.test(m) ? "is " + m.charAt(0).toLowerCase() + m.slice(1) : /^Not legal in /.test(m) ? "isn't " + m.slice(4) : /^Outside /.test(m) ? "is " + m.charAt(0).toLowerCase() + m.slice(1) : "— " + m;
+  if (L.pending) out.push(["Legality not checked yet: some card details are still loading.", "muted"]);
+  else if (L.checked) {
+    for (const p of L.added) out.push([`New problem: ${p.name} ${said(p.msg)}.`, "down"]);
+    for (const m of L.deckAdded) out.push([`New problem: ${m}`, "down"]);
+    for (const p of L.removed) out.push([`Removes an existing problem: ${p.name} ${said(p.msg)}.`, "up"]);
+    for (const m of L.deckRemoved) out.push([`Removes an existing problem: ${m}`, "up"]);
+    if (!L.added.length && !L.deckAdded.length) out.push(["No new legality problems.", "muted"]);
+  }
+  if (state === "pending") out.push(["Bracket impact not checked yet.", "muted"]);
+  else if (state === "fail") out.push(["Bracket impact couldn't be checked.", "gold"]);
+  else if (state === "ok" && I.bracket && I.bracket.ev.length) out.push([(I.bracket.from !== I.bracket.to ? `Bracket ${I.bracket.from} → ${I.bracket.to}: ` : `Bracket stays ${I.bracket.to}: `) + I.bracket.ev.join("; "), "gold"]);
+  return out;
+}
+const upgImpactHTML = (I, state) => `<div class="small upgimp"><span class="muted">If replaced:</span><br>${upgImpactLines(I, state).map(([t, k]) => `<span class="${k}">${esc(t)}</span>`).join("<br>")}</div>`;
 async function drawUpgrade(d) {
   const el = $("#dPane"); if (!el) return;
   if (upgMode[d.id] === "analyze") return drawAnalyzer(d);                 // the Top 50 analyzer view of this tab
   const st = upgState[d.id] = upgState[d.id] || {};
   d.upg = d.upg || {};
-  const key = deckCommanderName(d) + "|" + ((d.themes || [])[0] || null);
+  const key = upgKey(d);
   if (!st.U || st.U.key !== key) { el.innerHTML = `<p class="small muted">Looking at your deck…</p>`; st.U = await upgradeData(d); if ($("#dPane") !== el) return; }
   // the rules text the strategy check needs: while it loads, the tab shows everything but the swaps, then draws again
   const need = [...Object.values(d.cards).filter(c => !c.side), ...st.U.meta.values()].map(c => c.name).filter(n => !OPT.text.has(n) && !OPT.failed.has(n)), pending = need.length > 0;
@@ -7690,6 +7746,11 @@ async function drawUpgrade(d) {
     if ($("#dPane") && tab === "decks" && deckOpen === d.id && deckTab[d.id] === "upgrade" && upgMode[d.id] !== "analyze") drawUpgrade(d); });
   let SC = null; if (!pending) { try { SC = await upgStrategy(d, st.U); } catch (e) { SC = null; } if ($("#dPane") !== el) return; }     // redrawn meanwhile
   const U = st.U, A = analyzeDeck(d, U, SC), ds = deckStats(d), miss = SC ? SC.missDeck + SC.missCand : 0, cnt = (v, w) => `${v} ${w}${v === 1 ? "" : "s"}`;
+  // the bracket lists and the combo list, for each swap's bracket impact: loaded once, then the tab draws again (also when they fail)
+  if (d.format === "commander" && (!BRK.lists || !CMB.data) && !st.impLoad && !st.impErr) st.impLoad = Promise.all([bracketLists(), comboData()]).then(() => { st.impErr = null; }, e => { st.impErr = (e && e.message) || "failed"; })
+    .finally(() => { st.impLoad = null; if (st.cmpRedraw) st.cmpRedraw(); if ($("#dPane") && tab === "decks" && deckOpen === d.id && deckTab[d.id] === "upgrade" && upgMode[d.id] !== "analyze") drawUpgrade(d); });
+  const impState = d.format !== "commander" ? "na" : BRK.lists && CMB.data ? "ok" : st.impErr ? "fail" : "pending";
+  const impBase = upgImpactBase(d), impact = (cut, o) => upgImpact(d, cut.key, o.card, impBase);
   // one line: whether strategy was checked, and for how many cards it couldn't be
   const stratLine = pending ? "" : !SC ? "Strategy couldn't be checked: the cards' rules text couldn't be loaded, so these suggestions don't take the deck's strategies into account."
     : SC.off ? `Strategy couldn't be checked: the rules text of ${cnt(SC.missDeck, "card")} in this deck couldn't be loaded from Scryfall, so these suggestions don't take the deck's strategies into account.`
@@ -7711,6 +7772,7 @@ async function drawUpgrade(d) {
         <button class="sc" data-sinfo="${i}|b"><img loading="lazy" src="${esc(b.img)}" alt=""><span><b>${esc(b.name)}</b><br><span class="small muted">${b.cmc || 0} mana · ${esc(typeOf(b.type))}${s.best.roles.filter(r => r !== "Creature").length ? " · " + esc(s.best.roles.filter(r => r !== "Creature").join(", ")) : ""} · ${money(priceOf(b))}${s.diff ? ` (${s.diff > 0 ? "+" : "−"}${money(Math.abs(s.diff))})` : ""}</span></span></button></div>
       <div class="small"><span class="muted">Why cut:</span> ${s.cut.why.map(esc).join("; ")}.</div>
       <div class="small">${ex.plus.map(x => `<span class="up">+ ${esc(x)}</span>`).join("<br>")}${ex.minus.length ? "<br>" + ex.minus.map(x => `<span class="down">− ${esc(x)}</span>`).join("<br>") : ""}</div>
+      ${upgImpactHTML(impact(s.cut, s.best), impState)}
       ${over ? `<div class="small gold">Over your budget</div>` : ""}
       <div class="row wrap" style="gap:6px"><button class="btn sm primary" data-srep="${i}">Replace</button><button class="btn sm" data-sadd="${i}">Add without cutting</button><button class="btn sm" data-scmp="${i}">Compare${s.alts.length ? " & other options" : ""}</button><button class="btn sm ghost" data-slater="${i}">Later</button><button class="btn sm ghost" data-sno="${i}">Skip</button></div>
       <div class="confirm" id="sconf-${i}" hidden></div></div>`; };
@@ -7734,6 +7796,7 @@ async function drawUpgrade(d) {
       <span class="small muted">Prices are TCGplayer market prices from Scryfall${S.meta.pricedAt ? `, updated ${esc(dayLabel(S.meta.pricedAt))}` : ""}. Cards you own count as free.</span>
       ${U.src !== "EDHREC" ? `<p class="small gold" id="uSource" style="margin:0">${U.cmd ? "Suggested from cards popular in these colors, not with this commander." : U.ci ? "Suggested from cards popular in these colors." : "Suggested from cards popular in Commander decks generally."}</p>` : ""}
       ${stratLine ? `<p class="small gold" id="uStrat" style="margin:0">${esc(stratLine)}</p>` : ""}
+      ${impState === "na" ? "" : `<p class="small ${impState === "fail" ? "gold" : "muted"}" id="uImpact" style="margin:0">${impState === "pending" ? "Checking each swap's bracket impact…" : impState === "fail" ? "Bracket impact couldn't be checked: the Game Changers list or the combo list didn't load. Each swap still says whether it adds a legality problem." : "Each swap says whether it adds a legality problem, and mentions the bracket only when it changes the deck's bracket evidence."}</p>`}
       ${pending ? `<p class="small muted" id="uPending" style="margin:0">Checking the deck's strategies…</p>` : swaps.length ? groups.map(([g, title, sub]) => { const list = swaps.map((s, i) => [s, i]).filter(([s]) => s.group === g); return list.length ? `<div class="group-h"><span>${title}</span><span class="num">${list.length}</span></div><p class="small muted" style="margin:2px 0 6px">${esc(sub)}</p>${list.map(([s, i]) => swapRow(s, i)).join("")}` : ""; }).join("")
         : `<p class="small">${A.cuts.length ? "No better-fitting replacements found for the weaker cards right now." : "No cards stand out as weak spots."}</p>`}
     </div>
@@ -7750,7 +7813,7 @@ async function drawUpgrade(d) {
   $("#uBudC").onchange = e => { const v = parseFloat(e.target.value); d.upg.budget = isNaN(v) ? null : v; save(); drawUpgrade(d); };
   el.querySelectorAll("[data-srep]").forEach(b => b.onclick = () => upgConfirm(d, S_(b.dataset.srep), +b.dataset.srep, "replace"));
   el.querySelectorAll("[data-sadd]").forEach(b => b.onclick = () => { applyUpgrade(d, S_(b.dataset.sadd), "add"); drawUpgrade(d); });
-  el.querySelectorAll("[data-scmp]").forEach(b => b.onclick = () => swapCompareSheet(d, S_(b.dataset.scmp), U));
+  el.querySelectorAll("[data-scmp]").forEach(b => b.onclick = () => swapCompareSheet(d, S_(b.dataset.scmp), U));      // each option's impact is worked out when Compare opens
   el.querySelectorAll("[data-sinfo]").forEach(b => b.onclick = () => { const [i, w] = b.dataset.sinfo.split("|"); openCard(w === "c" ? S_(i).cut.card : S_(i).best.card); });
   el.querySelectorAll("[data-slater]").forEach(b => b.onclick = () => { const s = S_(b.dataset.slater); (d.upg.later = d.upg.later || []).push({ cut: s.cut.card.name, add: s.best.card.name, at: Date.now() }); upgLog(d, { text: `Saved for later: ${s.cut.card.name} → ${s.best.card.name}` }); save(); drawUpgrade(d); });
   el.querySelectorAll("[data-sno]").forEach(b => b.onclick = () => { const s = S_(b.dataset.sno); (d.upg.rejected = d.upg.rejected || []).push(s.cut.card.name + "→" + s.best.card.name); upgLog(d, { text: `Skipped: ${s.cut.card.name} → ${s.best.card.name}`, skip: true }); save(); drawUpgrade(d); });
@@ -7883,7 +7946,10 @@ function upgReport(d, U, A) {
     ${rej.length ? `<div class="small" style="margin-top:4px"><b>Skipped:</b><br>${rej.map(h => esc(h.text.replace(/^Skipped: /, ""))).join("<br>")}</div>` : ""}`;
 }
 function swapCompareSheet(d, s, U) {      // a suggested swap: the card out next to the card in (not the deck-vs-deck compareSheet below)
-  const all = [s.best, ...s.alts], c = s.cut;
+  const all = [s.best, ...s.alts], c = s.cut, st = upgState[d.id] || {};
+  // each option's impact, worked out now on a copy of the deck as it is; an option can't be applied while its bracket impact isn't known yet
+  const state = () => d.format !== "commander" ? "na" : BRK.lists && CMB.data ? "ok" : st.impErr ? "fail" : "pending";
+  const impHTML = () => { const base = upgImpactBase(d), stt = state(); return all.map((x, i) => `<div data-cimp="${i}">${upgImpactHTML(upgImpact(d, c.key, x.card, base), stt)}</div>`); };
   const col = (x, isCut) => { const st = x.st, incl = st && st.pot ? st.num / st.pot : null, al = isCut ? null : allocFor(x.card.name, d.id);
     return `<div class="cmpcol"><img src="${esc(x.card.imgN || x.card.img)}" alt=""><b>${esc(x.card.name)}</b>
       <div class="kv small"><span>Mana value</span><span class="num">${x.card.cmc || 0}${isCut ? "" : ` (${(x.card.cmc || 0) - (c.card.cmc || 0) >= 0 ? "+" : ""}${(x.card.cmc || 0) - (c.card.cmc || 0)})`}</span></div>
@@ -7898,8 +7964,14 @@ function swapCompareSheet(d, s, U) {      // a suggested swap: the card out next
   openSheet(`<h2>Compare</h2><p class="small muted">Replacing ${esc(c.card.name)}. Pick the option that suits your deck; the best match isn't right for every deck.</p>
     <div class="cmpgrid">${col(c, true)}${all.map(x => col(x, false)).join("")}</div>
     <div class="stack" style="gap:8px;margin-top:10px">${all.map((x, i) => { const ex = upgExplain({ cut: c, best: x, gaps: s.gaps, noCre: i === 0 && s.noCre }, U); return `<div class="box"><b>${esc(x.card.name)}</b><div class="small">${ex.plus.map(t => `<span class="up">+ ${esc(t)}</span>`).join("<br>")}${ex.minus.length ? "<br>" + ex.minus.map(t => `<span class="down">− ${esc(t)}</span>`).join("<br>") : ""}</div>
+      <div data-cslot="${i}"></div>
       <div class="row wrap" style="gap:6px;margin-top:6px"><button class="btn sm primary" data-cpick="${i}">Replace with this</button><button class="btn sm" data-cadd="${i}">Add without cutting</button></div></div>`; }).join("")}
-      <button class="btn ghost" id="cKeep">Keep ${esc(c.card.name)} (stop suggesting it)</button></div>`, () => { if (tab === "decks") renderDeck(d); });
+      <button class="btn ghost" id="cKeep">Keep ${esc(c.card.name)} (stop suggesting it)</button></div>`, () => { st.cmpRedraw = null; if (tab === "decks") renderDeck(d); });
+  // the impact lines, and the buttons held until the impact is known; drawn again when the bracket data arrives (or fails)
+  const fill = () => { const h = impHTML(), wait = state() === "pending";
+    document.querySelectorAll("[data-cslot]").forEach(e => e.innerHTML = h[+e.dataset.cslot]);
+    document.querySelectorAll("[data-cpick], [data-cadd]").forEach(b => { b.disabled = wait; b.title = wait ? "Checking this swap's impact first" : ""; }); };
+  fill(); st.cmpRedraw = () => { if (document.querySelector("[data-cslot]")) fill(); else st.cmpRedraw = null; };
   document.querySelectorAll("[data-cpick]").forEach(b => b.onclick = () => { const x = all[+b.dataset.cpick]; applyUpgrade(d, Object.assign({}, s, { best: x, group: upgGroup({ best: x }, d) }), "replace"); closeSheet(); });
   document.querySelectorAll("[data-cadd]").forEach(b => b.onclick = () => { const x = all[+b.dataset.cadd]; applyUpgrade(d, Object.assign({}, s, { best: x, group: upgGroup({ best: x }, d) }), "add"); closeSheet(); });
   $("#cKeep").onclick = () => { (d.upg.keep = d.upg.keep || []).push(c.card.name); upgLog(d, { text: `Keeping ${c.card.name}`, skip: true }); save(); closeSheet(); };
