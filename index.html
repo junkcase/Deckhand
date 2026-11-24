@@ -7516,6 +7516,23 @@ const pct0 = x => x == null ? "—" : Math.round(x * 100) + "%";
 const sgn = x => x == null ? "—" : (x >= 0 ? "+" : "") + Math.round(x * 100) + "%";
 // a candidate fits the deck: inside the commanders' colors, and legal in the deck's format (its saved legality)
 const upgEligible = (d, c, ci) => !(ci && (c.ci || []).some(x => !ci.includes(x))) && !(d.format !== "casual" && c.leg && c.leg[d.format] && c.leg[d.format] !== "l");
+// A candidate's price (Stage 2J-6). A lookup by name returns the newest printing, which often has no price yet (a new precon reprint
+// of a staple), so a card without one is looked up again for its cheapest priced printing. UPRICE holds that answer, null when no
+// printing has a price; it lasts for the visit. An unknown price is never taken as $0.
+const UPRICE = new Map(), priceKnown = v => v != null && !isNaN(v);
+const upgPrice = c => { const v = priceOf(c); return priceKnown(v) ? v : UPRICE.has(c.name) ? UPRICE.get(c.name) : null; };
+const upgPriceLooked = c => !priceKnown(priceOf(c)) && priceKnown(upgPrice(c));      // priced from its cheapest printing
+async function upgCheapest(names) {           // a few names per Scryfall search, each answered by its lowest-priced printing (prefer:usd-low)
+  const todo = [...new Set(names)].filter(n => !UPRICE.has(n));
+  for (let i = 0; i < todo.length;) {
+    let q = "", j = i; for (; j < todo.length && (!q || q.length + todo[j].length < 900); j++) q += (q ? " or " : "") + `!"${todo[j].replace(/"/g, "")}"`;
+    const batch = todo.slice(i, j); i = j;
+    try { let r = await sf(`/cards/search?q=${encodeURIComponent(`(${q}) prefer:usd-low`)}&unique=cards`), got = [...(r.data || [])];
+      while (r.has_more && r.next_page) { r = await sf(r.next_page); got.push(...(r.data || [])); }
+      for (const n of batch) { const c = got.find(x => x.name === n || x.name.split(" // ")[0] === n), v = c ? priceOf({ prices: c.prices }) : null; UPRICE.set(n, priceKnown(v) ? v : null); }
+    } catch (e) { for (const n of batch) if (!UPRICE.has(n)) UPRICE.set(n, null); }        // couldn't be looked up: unknown for this visit
+  }
+}
 // the candidate pool depends on the commanders' combined colors and the format, not only the first commander and theme
 const upgKey = d => deckCommanderName(d) + "|" + ((d.themes || [])[0] || null) + "|" + (deckCI(d) || []).join("") + "|" + d.format;
 async function upgradeData(d) {
@@ -7615,6 +7632,7 @@ function analyzeDeck(d, U, SC) {
   cuts.sort((a, b) => b.score - a.score || a.fit - b.fit);
   // pair each cut with the best card that does a similar job, at a similar cost, and fits better
   const inDeck = new Set(Object.values(d.cards).map(c => c.name)), used = new Set(), rej = new Set(up.rejected || []), swaps = [], ci = deckCI(d);
+  const cap = up.cap ?? null, capUnknown = new Set();          // the most you'd pay for one card (null: no limit), and cards skipped for having no price
   // options for every weak card first, then pair them up starting with the card that has the fewest
   // good options, so a like-for-like swap (ramp for ramp) isn't taken by a card that could use anything
   const plan = [];
@@ -7624,6 +7642,8 @@ function analyzeDeck(d, U, SC) {
     for (const [n, c] of U.meta) {
       if (inDeck.has(n) || used.has(n) || rej.has(cut.card.name + "→" + n) || typeOf(c.type) === "Land") continue;
       if (!upgEligible(d, c, ci)) continue;                 // the same check as the pool, against the deck as it is now
+      // a card to buy is suggested only when its price is known and within the cap; a card you own always passes
+      if (cap != null && !(allocFor(n, d.id).own > 0)) { const v = upgPrice(c); if (v == null) { capUnknown.add(n); continue; } if (v > cap) continue; }
       const roles = rolesOf(c), share = fn.filter(r => roles.includes(r));
       const fillsGap = roles.some(r => gaps.low.includes(r));
       if (fn.length ? !share.length && !fillsGap : isCre ? !roles.includes("Creature") && !fillsGap : false) continue;
@@ -7660,7 +7680,7 @@ function analyzeDeck(d, U, SC) {
   if (U.theme && U.tstat.size) { const n = deckCards.filter(([, c]) => U.tstat.has(c.name)).length; if (n < 15) weak.push(`Only ${n} cards that show up in ${U.theme} decks on EDHREC, so the theme may not come together often.`); }
   const off = cuts.filter(c => c.why.some(w => /Not among|No clear job/.test(w))).length;
   if (off >= 8) weak.push(`${off} cards don't show up in ${U.cmd || "this commander"}'s EDHREC data or have no clear job. They may not be pulling their weight.`);
-  return { gaps, health, cuts, swaps, weak };
+  return { gaps, health, cuts, swaps, weak, capUnknown };
 }
 function upgExplain(sw, U) {
   const c = sw.cut, b = sw.best, plus = [], minus = [];
@@ -7678,7 +7698,7 @@ function upgExplain(sw, U) {
   const al = allocFor(b.card.name, null);
   if (al.own && (shareCopies() || al.free)) plus.push(`You own ${al.own === 1 ? "a copy" : al.own + " copies"}${al.other ? ` (also used in ${al.where.map(w => w.name).join(", ")})` : ""}`);
   else if (al.own) minus.push(`Your copy is in ${al.where.map(w => w.name).join(", ")}`);
-  else minus.push(`You'd need to buy it (${money(priceOf(b.card))})`);
+  else minus.push(`You'd need to buy it (${money(upgPrice(b.card))})`);
   if (bIn != null && cIn != null && bIn < cIn) minus.push(`Fewer ${U.cmd} decks play it than the card it replaces`);
   return { plus, minus };
 }
@@ -7741,8 +7761,11 @@ async function drawUpgrade(d) {
   const key = upgKey(d);
   if (!st.U || st.U.key !== key) { el.innerHTML = `<p class="small muted">Looking at your deck…</p>`; st.U = await upgradeData(d); if ($("#dPane") !== el) return; }
   // the rules text the strategy check needs: while it loads, the tab shows everything but the swaps, then draws again
-  const need = [...Object.values(d.cards).filter(c => !c.side), ...st.U.meta.values()].map(c => c.name).filter(n => !OPT.text.has(n) && !OPT.failed.has(n)), pending = need.length > 0;
-  if (pending && !st.texts) st.texts = optTexts(need).catch(() => {}).finally(() => { st.texts = null;
+  const need = [...Object.values(d.cards).filter(c => !c.side), ...st.U.meta.values()].map(c => c.name).filter(n => !OPT.text.has(n) && !OPT.failed.has(n));
+  const unpriced = [...st.U.meta.values()].filter(c => !priceKnown(priceOf(c)) && !UPRICE.has(c.name)).map(c => c.name), pending = need.length > 0 || unpriced.length > 0;
+  if (unpriced.length && !st.prices) st.prices = upgCheapest(unpriced).catch(() => {}).finally(() => { st.prices = null;
+    if ($("#dPane") && tab === "decks" && deckOpen === d.id && deckTab[d.id] === "upgrade" && upgMode[d.id] !== "analyze") drawUpgrade(d); });
+  if (need.length && !st.texts) st.texts = optTexts(need).catch(() => {}).finally(() => { st.texts = null;
     if ($("#dPane") && tab === "decks" && deckOpen === d.id && deckTab[d.id] === "upgrade" && upgMode[d.id] !== "analyze") drawUpgrade(d); });
   let SC = null; if (!pending) { try { SC = await upgStrategy(d, st.U); } catch (e) { SC = null; } if ($("#dPane") !== el) return; }     // redrawn meanwhile
   const U = st.U, A = analyzeDeck(d, U, SC), ds = deckStats(d), miss = SC ? SC.missDeck + SC.missCand : 0, cnt = (v, w) => `${v} ${w}${v === 1 ? "" : "s"}`;
@@ -7756,8 +7779,9 @@ async function drawUpgrade(d) {
     : SC.off ? `Strategy couldn't be checked: the rules text of ${cnt(SC.missDeck, "card")} in this deck couldn't be loaded from Scryfall, so these suggestions don't take the deck's strategies into account.`
     : miss ? `Strategy wasn't checked for ${cnt(miss, "card")} (${SC.missDeck} in this deck, ${SC.missCand} suggested): ${miss === 1 ? "its" : "their"} rules text couldn't be loaded from Scryfall, so ${miss === 1 ? "it is" : "they are"} judged without ${miss === 1 ? "its" : "their"} strategy.` : "";
   if (!d.upg.base && !pending) { d.upg.base = upgSnapshot(d, U, A); save(); }
-  const budget = d.upg.budget ?? null, swaps = A.swaps.filter(s => !(d.upg.later || []).some(x => x.cut === s.cut.card.name && x.add === s.best.card.name));
-  swaps.forEach(s => { s.gaps = A.gaps.low; s.group = upgGroup(s, d); s.price = s.group === "buy" ? priceOf(s.best.card) : 0; s.diff = (priceOf(s.best.card) || 0) - (priceOf(s.cut.card) || 0); });
+  const budget = d.upg.budget ?? null, cap = d.upg.cap ?? null, swaps = A.swaps.filter(s => !(d.upg.later || []).some(x => x.cut === s.cut.card.name && x.add === s.best.card.name));
+  // the price to buy (unknown: null, never $0), and the difference from the card going out only when both prices are known
+  swaps.forEach(s => { s.gaps = A.gaps.low; s.group = upgGroup(s, d); s.price = s.group === "buy" ? upgPrice(s.best.card) : 0; const pb = upgPrice(s.best.card), pc = priceOf(s.cut.card); s.diff = priceKnown(pb) && priceKnown(pc) ? pb - pc : null; });
   // budget: owned upgrades cost nothing; buys picked by improvement per dollar until the budget runs out
   const perDollar = s => s.best.gain / Math.max(0.25, s.price);                    // improvement per dollar
   const buys = swaps.filter(s => s.group === "buy" && s.price != null).sort((a, b) => perDollar(b) - perDollar(a));
@@ -7765,15 +7789,15 @@ async function drawUpgrade(d) {
   for (const s of buys) if (budget == null || spent + s.price <= budget + 1e-9) { within.add(s); spent += s.price; }
   const H = A.health, avgSyn = H.syn.length ? H.syn.reduce((a, b) => a + b, 0) / H.syn.length : null;
   const groups = [["free", "You own it", "Cards in your collection with a copy free for this deck."], ["other", "You own it, but it's in another deck", "Replacing won't touch the other deck unless you choose to move the copy."], ["buy", "To buy", budget == null ? "No budget set." : `Within your ${money(budget)} budget: ${within.size} upgrade${within.size === 1 ? "" : "s"}, ${money(spent)} total, ${money(budget - spent)} left.`]];
-  const swapRow = (s, i) => { const c = s.cut.card, b = s.best.card, ex = upgExplain(s, U), over = s.group === "buy" && !within.has(s);
+  const swapRow = (s, i) => { const c = s.cut.card, b = s.best.card, ex = upgExplain(s, U), over = s.group === "buy" && s.price != null && !within.has(s), unk = s.group === "buy" && s.price == null;
     return `<div class="swap ${over ? "over" : ""}">
       <div class="swapcards"><button class="sc" data-sinfo="${i}|c"><img loading="lazy" src="${esc(c.img)}" alt=""><span><b>${esc(c.name)}</b><br><span class="small muted">${c.cmc || 0} mana · ${esc(typeOf(c.type))}${s.cut.roles.filter(r => r !== "Creature").length ? " · " + esc(s.cut.roles.filter(r => r !== "Creature").join(", ")) : ""}</span></span></button>
         <span class="arrow">→</span>
-        <button class="sc" data-sinfo="${i}|b"><img loading="lazy" src="${esc(b.img)}" alt=""><span><b>${esc(b.name)}</b><br><span class="small muted">${b.cmc || 0} mana · ${esc(typeOf(b.type))}${s.best.roles.filter(r => r !== "Creature").length ? " · " + esc(s.best.roles.filter(r => r !== "Creature").join(", ")) : ""} · ${money(priceOf(b))}${s.diff ? ` (${s.diff > 0 ? "+" : "−"}${money(Math.abs(s.diff))})` : ""}</span></span></button></div>
+        <button class="sc" data-sinfo="${i}|b"><img loading="lazy" src="${esc(b.img)}" alt=""><span><b>${esc(b.name)}</b><br><span class="small muted">${b.cmc || 0} mana · ${esc(typeOf(b.type))}${s.best.roles.filter(r => r !== "Creature").length ? " · " + esc(s.best.roles.filter(r => r !== "Creature").join(", ")) : ""} · ${money(upgPrice(b))}${upgPriceLooked(b) ? ", cheapest printing" : ""}${s.diff ? ` (${s.diff > 0 ? "+" : "−"}${money(Math.abs(s.diff))})` : ""}</span></span></button></div>
       <div class="small"><span class="muted">Why cut:</span> ${s.cut.why.map(esc).join("; ")}.</div>
       <div class="small">${ex.plus.map(x => `<span class="up">+ ${esc(x)}</span>`).join("<br>")}${ex.minus.length ? "<br>" + ex.minus.map(x => `<span class="down">− ${esc(x)}</span>`).join("<br>") : ""}</div>
       ${upgImpactHTML(impact(s.cut, s.best), impState)}
-      ${over ? `<div class="small gold">Over your budget</div>` : ""}
+      ${over ? `<div class="small gold">Over your budget</div>` : unk ? `<div class="small muted">Price unknown</div>` : ""}
       <div class="row wrap" style="gap:6px"><button class="btn sm primary" data-srep="${i}">Replace</button><button class="btn sm" data-sadd="${i}">Add without cutting</button><button class="btn sm" data-scmp="${i}">Compare${s.alts.length ? " & other options" : ""}</button><button class="btn sm ghost" data-slater="${i}">Later</button><button class="btn sm ghost" data-sno="${i}">Skip</button></div>
       <div class="confirm" id="sconf-${i}" hidden></div></div>`; };
   const hist = (d.history || []).slice().reverse();
@@ -7793,11 +7817,14 @@ async function drawUpgrade(d) {
     <div class="box stack" style="gap:8px"><span class="label">Upgrades</span>
       <div class="row wrap" style="gap:6px"><span class="small">Budget for cards to buy</span><span class="seg" id="uBud">${[10, 25, 50, 100].map(v => `<button data-b="${v}" aria-pressed="${budget === v}">$${v}</button>`).join("")}<button data-b="" aria-pressed="${budget == null}">Any</button></span>
       <input type="number" id="uBudC" min="0" step="1" placeholder="Other $" style="width:100px" value="${budget != null && ![10, 25, 50, 100].includes(budget) ? budget : ""}"></div>
+      <div class="row wrap" style="gap:6px"><span class="small">Max per card</span><span class="seg" id="uCap">${[2, 5, 10, 20].map(v => `<button data-c="${v}" aria-pressed="${cap === v}">$${v}</button>`).join("")}<button data-c="" aria-pressed="${cap == null}">Any</button></span>
+      <input type="number" id="uCapC" min="0" step="0.5" placeholder="Other $" style="width:100px" value="${cap != null && ![2, 5, 10, 20].includes(cap) ? cap : ""}"></div>
+      ${cap != null && !pending ? `<p class="small muted" id="uCapNote" style="margin:0">Cards to buy are suggested only up to ${money(cap)} each; cards you own are always suggested.${A.capUnknown.size ? ` ${A.capUnknown.size} card${A.capUnknown.size === 1 ? " was" : "s were"} skipped because no price could be found.` : ""}</p>` : ""}
       <span class="small muted">Prices are TCGplayer market prices from Scryfall${S.meta.pricedAt ? `, updated ${esc(dayLabel(S.meta.pricedAt))}` : ""}. Cards you own count as free.</span>
       ${U.src !== "EDHREC" ? `<p class="small gold" id="uSource" style="margin:0">${U.cmd ? "Suggested from cards popular in these colors, not with this commander." : U.ci ? "Suggested from cards popular in these colors." : "Suggested from cards popular in Commander decks generally."}</p>` : ""}
       ${stratLine ? `<p class="small gold" id="uStrat" style="margin:0">${esc(stratLine)}</p>` : ""}
       ${impState === "na" ? "" : `<p class="small ${impState === "fail" ? "gold" : "muted"}" id="uImpact" style="margin:0">${impState === "pending" ? "Checking each swap's bracket impact…" : impState === "fail" ? "Bracket impact couldn't be checked: the Game Changers list or the combo list didn't load. Each swap still says whether it adds a legality problem." : "Each swap says whether it adds a legality problem, and mentions the bracket only when it changes the deck's bracket evidence."}</p>`}
-      ${pending ? `<p class="small muted" id="uPending" style="margin:0">Checking the deck's strategies…</p>` : swaps.length ? groups.map(([g, title, sub]) => { const list = swaps.map((s, i) => [s, i]).filter(([s]) => s.group === g); return list.length ? `<div class="group-h"><span>${title}</span><span class="num">${list.length}</span></div><p class="small muted" style="margin:2px 0 6px">${esc(sub)}</p>${list.map(([s, i]) => swapRow(s, i)).join("")}` : ""; }).join("")
+      ${pending ? `<p class="small muted" id="uPending" style="margin:0">${need.length ? "Checking the deck's strategies…" : "Looking up prices…"}</p>` : swaps.length ? groups.map(([g, title, sub]) => { const list = swaps.map((s, i) => [s, i]).filter(([s]) => s.group === g); return list.length ? `<div class="group-h"><span>${title}</span><span class="num">${list.length}</span></div><p class="small muted" style="margin:2px 0 6px">${esc(sub)}</p>${list.map(([s, i]) => swapRow(s, i)).join("")}` : ""; }).join("")
         : `<p class="small">${A.cuts.length ? "No better-fitting replacements found for the weaker cards right now." : "No cards stand out as weak spots."}</p>`}
     </div>
     ${(d.upg.later || []).length ? `<details class="box"><summary class="label">Saved for later (${d.upg.later.length})</summary><div class="list">${d.upg.later.map((x, i) => `<div class="item"><div class="tap" style="cursor:default"><div class="name">${esc(x.cut)} → ${esc(x.add)}</div><div class="meta small muted">saved ${esc(dayLabel(x.at))}</div></div><div class="right"><button class="btn sm" data-lback="${i}">Show again</button></div></div>`).join("")}</div></details>` : ""}
@@ -7811,6 +7838,8 @@ async function drawUpgrade(d) {
   const S_ = i => swaps[+i];
   $("#uBud").onclick = e => { const b = e.target.closest("button"); if (!b) return; d.upg.budget = b.dataset.b === "" ? null : +b.dataset.b; save(); drawUpgrade(d); };
   $("#uBudC").onchange = e => { const v = parseFloat(e.target.value); d.upg.budget = isNaN(v) ? null : v; save(); drawUpgrade(d); };
+  $("#uCap").onclick = e => { const b = e.target.closest("button"); if (!b) return; d.upg.cap = b.dataset.c === "" ? null : +b.dataset.c; save(); drawUpgrade(d); };
+  $("#uCapC").onchange = e => { const v = parseFloat(e.target.value); d.upg.cap = isNaN(v) || v < 0 ? null : v; save(); drawUpgrade(d); };
   el.querySelectorAll("[data-srep]").forEach(b => b.onclick = () => upgConfirm(d, S_(b.dataset.srep), +b.dataset.srep, "replace"));
   el.querySelectorAll("[data-sadd]").forEach(b => b.onclick = () => { applyUpgrade(d, S_(b.dataset.sadd), "add"); drawUpgrade(d); });
   el.querySelectorAll("[data-scmp]").forEach(b => b.onclick = () => swapCompareSheet(d, S_(b.dataset.scmp), U));      // each option's impact is worked out when Compare opens
