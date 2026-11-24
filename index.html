@@ -6280,8 +6280,9 @@ async function loadRecs(d, which) {
     try { const cards = await scryfallTop(q.trim() || "f:commander", 80); names = cards.map(c => c.name); for (const c of cards) cacheSlim(slim(c)); } catch (e) { res.note = "Couldn't load suggestions: " + e.message; return res; }
   }
   // card details (picture, cost, type, colors, price, legality) from Scryfall, cached on the device
-  const inDeck = new Set(Object.values(d.cards).map(c => c.name));
-  names = names.filter(n => !inDeck.has(n)).slice(0, 75);                        // one Scryfall request
+  // EDHREC names a two-faced card (modal, adventure, split) by its front face; the deck keeps Scryfall's full "Front // Back" name
+  const inDeck = new Set(Object.values(d.cards).flatMap(c => [c.name, c.name.split(" // ")[0]]));
+  names = names.filter(n => !inDeck.has(n) && !inDeck.has(n.split(" // ")[0])).slice(0, 75);                        // one Scryfall request
   const got = await lookupCards(names.map(n => ({ name: n }))).catch(() => ({}));
   const gaps = deckGaps(d), curveN = deckStats(d).curve;
   for (const n of names) {
