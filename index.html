@@ -7935,7 +7935,8 @@ const twoCardAll = d => CMB.data ? deckCombos(d, CMB.data).included.filter(o => 
 const twoCardCombos = d => { const a = twoCardAll(d); return a && a.filter(o => !o.needs.length && o.gives.some(comboWins)); };
 const twoCardOther = d => { const a = twoCardAll(d); return a && a.filter(o => o.needs.length || !o.gives.some(comboWins)); };
 function applyUpgrade(d, s, how, moveFrom) {
-  const h = { text: "", price: s.group === "buy" ? priceOf(s.best.card) : 0, cut: s.cut.card.name, add: s.best.card.name };
+  // what was paid: the price shown for it (its cheapest printing when that's where the price came from); unknown stays null, never $0; owned cards are $0
+  const h = { text: "", price: s.group === "buy" ? upgPrice(s.best.card) : 0, cut: s.cut.card.name, add: s.best.card.name };
   if (how === "replace") {
     const k = s.cut.key, c = d.cards[k]; if (!c) return;
     h.out = { key: k, card: Object.assign({}, c, { qty: 1 }) };
@@ -7965,14 +7966,16 @@ function upgReport(d, U, A) {
   const b = d.upg.base; if (!b) return "";
   const now = upgSnapshot(d, U, A), since = (d.history || []).slice(d.upg.baseHist || 0).filter(h => h.at >= b.at);
   const acc = since.filter(h => (h.out || h.in) && !h.undone), rej = since.filter(h => h.skip);
-  const cost = acc.reduce((a, h) => a + (h.price || 0), 0);
+  // a change saves price 0 for a card you owned and null for one bought at an unknown price: those are counted apart, never as $0
+  const cost = acc.reduce((a, h) => a + (priceKnown(h.price) ? h.price : 0), 0), unk = acc.filter(h => !priceKnown(h.price)).length, paid = acc.some(h => priceKnown(h.price) && h.price > 0);
+  const unkTxt = unk ? `${unk} with an unknown price` : "", buyTxt = !unk ? `cards to buy ${money(cost)}` : paid ? `cards to buy ${money(cost)}, plus ${unkTxt}` : `cards to buy: ${unkTxt}`;
   const rows = (A.gaps.ranges || []).map(([r]) => r).filter(r => (b.n[r] || 0) !== (now.n[r] || 0) || ["Ramp", "Card draw", "Removal", "Board wipe", "Land"].includes(r));
-  return `<div class="small"><b>Since ${esc(dayLabel(b.at))}</b> · ${acc.length} change${acc.length === 1 ? "" : "s"} made, ${rej.length} skipped · cards to buy ${money(cost)}</div>
+  return `<div class="small"><b>Since ${esc(dayLabel(b.at))}</b> · ${acc.length} change${acc.length === 1 ? "" : "s"} made, ${rej.length} skipped · ${buyTxt}</div>
     ${rows.length ? `<div class="baltable" style="margin-top:6px"><div class="balrow head small muted"><span>Role</span><span>Before</span><span>Now</span><span></span><span></span></div>${rows.map(r => `<div class="balrow"><span class="bn">${esc(r)}</span><span class="num">${b.n[r] || 0}</span><b class="num">${now.n[r] || 0}</b><span class="small ${(now.n[r] || 0) > (b.n[r] || 0) ? "up" : (now.n[r] || 0) < (b.n[r] || 0) ? "down" : "muted"}">${(now.n[r] || 0) - (b.n[r] || 0) ? ((now.n[r] || 0) - (b.n[r] || 0) > 0 ? "+" : "") + ((now.n[r] || 0) - (b.n[r] || 0)) : ""}</span><span></span></div>`).join("")}</div>` : ""}
     <div class="small" style="margin-top:6px">Average mana value ${b.avg.toFixed(2)} → ${now.avg.toFixed(2)} · value ${money(b.value)} → ${money(now.value)}${b.syn != null && now.syn != null ? ` · average synergy with ${esc(U.cmd || "")} ${sgn(b.syn)} → ${sgn(now.syn)}` : ""}${b.inData != null && U.cmd ? ` · cards in ${esc(U.cmd)}'s EDHREC data ${b.inData} → ${now.inData}` : ""}</div>
     <div class="small" style="margin-top:4px">Mana curve (0 to 7+): ${b.curve.join(" ")} → ${now.curve.join(" ")}</div>
     ${b.weak.length ? `<div class="small" style="margin-top:4px">Weak spots at the start: ${b.weak.length}; now: ${now.weak.length}.</div>` : ""}
-    ${acc.length ? `<div class="small" style="margin-top:4px"><b>Changes:</b><br>${acc.map(h => esc(h.text) + (h.price ? ` (${money(h.price)})` : "")).join("<br>")}</div>` : ""}
+    ${acc.length ? `<div class="small" style="margin-top:4px"><b>Changes:</b><br>${acc.map(h => esc(h.text) + (!priceKnown(h.price) ? " (price unknown)" : h.price ? ` (${money(h.price)})` : "")).join("<br>")}</div>` : ""}
     ${rej.length ? `<div class="small" style="margin-top:4px"><b>Skipped:</b><br>${rej.map(h => esc(h.text.replace(/^Skipped: /, ""))).join("<br>")}</div>` : ""}`;
 }
 function swapCompareSheet(d, s, U) {      // a suggested swap: the card out next to the card in (not the deck-vs-deck compareSheet below)
@@ -7981,6 +7984,8 @@ function swapCompareSheet(d, s, U) {      // a suggested swap: the card out next
   const state = () => d.format !== "commander" ? "na" : BRK.lists && CMB.data ? "ok" : st.impErr ? "fail" : "pending";
   const impHTML = () => { const base = upgImpactBase(d), stt = state(); return all.map((x, i) => `<div data-cimp="${i}">${upgImpactHTML(upgImpact(d, c.key, x.card, base), stt)}</div>`); };
   const col = (x, isCut) => { const st = x.st, incl = st && st.pot ? st.num / st.pot : null, al = isCut ? null : allocFor(x.card.name, d.id);
+    // an option's price as the swap row shows it (its cheapest printing's when that's where it came from); the difference only when both prices are known
+    const pr = isCut ? priceOf(x.card) : upgPrice(x.card), pc = priceOf(c.card), dif = !isCut && priceKnown(pr) && priceKnown(pc) ? pr - pc : null;
     return `<div class="cmpcol"><img src="${esc(x.card.imgN || x.card.img)}" alt=""><b>${esc(x.card.name)}</b>
       <div class="kv small"><span>Mana value</span><span class="num">${x.card.cmc || 0}${isCut ? "" : ` (${(x.card.cmc || 0) - (c.card.cmc || 0) >= 0 ? "+" : ""}${(x.card.cmc || 0) - (c.card.cmc || 0)})`}</span></div>
       <div class="kv small"><span>Colors</span><span>${ciPips(x.card.ci)}</span></div>
@@ -7989,7 +7994,7 @@ function swapCompareSheet(d, s, U) {      // a suggested swap: the card out next
       <div class="kv small"><span>Synergy</span><span class="num">${sgn(st ? st.syn : null)}</span></div>
       <div class="kv small"><span>In ${esc(U.cmd || "")} decks</span><span class="num">${pct0(incl)}</span></div>
       ${U.theme ? `<div class="kv small"><span>In ${esc(U.theme)} decks</span><span class="num">${pct0(U.tstat.size ? U.tstat.get(x.card.name) || 0 : null)}</span></div>` : ""}
-      <div class="kv small"><span>Price</span><span class="num">${money(priceOf(x.card))}${isCut ? "" : ` (${(priceOf(x.card) || 0) - (priceOf(c.card) || 0) >= 0 ? "+" : "−"}${money(Math.abs((priceOf(x.card) || 0) - (priceOf(c.card) || 0)))})`}</span></div>
+      <div class="kv small"><span>Price</span><span class="num">${money(pr)}${!isCut && upgPriceLooked(x.card) ? ", cheapest printing" : ""}${dif != null ? ` (${dif >= 0 ? "+" : "−"}${money(Math.abs(dif))})` : ""}</span></div>
       <div class="kv small"><span>Yours</span><span>${isCut ? "in this deck" : al.own ? (shareCopies() || al.free ? `own ${al.own}` : `own ${al.own}, in ${esc(al.where.map(w => w.name).join(", "))}`) : "not owned"}</span></div></div>`; };
   openSheet(`<h2>Compare</h2><p class="small muted">Replacing ${esc(c.card.name)}. Pick the option that suits your deck; the best match isn't right for every deck.</p>
     <div class="cmpgrid">${col(c, true)}${all.map(x => col(x, false)).join("")}</div>
