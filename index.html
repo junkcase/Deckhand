@@ -7759,6 +7759,13 @@ function upgImpactLines(I, state) {
   return out;
 }
 const upgImpactHTML = (I, state) => `<div class="small upgimp"><span class="muted">If replaced:</span><br>${upgImpactLines(I, state).map(([t, k]) => `<span class="${k}">${esc(t)}</span>`).join("<br>")}</div>`;
+// the Upgrade tab drawn again when card text, prices or bracket data arrive. While you're typing in it (a custom amount), it waits until
+// you leave the box: redrawing would replace the box, and the browser would take what's in it so far as entered. The view is then drawn
+// whole (render), which also covers any other update that was waiting for you to leave the box.
+function upgRedraw(d) {
+  if (!($("#dPane") && tab === "decks" && deckOpen === d.id && deckTab[d.id] === "upgrade" && upgMode[d.id] !== "analyze")) return;
+  if (typingIn()) whenNotTyping(() => render()); else drawUpgrade(d);
+}
 async function drawUpgrade(d) {
   const el = $("#dPane"); if (!el) return;
   if (upgMode[d.id] === "analyze") return drawAnalyzer(d);                 // the Top 50 analyzer view of this tab
@@ -7772,15 +7779,13 @@ async function drawUpgrade(d) {
   // being looked up can't pass the cap; with no cap the swaps show now and the prices fill in when the lookup is done
   const tNow = Date.now(), unpriced = [...st.U.meta.values()].filter(c => !priceKnown(priceOf(c)) && !UPRICE.has(c.name) && !(UPFAIL.has(c.name) && tNow - UPFAIL.get(c.name) < UPRETRY)).map(c => c.name);
   const pricing = unpriced.length > 0, lookingUp = new Set(unpriced), pending = need.length > 0 || (pricing && (d.upg.cap ?? null) != null);
-  if (unpriced.length && !st.prices) st.prices = upgCheapest(unpriced).catch(() => {}).finally(() => { st.prices = null;
-    if ($("#dPane") && tab === "decks" && deckOpen === d.id && deckTab[d.id] === "upgrade" && upgMode[d.id] !== "analyze") drawUpgrade(d); });
-  if (need.length && !st.texts) st.texts = optTexts(need).catch(() => {}).finally(() => { st.texts = null;
-    if ($("#dPane") && tab === "decks" && deckOpen === d.id && deckTab[d.id] === "upgrade" && upgMode[d.id] !== "analyze") drawUpgrade(d); });
+  if (unpriced.length && !st.prices) st.prices = upgCheapest(unpriced).catch(() => {}).finally(() => { st.prices = null; upgRedraw(d); });
+  if (need.length && !st.texts) st.texts = optTexts(need).catch(() => {}).finally(() => { st.texts = null; upgRedraw(d); });
   let SC = null; if (!pending) { try { SC = await upgStrategy(d, st.U); } catch (e) { SC = null; } if ($("#dPane") !== el) return; }     // redrawn meanwhile
   const U = st.U, A = analyzeDeck(d, U, SC), ds = deckStats(d), miss = SC ? SC.missDeck + SC.missCand : 0, cnt = (v, w) => `${v} ${w}${v === 1 ? "" : "s"}`;
   // the bracket lists and the combo list, for each swap's bracket impact: loaded once, then the tab draws again (also when they fail)
   if (d.format === "commander" && (!BRK.lists || !CMB.data) && !st.impLoad && !st.impErr) st.impLoad = Promise.all([bracketLists(), comboData()]).then(() => { st.impErr = null; }, e => { st.impErr = (e && e.message) || "failed"; })
-    .finally(() => { st.impLoad = null; if (st.cmpRedraw) st.cmpRedraw(); if ($("#dPane") && tab === "decks" && deckOpen === d.id && deckTab[d.id] === "upgrade" && upgMode[d.id] !== "analyze") drawUpgrade(d); });
+    .finally(() => { st.impLoad = null; if (st.cmpRedraw) st.cmpRedraw(); upgRedraw(d); });
   const impState = d.format !== "commander" ? "na" : BRK.lists && CMB.data ? "ok" : st.impErr ? "fail" : "pending";
   const impBase = upgImpactBase(d), impact = (cut, o) => upgImpact(d, cut.key, o.card, impBase);
   // one line: whether strategy was checked, and for how many cards it couldn't be
@@ -7861,6 +7866,9 @@ async function drawUpgrade(d) {
   $("#uSaveRep").onclick = () => { (d.upg.reports = d.upg.reports || []).push({ at: Date.now(), html: $("#uReport").innerHTML }); save(); toast("Report saved with the deck"); drawUpgrade(d); };
   $("#uNewRep").onclick = () => { d.upg.base = upgSnapshot(d, U, A); d.upg.baseHist = (d.history || []).length; save(); drawUpgrade(d); };
   el.querySelectorAll("[data-rep]").forEach(b => b.onclick = () => openSheet(`<h2>Upgrade report</h2><p class="small muted">${esc(dayLabel(d.upg.reports[+b.dataset.rep].at))}</p>${d.upg.reports[+b.dataset.rep].html}`));
+  // leaving an amount box by tapping elsewhere enters it and draws the tab before the box's focusout reaches the page, so an update that
+  // was waiting for you to leave the box (see upgRedraw) is run from here, as the focusout listener would
+  if (typingWait && !typingIn()) setTimeout(() => { if (typingWait && !typingIn()) { const f = typingWait; typingWait = null; f(); } }, 120);
 }
 function upgConfirm(d, s, i, how) {
   const box = $("#sconf-" + i); if (!box) return;
