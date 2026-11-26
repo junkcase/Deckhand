@@ -72,7 +72,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const tabAgain = async p => { await p.click('#dTabs [data-t="cards"]'); await p.waitForTimeout(300); await p.click('#dTabs [data-t="upgrade"]'); await settled(p); };
   const backdate = p => p.evaluate(() => { for (const [n, t] of UPFAIL) UPFAIL.set(n, t - 31000); });        // as if 31 s had passed since the failure
   const NOTE5 = "Cards to buy are suggested only up to $5.00 each; cards you own are always suggested.";
-  const FAILED = n => ` ${n} card${n === 1 ? "" : "s"} couldn't be priced because the price lookup on Scryfall failed; ${n === 1 ? "it" : "they"}'ll be checked again when you reopen this tab after about 30 seconds.`;
+  // the cap note (Stage 2K-4 wording): it counts only cards that would be suggested with no cap; Cyclonic Rift ($41.55) is over the $5 cap
+  const OVER = " 1 suggestion exceeded your $5.00 cap", NOPRICE = "1 otherwise-eligible suggestion had no available price";
+  const FAILED = n => ` ${n} otherwise-eligible suggestion${n === 1 ? "" : "s"} couldn't be priced because the price lookup on Scryfall failed; ${n === 1 ? "it" : "they"}'ll be checked again when you reopen this tab after about 30 seconds.`;
   try {
     // 1. a successful lookup: one search; the price is kept for the session (reopening the tab, a second deck, changing the cap: no more searches)
     { const { p, errs, M, context } = await open(null);
@@ -87,7 +89,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       // 2. a genuine "no price" is not a failure: it isn't looked up again, even after 30 s, and is described as no price
       await backdate(p); await p.click(`#uCap [data-c="5"]`); await settled(p); await tabAgain(p);
       s = await state(p);
-      ok(M.log.length === 1 && s.note === NOTE5 + " 1 card was skipped because no price could be found.", `Generous Gift (no priced printing): not looked up again; under a $5 cap: “${s.note}”`);
+      ok(M.log.length === 1 && s.note === NOTE5 + OVER + "; " + NOPRICE + ".", `Generous Gift (no priced printing): not looked up again; under a $5 cap: “${s.note}”`);
       ok(!errs.length, "no errors" + (errs.length ? ": " + errs[0] : "")); await context.close(); }
 
     // 3. Scryfall fails (HTTP 500, three tries), $5 cap: kept apart from "no price", no card gets through, then recovery once 30 s have passed
@@ -97,14 +99,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       ok(M.log.length === 3, `a failing search is tried three times in all (${M.log.length})`);
       ok(s.upr["Thran Dynamo"] === "absent" && s.upr["Generous Gift"] === "absent" && s.fail.length === 2, `the failure isn't stored as "no price": both names are kept apart as failed (${JSON.stringify(s)})`);
       ok(!s.swaps.some(x => x.add === "Thran Dynamo") && s.swaps.some(x => x.add === "Pongify"), `under the cap a card whose lookup failed isn't suggested; a priced card is (${s.swaps.map(x => x.add)})`);
-      ok(s.note === NOTE5 + FAILED(2), `the note says the lookup failed, not that no price exists: “${s.note}”`);
+      ok(s.note === NOTE5 + OVER + "." + FAILED(2), `the note says the lookup failed, not that no price exists: “${s.note}”`);
       M.mode = "ok"; await tabAgain(p);
       s = await state(p);
-      ok(M.log.length === 3 && s.note === NOTE5 + FAILED(2), `Scryfall is back, the tab reopened within 30 s: not looked up yet (${M.log.length} searches)`);
+      ok(M.log.length === 3 && s.note === NOTE5 + OVER + "." + FAILED(2), `Scryfall is back, the tab reopened within 30 s: not looked up yet (${M.log.length} searches)`);
       await backdate(p); await tabAgain(p);
       s = await state(p);
       ok(M.log.length === 4 && s.upr["Thran Dynamo"] === 1.95 && s.upr["Generous Gift"] === null && !s.fail.length, `reopened 30 s after the failure: looked up again, once (${M.log.length} searches; ${JSON.stringify(s.upr)})`);
-      ok(s.swaps.some(x => x.add === "Thran Dynamo" && /\$1\.95, cheapest printing/.test(x.price)) && s.note === NOTE5 + " 1 card was skipped because no price could be found.", `Thran Dynamo ($1.95) is suggested again; Generous Gift is now known to have no price: “${s.note}”`);
+      ok(s.swaps.some(x => x.add === "Thran Dynamo" && /\$1\.95, cheapest printing/.test(x.price)) && s.note === NOTE5 + OVER + "; " + NOPRICE + ".", `Thran Dynamo ($1.95) is suggested again; Generous Gift is now known to have no price: “${s.note}”`);
       ok(!errs.length, "no errors" + (errs.length ? ": " + errs[0] : "")); await context.close(); }
 
     // 4. network failure (connection reset, three tries), cap Any: the swaps show; the row says the price couldn't be checked (never $0, never over budget)
@@ -119,7 +121,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     { const { p, errs, M, context } = await open({ cap: 5 });
       M.mode = "abort"; await context.setOffline(true); await p.click('#dTabs [data-t="upgrade"]'); await settled(p);
       const s = await state(p);
-      ok(M.log.length === 1 && s.fail.length === 2 && s.upr["Thran Dynamo"] === "absent" && s.note === NOTE5 + FAILED(2), `offline: one try, kept apart as failed: “${s.note}”`);
+      ok(M.log.length === 1 && s.fail.length === 2 && s.upr["Thran Dynamo"] === "absent" && s.note === NOTE5 + OVER + "." + FAILED(2), `offline: one try, kept apart as failed: “${s.note}”`);
       await context.setOffline(false); ok(!errs.length, "no errors" + (errs.length ? ": " + errs[0] : "")); await context.close(); }
 
     // 6. an answer that can't be read (a Wi-Fi sign-in page) and a rate limit (429): one try each, kept apart as failed
@@ -135,7 +137,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       ok(!(await p.$(".swap")), "while the search hangs under a cap, no swap is shown");
       await settled(p); const ms = Date.now() - t0, s = await state(p);
       ok(M.log.length === 3 && ms > 20000 && ms < 40000, `the stalled search was given up after 8 s, three times, ${Math.round(ms / 1000)} s in all (not left hanging)`);
-      ok(s.note === NOTE5 + FAILED(2) && !s.swaps.some(x => x.add === "Thran Dynamo") && s.fail.length === 2, `then: “${s.note}”; Thran Dynamo isn't suggested`);
+      ok(s.note === NOTE5 + OVER + "." + FAILED(2) && !s.swaps.some(x => x.add === "Thran Dynamo") && s.fail.length === 2, `then: “${s.note}”; Thran Dynamo isn't suggested`);
       ok(!errs.length, "no errors" + (errs.length ? ": " + errs[0] : "")); await context.close(); }
 
     // 8. a slow search (4 s), cap Any with a $25 budget: the swaps show at once, priced when the lookup is done; acting meanwhile records an unknown price
@@ -167,7 +169,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       ok(!(await p.$(".swap")), "while prices are being looked up under a cap, no swap is shown");
       await settled(p); const s = await state(p);
       ok(s.upr["Generous Gift"] === null && s.upr["Thran Dynamo"] === "absent" && s.fail.join() === "Thran Dynamo", `Generous Gift: no price; Thran Dynamo: lookup failed (${JSON.stringify(s.upr)})`);
-      ok(s.swaps.map(x => x.add).join() === "Pongify" && s.note === NOTE5 + " 1 card was skipped because no price could be found." + FAILED(1), `only the priced card within the cap is suggested (${s.swaps.map(x => x.add)}); the note counts each apart: “${s.note}”`);
+      ok(s.swaps.map(x => x.add).join() === "Pongify" && s.note === NOTE5 + OVER + "; " + NOPRICE + "." + FAILED(1), `only the priced card within the cap is suggested (${s.swaps.map(x => x.add)}); the note counts each apart: “${s.note}”`);
       ok(!errs.length, "no errors" + (errs.length ? ": " + errs[0] : "")); await context.close(); }
 
     // 10. answers out of order: a failure that arrives late never erases a price found meanwhile

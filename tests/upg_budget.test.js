@@ -149,7 +149,7 @@ async function page(b, opts, ctx) {
       const pm = r.find(x => /^Dour Port-Mage →/.test(x.pair));
       ok(pm && /\$1\.72 \(−\$0\.88\)|\$0\.29 \(−\$2\.31\)|\$1\.75 \(−\$0\.85\)/.test(pm.card), `${label}: a replacement cheaper than the $2.60 card going out shows the saving: ${pm && pm.card}`);
       const note = await p.evaluate(() => document.querySelector("#uCapNote").textContent);
-      ok(note === "Cards to buy are suggested only up to $5.00 each; cards you own are always suggested.", `${label}: "${note}"`);
+      ok(note === "Cards to buy are suggested only up to $5.00 each; cards you own are always suggested. 1 suggestion exceeded your $5.00 cap.", `${label}: "${note}"`);      // Cyclonic Rift, $41.55 (Stage 2K-4 wording)
       ok(r.every(x => !x.over && !/Over your budget/.test(x.text)), `${label}: budget Any with a $5 cap: nothing is over budget`);
       // $25 total and $5 per card: each card within $5, and the total within $25
       await p.click('#uBud [data-b="25"]'); await p.waitForTimeout(600); const t = await p.evaluate(() => document.querySelector("#dPane").textContent.replace(/\s+/g, " "));
@@ -180,7 +180,7 @@ async function page(b, opts, ctx) {
       // the same deck with a $5 cap: Generous Gift (no priced printing anywhere) is skipped, and the note counts it
       await p.click('#uCap [data-c="5"]'); await p.waitForFunction(() => document.querySelector("#uCapNote"), null, { timeout: 10000 }); await p.waitForTimeout(300);
       const n6 = await p.evaluate(() => ({ note: document.querySelector("#uCapNote").textContent, gg: [...document.querySelectorAll(".swap")].some(s => /Generous Gift/.test(s.textContent)) }));
-      ok(!n6.gg && n6.note === "Cards to buy are suggested only up to $5.00 each; cards you own are always suggested. 1 card was skipped because no price could be found.", `with a $5 cap the card with no price is skipped and counted: "${n6.note}"`);
+      ok(!n6.gg && n6.note === "Cards to buy are suggested only up to $5.00 each; cards you own are always suggested. 1 otherwise-eligible suggestion had no available price.", `with a $5 cap the card with no price is skipped and counted: "${n6.note}"`);
       ok(!errs.length, "no errors" + (errs.length ? ": " + errs[0] : ""));
       await context.close();
     }
