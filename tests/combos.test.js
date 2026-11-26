@@ -8,7 +8,7 @@ const ALL = { as_of: "2026-11-05T16:11:55+00:00", source: "Commander Spellbook (
   combos: [["1-2", [0, 1], [0, 1], [], 28214, "R"], ["1-3", [0, 2], [0], [], 20000, "UR"], ["1-4", [0, 3], [0], [], 15000, "RW"], ["5-6", [4, 5], [2], [0], 38005, "U"], ["7-8", [-7, 7], [3], [], 5000, "R"],
     ["9-10", [8, 9], [0], [], 9000, "UR"], ["11-12-6", [10, 11, 5], [2], [], 4000, "C"]] };
 async function run(opts, shot) {
-  const srv = spawn("python3", ["-m", "http.server", "8803", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
+  const srv = spawn("python3", ["-m", "http.server", "9608", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
   const b = await chromium.launch(), p = await (await b.newContext(opts)).newPage(), errs = [], asked = [];
   p.on("pageerror", e => errs.push(e.message)); p.on("console", m => { if (m.type() === "error" && !/Failed to load resource|fetching the script/.test(m.text())) errs.push(m.text()); });
   await p.route("https://raw.githubusercontent.com/junkcase/Deckhand/data/**", r => { const k = r.request().url().split("/data/")[1]; asked.push(k);
@@ -20,7 +20,7 @@ async function run(opts, shot) {
     const m = u.match(/named\?exact=([^&]+)/); if (m) return r.fulfill({ status: 200, contentType: "application/json", headers: H, body: JSON.stringify({ object: "card", id: "fel", oracle_id: "of", name: m[1], set: "kld", set_name: "Kaladesh", collector_number: "1", rarity: "uncommon", type_line: "Creature — Cat Beast", cmc: 4, mana_cost: "{3}{W}", colors: ["W"], color_identity: ["W"], prices: { usd: "1" }, finishes: ["nonfoil"], legalities: { commander: "legal" }, image_uris: { small: "https://cards.scryfall.io/s.png", normal: "https://cards.scryfall.io/n.png" } }) });
     if (u.includes("is:gamechanger") || u.includes("otag:")) return r.fulfill({ status: 200, contentType: "application/json", headers: H, body: JSON.stringify({ data: [], has_more: false }) });
     r.fulfill({ status: 404, headers: H, body: "{}" }); });
-  await p.goto("http://127.0.0.1:8803/app_real.html"); await p.waitForTimeout(500);
+  await p.goto("http://127.0.0.1:9608/app_real.html"); await p.waitForTimeout(500);
   await p.evaluate(() => {
     const mk = (id, name, ci, type) => ({ id, oid: "o" + id, name, set: "x", setName: "X", num: "1", rarity: "rare", type: type || "Creature", cmc: 3, mana: "{2}{R}", colors: ci, ci, img: "", prices: { usd: "1" }, finishes: ["nonfoil"], leg: { commander: "l" }, roles: [] });
     addToColl(mk("pe", "Pestermite", ["U"]), "nonfoil", 1, "main");

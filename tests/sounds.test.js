@@ -15,13 +15,13 @@ const FAKE_AUDIO = () => {
   window.AudioContext = AC; window.webkitAudioContext = AC;
 };
 async function run(opts) {
-  const srv = spawn("python3", ["-m", "http.server", "8799", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
+  const srv = spawn("python3", ["-m", "http.server", "9607", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
   const b = await chromium.launch({ args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] }), ctx = await b.newContext(opts), p = await ctx.newPage(), errs = [];
   await ctx.addInitScript(FAKE_AUDIO);
   p.on("pageerror", e => errs.push(e.message)); p.on("console", m => { if (m.type() === "error" && !/Failed to load resource|fetching the script|Permission|NotAllowed|NotFound|camera/i.test(m.text())) errs.push(m.text()); });
   await p.route("https://cards.scryfall.io/**", r => r.fulfill({ status: 200, contentType: "image/png", body: PNG }));
   await p.route("https://**", r => r.fulfill({ status: 404, headers: { "Access-Control-Allow-Origin": "*" }, body: "{}" }));
-  await p.goto("http://127.0.0.1:8799/app_real.html"); await p.waitForTimeout(500);
+  await p.goto("http://127.0.0.1:9607/app_real.html"); await p.waitForTimeout(500);
   const R = {};
   await p.evaluate(() => {
     S.binders = { main: { id: "main", name: "Collection" }, wish: { id: "wish", name: "Wishlist", wish: true } }; S.meta.binder = "main"; save();

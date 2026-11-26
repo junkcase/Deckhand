@@ -3,11 +3,11 @@
 const { chromium, devices } = require("playwright"); const { spawn } = require("child_process");
 const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exitCode = 1; };
 async function run(opts) {
-  const srv = spawn("python3", ["-m", "http.server", "8806", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
+  const srv = spawn("python3", ["-m", "http.server", "9611", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
   const b = await chromium.launch(), p = await (await b.newContext(opts)).newPage(), errs = [];
   p.on("pageerror", e => errs.push(e.message));
   await p.route("https://**", r => r.fulfill({ status: 404, headers: { "Access-Control-Allow-Origin": "*" }, body: "{}" }));
-  await p.goto("http://127.0.0.1:8806/app_real.html"); await p.waitForTimeout(500);
+  await p.goto("http://127.0.0.1:9611/app_real.html"); await p.waitForTimeout(500);
   const R = {};
   const syncIn = () => p.evaluate(() => { const st = JSON.parse(JSON.stringify(pickSync(S))); st.coll["other|nonfoil|main"] = { id: "other", name: "From Other Device", set: "x", num: "1", finish: "nonfoil", qty: 1, binder: "main", prices: {}, finishes: ["nonfoil"] }; applySynced(st, "desktop"); });
   await p.evaluate(() => { const c = (id, name) => ({ id, name, type: "Instant", set: "x", num: "1", qty: 1, cmc: 1, side: false, prices: { usd: "1" }, img: "", finishes: ["nonfoil"], leg: {}, roles: [] });

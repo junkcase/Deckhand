@@ -8,7 +8,7 @@ const OPPS = { as_of: today, rankSince: today, fresh: { history: today, manapool
   gaps: [{ id: ID, name: "Gap Card", set: "abc", setName: "ABC", num: "1", fin: "nonfoil", price: 300, ch7: 0, ch30: null, ev: ["Card Kingdom is paying $4.10 cash on its buylist; TCGplayer market is $3.00 (+37%)."], risk: [] }],
   played: [], lows: [], demand: [] } };
 async function run(opts, shot, data) {
-  const srv = spawn("python3", ["-m", "http.server", "8808", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
+  const srv = spawn("python3", ["-m", "http.server", "9614", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
   const b = await chromium.launch(), p = await (await b.newContext(opts)).newPage(), errs = [];
   p.on("pageerror", e => errs.push(e.message)); p.on("console", m => { if (m.type() === "error" && !/Failed to load resource|fetching the script/.test(m.text())) errs.push(m.text()); });
   await p.route("https://raw.githubusercontent.com/junkcase/Deckhand/data/**", r => { const k = r.request().url().split("/data/")[1].split("?")[0];
@@ -17,7 +17,7 @@ async function run(opts, shot, data) {
   await p.route("https://api.scryfall.com/**", r => { const u = r.request().url(), H = { "Access-Control-Allow-Origin": "*" };
     if (u.includes("/cards/" + ID)) return r.fulfill({ status: 200, contentType: "application/json", headers: H, body: JSON.stringify({ object: "card", id: ID, oracle_id: "o", name: "Mover Card", set: "cmm", set_name: "Commander Masters", collector_number: "12", rarity: "rare", type_line: "Artifact", cmc: 2, mana_cost: "{2}", colors: [], color_identity: [], prices: { usd: "9.00" }, finishes: ["nonfoil"], legalities: {}, image_uris: { small: "https://cards.scryfall.io/s.png", normal: "https://cards.scryfall.io/n.png" } }) });
     r.fulfill({ status: 404, headers: H, body: "{}" }); });
-  await p.goto("http://127.0.0.1:8808/app_real.html"); await p.waitForTimeout(500);
+  await p.goto("http://127.0.0.1:9614/app_real.html"); await p.waitForTimeout(500);
   await p.evaluate(() => go("market")); await p.waitForTimeout(200);
   const R = {};
   await p.click('#mkV [data-v="opps"]'); await p.waitForTimeout(700);

@@ -1,13 +1,13 @@
 const { chromium } = require("playwright"); const { spawn } = require("child_process");
 const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exitCode = 1; };
 (async () => {
-  const srv = spawn("python3", ["-m", "http.server", "8780", "--bind", "127.0.0.1"], { cwd: require("path").join(__dirname, ".."), stdio: "ignore" }); await new Promise(r => setTimeout(r, 700));
+  const srv = spawn("python3", ["-m", "http.server", "9605", "--bind", "127.0.0.1"], { cwd: require("path").join(__dirname, ".."), stdio: "ignore" }); await new Promise(r => setTimeout(r, 700));
   const b = await chromium.launch(), ctx = await b.newContext({ viewport: { width: 412, height: 900 } }), p = await ctx.newPage();
   await ctx.route(/fonts\.googleapis|fonts\.gstatic|cdn\.jsdelivr|api\.scryfall/, r => r.abort());
   const errs = []; p.on("pageerror", e => errs.push(e.message));
   // saved copies belonging to other sites on the same address, and an old Deckhand one, before Deckhand's helper starts
-  await p.goto("http://127.0.0.1:8780/manifest.webmanifest"); await p.evaluate(async () => { for (const n of ["other-project-v1", "workbox-precache-v2", "deckhand-v1"]) await (await caches.open(n)).put("/x-" + n, new Response("x")); });
-  await p.goto("http://127.0.0.1:8780/"); await p.waitForTimeout(1500);
+  await p.goto("http://127.0.0.1:9605/manifest.webmanifest"); await p.evaluate(async () => { for (const n of ["other-project-v1", "workbox-precache-v2", "deckhand-v1"]) await (await caches.open(n)).put("/x-" + n, new Response("x")); });
+  await p.goto("http://127.0.0.1:9605/"); await p.waitForTimeout(1500);
   const keys = await p.evaluate(async () => { await navigator.serviceWorker.ready; await new Promise(r => setTimeout(r, 500)); return (await caches.keys()).sort(); });
   ok(keys.includes("other-project-v1") && keys.includes("workbox-precache-v2") && !keys.includes("deckhand-v1") && keys.some(k => /^deckhand-v\d+$/.test(k)), "the offline helper clears only Deckhand's own old saved copies, not other sites' " + JSON.stringify(keys));
   const man = await p.evaluate(async () => { const l = document.querySelector('link[rel="manifest"]'); return l ? await (await fetch(l.href)).json() : null; });

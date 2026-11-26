@@ -5,7 +5,7 @@ const ALL = [C("Sol Ring", "cmm", "410"), C("Sol Ring", "ltc", "284"), C("Forest
   C("Krenko, Mob Boss", "ddt", "52", { type_line: "Legendary Creature — Goblin", color_identity: ["R"] }), C("Krenko, Mob Boss", "m13", "139", { type_line: "Legendary Creature — Goblin", color_identity: ["R"] })];
 const newest = n => ALL.filter(c => c.name === n)[0];
 (async () => {
-  const srv = spawn("python3", ["-m", "http.server", "8777", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 700));
+  const srv = spawn("python3", ["-m", "http.server", "9601", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 700));
   const b = await chromium.launch(), p = await b.newPage({ viewport: { width: 1200, height: 900 } }); p.on("pageerror", e => console.log("pageerror", e.message));
   await p.route("https://api.scryfall.com/**", r => { const u = decodeURIComponent(r.request().url()), J = (j, st = 200) => r.fulfill({ status: st, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(j) });
     if (u.includes("card-names")) return J({ data: [...new Set(ALL.map(c => c.name))] }); if (u.endsWith("/sets")) return J({ data: [] });
@@ -17,7 +17,7 @@ const newest = n => ALL.filter(c => c.name === n)[0];
     if (u.includes("/cards/collection")) return J({ data: [], not_found: [] });
     return J({}, 404); });
   await p.route("https://cards.scryfall.io/**", r => r.fulfill({ status: 200, contentType: "image/png", body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64") }));
-  await p.goto("http://127.0.0.1:8777/app_real.html"); await p.waitForTimeout(600);
+  await p.goto("http://127.0.0.1:9601/app_real.html"); await p.waitForTimeout(600);
   await p.evaluate(sol => { const e = slim(sol); delete e.leg; addToColl(e, "nonfoil", 1, "main"); go("coll"); }, ALL[0]);
   await p.waitForTimeout(300);
   const big = () => p.evaluate(() => { const i = document.querySelector("#bigImg"); return i ? i.getAttribute("src") : null; });

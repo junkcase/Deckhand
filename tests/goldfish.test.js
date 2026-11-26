@@ -2,11 +2,11 @@
 const { chromium, devices } = require("playwright"); const { spawn } = require("child_process");
 const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exitCode = 1; };
 async function run(opts, shot) {
-  const srv = spawn("python3", ["-m", "http.server", "8804", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
+  const srv = spawn("python3", ["-m", "http.server", "9609", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
   const b = await chromium.launch(), p = await (await b.newContext(opts)).newPage(), errs = [];
   p.on("pageerror", e => errs.push(e.message));
   await p.route("https://**", r => r.fulfill({ status: 404, headers: { "Access-Control-Allow-Origin": "*" }, body: "{}" }));
-  await p.goto("http://127.0.0.1:8804/app_real.html"); await p.waitForTimeout(500);
+  await p.goto("http://127.0.0.1:9609/app_real.html"); await p.waitForTimeout(500);
   const R = await p.evaluate(() => {
     const mk = (id, name, type, cmc, qty, roles = []) => ({ id, name, type, cmc, qty, set: "x", num: "1", img: "", prices: { usd: "1" }, finishes: ["nonfoil"], leg: { commander: "l" }, roles });
     const deck = (id, parts, cmdr) => { const cards = {}; for (const c of parts) cards[c.id + "|0"] = c; if (cmdr) cards[cmdr.id + "|0"] = cmdr; return S.decks[id] = { id, name: id, format: "commander", cmdr: cmdr ? [cmdr.id + "|0"] : [], cards, created: 1, updated: 1 }; };

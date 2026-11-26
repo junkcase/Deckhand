@@ -12,7 +12,7 @@ const PRINTS = {
   "Coming Back": [P("Coming Back", "old", "expansion", 3000, { prices: { usd: "25" }, edhrec_rank: 300 }), P("Coming Back", "nxt", "expansion", -30)],
 };
 async function run(opts, shot) {
-  const srv = spawn("python3", ["-m", "http.server", "8807", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
+  const srv = spawn("python3", ["-m", "http.server", "9613", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
   const b = await chromium.launch(), p = await (await b.newContext(opts)).newPage(), errs = [], asked = [];
   p.on("pageerror", e => errs.push(e.message)); p.on("console", m => { if (m.type() === "error" && !/Failed to load resource|fetching the script/.test(m.text())) errs.push(m.text()); });
   await p.route("https://cards.scryfall.io/**", r => r.fulfill({ status: 200, contentType: "image/png", body: PNG }));
@@ -20,7 +20,7 @@ async function run(opts, shot) {
   await p.route("https://api.scryfall.com/**", r => { const u = decodeURIComponent(r.request().url()), H = { "Access-Control-Allow-Origin": "*" }, m = u.match(/!"([^"]+)"/);
     if (u.includes("/cards/search") && m && PRINTS[m[1]]) { asked.push(m[1]); return r.fulfill({ status: 200, contentType: "application/json", headers: H, body: JSON.stringify({ data: PRINTS[m[1]], has_more: false }) }); }
     r.fulfill({ status: 404, headers: H, body: "{}" }); });
-  await p.goto("http://127.0.0.1:8807/app_real.html"); await p.waitForTimeout(500);
+  await p.goto("http://127.0.0.1:9613/app_real.html"); await p.waitForTimeout(500);
   const slimOf = n => ({ id: n + "x", oid: "o-" + n, name: n, set: "x", setName: "X", num: "1", rarity: "rare", type: "Artifact", cmc: 1, colors: [], ci: [], img: "", prices: { usd: "1.5" }, finishes: ["nonfoil"] });
   const R = {}, look = async n => { await p.evaluate(c => { closeSheet(); openCard(c, "nonfoil"); }, slimOf(n)); await p.waitForFunction(() => /Reprint risk/.test((document.querySelector("#rrBox") || {}).textContent || "") || /couldn't/.test((document.querySelector("#rrBox") || {}).textContent || ""), null, { timeout: 8000 }); return p.$eval("#rrBox", e => e.textContent.replace(/\s+/g, " ").trim()); };
   R.sol = await look("Sol Ring"); if (shot) { await p.$eval("#rrBox", e => e.scrollIntoView()); await p.screenshot({ path: __dirname + "/" + shot }); }

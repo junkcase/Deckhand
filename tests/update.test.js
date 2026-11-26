@@ -2,13 +2,13 @@
 const { chromium, devices } = require("playwright"); const { spawn } = require("child_process"); const fs = require("fs");
 const ok = (c, m) => { console.log(c ? "ok  " : "FAIL", m); if (!c) process.exitCode = 1; };
 (async () => {
-  const srv = spawn("python3", ["-m", "http.server", "8792", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
+  const srv = spawn("python3", ["-m", "http.server", "9606", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
   const b = await chromium.launch(), p = await (await b.newContext(devices["Pixel 7"])).newPage(), errs = [];
   p.on("pageerror", e => errs.push(e.message)); p.on("console", m => { if (m.type() === "error" && !/Failed to load resource|fetching the script/.test(m.text())) errs.push(m.text()); });
   await p.route("https://**", r => r.fulfill({ status: 404, headers: { "Access-Control-Allow-Origin": "*" }, body: "{}" }));
   let served = fs.readFileSync(__dirname + "/app_real.html", "utf8"), checks = 0;
   await p.route("**/app_real.html?update-check=*", r => { checks++; r.fulfill({ status: 200, contentType: "text/html", body: served }); });
-  await p.goto("http://127.0.0.1:8792/app_real.html"); await p.waitForTimeout(3600);
+  await p.goto("http://127.0.0.1:9606/app_real.html"); await p.waitForTimeout(3600);
   const R = {};
   R.first = [checks, !(await p.$("#updBar"))];
   await p.evaluate(() => checkUpdate()); R.same = !(await p.$("#updBar"));

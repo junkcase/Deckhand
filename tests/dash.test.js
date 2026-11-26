@@ -6,12 +6,12 @@ const card = (id, name, set, rarity, usd) => ({ object: "card", id, oracle_id: "
 const CARDS = [card("a", "Alpha Mythic", "cmm", "mythic", 40), card("b", "Beta Rare", "cmm", "rare", 5), card("c", "Gamma Rare", "mh3", "rare", 12),
   card("d", "Delta Common", "mh3", "common", 0.1), card("e", "Eps Uncommon", "lci", "uncommon", null), card("w", "Wanted Mythic", "otj", "mythic", 99)];
 async function run(ctxOpts, shot) {
-  const srv = spawn("python3", ["-m", "http.server", "8777", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
+  const srv = spawn("python3", ["-m", "http.server", "9602", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
   const b = await chromium.launch(), ctx = await b.newContext(ctxOpts), p = await ctx.newPage(), errs = [];
   p.on("pageerror", e => errs.push(e.message)); p.on("console", m => { if (m.type() === "error" && !/Failed to load resource|fetching the script/.test(m.text())) errs.push(m.text()); });
   await p.route("https://cards.scryfall.io/**", r => r.fulfill({ status: 200, contentType: "image/png", body: PNG }));
   await p.route("https://api.scryfall.com/**", r => r.fulfill({ status: 404, headers: { "Access-Control-Allow-Origin": "*" }, body: "{}" }));
-  await p.goto("http://127.0.0.1:8777/app_real.html"); await p.waitForTimeout(500);
+  await p.goto("http://127.0.0.1:9602/app_real.html"); await p.waitForTimeout(500);
   const R = {};
   // empty state still the welcome screen
   R.empty = await p.evaluate(() => { go("coll"); return !!document.querySelector(".welcome") && !document.querySelector("#dash"); });

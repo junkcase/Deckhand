@@ -6,7 +6,7 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 const card = (set, num, name, usd) => ({ object: "card", id: `${set}-${num}`, oracle_id: "o" + set + num, name, set, set_name: "Test Set", collector_number: String(num), rarity: "common", type_line: "Creature", cmc: 2, mana_cost: "{2}", colors: [], color_identity: [], prices: { usd: String(usd) }, finishes: ["nonfoil"], legalities: {}, image_uris: { small: `https://cards.scryfall.io/${set}${num}.png`, normal: `https://cards.scryfall.io/${set}${num}.png` } });
 const SET = [card("tst", 1, "Ant", 1), card("tst", 2, "Bee", 2), card("tst", 3, "Cat", 3), card("tst", 4, "Dog", 4)];
 async function run(opts) {
-  const srv = spawn("python3", ["-m", "http.server", "8805", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
+  const srv = spawn("python3", ["-m", "http.server", "9610", "--bind", "127.0.0.1"], { cwd: __dirname, stdio: "ignore" }); await new Promise(r => setTimeout(r, 600));
   const b = await chromium.launch(), p = await (await b.newContext(opts)).newPage(), errs = [], imgs = [];
   p.on("pageerror", e => errs.push(e.message));
   await p.route("https://cards.scryfall.io/**", r => { imgs.push(r.request().url()); r.fulfill({ status: 200, contentType: "image/png", body: PNG }); });
@@ -15,7 +15,7 @@ async function run(opts) {
     if (/\/sets(\?|$)/.test(u)) return J({ data: [{ code: "tst", name: "Test Set", released_at: "2025-01-01", card_count: 4, printed_size: 4, set_type: "expansion", icon_svg_uri: "https://svgs.scryfall.io/sets/tst.svg" }] });
     if (u.includes("/cards/search")) return J({ object: "list", data: SET, has_more: false });
     r.fulfill({ status: 404, headers: { "Access-Control-Allow-Origin": "*" }, body: "{}" }); });
-  await p.goto("http://127.0.0.1:8805/app_real.html"); await p.waitForTimeout(500);
+  await p.goto("http://127.0.0.1:9610/app_real.html"); await p.waitForTimeout(500);
   const touch = opts.hasTouch;
   const title = () => p.$eval("#sheetBody h2", e => e.textContent.trim()).catch(() => null);
   const pos = () => p.$eval("#cnPos", e => e.textContent).catch(() => null);
