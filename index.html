@@ -7785,7 +7785,8 @@ function upgView() {
   const open = {}; el.querySelectorAll("details").forEach(x => { open[upgSecName(x)] = x.open; });
   let a = null;                // the first thing on screen: a section, or the group or suggestion inside it that the screen starts in
   for (const e of el.querySelectorAll(":scope > *, .swap, .group-h")) { const r = e.getBoundingClientRect(); if (r.bottom <= 0) continue; if (a && !a.contains(e)) break; a = e; if (r.top >= 0) break; }
-  return { open, key: a ? upgViewKey(a) : null, top: a ? a.getBoundingClientRect().top : 0 };
+  const cf = el.querySelector(".swap .confirm:not([hidden])");        // an open Replace confirmation, by the swap it is for
+  return { open, key: a ? upgViewKey(a) : null, top: a ? a.getBoundingClientRect().top : 0, confirm: cf ? upgViewKey(cf.closest(".swap")) : null, cfTop: cf ? cf.getBoundingClientRect().top : 0 };
 }
 function upgViewBack(v) {
   const el = $("#dPane"); if (!v || !el) return;
@@ -7891,7 +7892,14 @@ async function drawUpgrade(d) {
       <div id="uReport" style="margin-top:8px">${upgReport(d, U, A)}</div>
       <div class="row wrap" style="gap:6px;margin-top:8px"><button class="btn sm" id="uSaveRep">Save this report with the deck</button><button class="btn sm ghost" id="uNewRep">Start a new report from here</button></div>
       ${(d.upg.reports || []).length ? `<p class="small muted" style="margin-top:6px">Saved reports: ${d.upg.reports.map((r, i) => `<button class="linkbtn" data-rep="${i}">${esc(dayLabel(r.at))}</button>`).join(" · ")}</p>` : ""}</details>`;
+  // a background redraw while a Replace confirmation was open: it is opened again for the same swap, whose row now shows the update,
+  // and kept at the same height on the screen (its buttons don't move under your finger). If that swap isn't in the list now, it stays
+  // closed and a message says so.
+  const cf = st.view && st.view.confirm, cfAt = cf ? [...el.querySelectorAll(".swap")].find(e => upgViewKey(e) === cf) : null, cfTop = cf ? st.view.cfTop : 0;
+  if (cfAt) { const j = +cfAt.querySelector("[data-srep]").dataset.srep; upgConfirm(d, swaps[j], j, "replace"); }
+  else if (cf) upgNote(pending ?`The Replace confirmation for ${cf.slice(5)} was closed while the suggestions are checked again. Nothing was replaced.` : `${cf.slice(5)} is no longer suggested, so its Replace confirmation was closed. Nothing was replaced.`);
   if (st.view) { upgViewBack(st.view); st.view = null; }          // a background redraw: the sections you had open, and your place on the page
+  if (cfAt) upgScroller().scrollTop += cfAt.querySelector(".confirm").getBoundingClientRect().top - cfTop;
   // actions
   const S_ = i => swaps[+i];
   // pressing a preset button (before its click) marks it, so that leaving an amount box this way doesn't redraw the tab under the click
@@ -7916,15 +7924,25 @@ async function drawUpgrade(d) {
   // was waiting for you to leave the box (see upgRedraw) is run from here, as the focusout listener would
   if (typingWait && !typingIn()) setTimeout(() => { if (typingWait && !typingIn()) { const f = typingWait; typingWait = null; f(); } }, 120);
 }
+// a message about a closed confirmation that doesn't take the place of a message with an action on screen (an Undo): it waits until
+// that one and any message after it have gone, then shows (only the latest such message waits)
+let upgNoteWait = null;
+function upgNote(msg) {
+  const root = $("#toastRoot"); if (!root || !$("#toastAct")) return toast(msg);
+  if (upgNoteWait) { upgNoteWait.msg = msg; return; }
+  upgNoteWait = { msg }; const t = setInterval(() => { if (root.textContent) return; clearInterval(t); const m = upgNoteWait.msg; upgNoteWait = null; toast(m); }, 250);
+}
 function upgConfirm(d, s, i, how) {
   const box = $("#sconf-" + i); if (!box) return;
   const al = allocFor(s.best.card.name, d.id), elsewhere = !shareCopies() && al.own && !al.free;
   box.hidden = false;
   box.innerHTML = `<div class="small">Take out <b>${esc(s.cut.card.name)}</b> and put in <b>${esc(s.best.card.name)}</b>?${elsewhere ? ` Your copy is in ${esc(al.where.map(w => w.name).join(", "))}.` : ""}</div>
     <div class="row wrap" style="gap:6px;margin-top:6px"><button class="btn sm primary" id="sy-${i}">Replace</button>${elsewhere ? `<button class="btn sm" id="sm-${i}">Replace and move my copy from ${esc(al.where[0].name)}</button>` : ""}<button class="btn sm ghost" id="sn-${i}">Cancel</button></div>`;
-  $("#sy-" + i).onclick = () => { applyUpgrade(d, s, "replace"); drawUpgrade(d); };
-  const mv = $("#sm-" + i); if (mv) mv.onclick = () => { applyUpgrade(d, s, "replace", al.where[0].id); drawUpgrade(d); };
-  $("#sn-" + i).onclick = () => { box.hidden = true; };
+  // answered: a background redraw already on its way doesn't open it again
+  const done = () => { const st = upgState[d.id]; if (st && st.view) st.view.confirm = null; };
+  $("#sy-" + i).onclick = () => { done(); applyUpgrade(d, s, "replace"); drawUpgrade(d); };
+  const mv = $("#sm-" + i); if (mv) mv.onclick = () => { done(); applyUpgrade(d, s, "replace", al.where[0].id); drawUpgrade(d); };
+  $("#sn-" + i).onclick = () => { done(); box.hidden = true; };
 }
 function upgLog(d, h) { h.id = uid(); h.at = Date.now(); (d.history = d.history || []).push(h); if (d.history.length > 200) d.history.splice(0, d.history.length - 200); return h; }
 /* ---------- Combos: known combos from Commander Spellbook (commanderspellbook.com, a free community database) ----------
