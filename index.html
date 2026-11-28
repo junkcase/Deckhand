@@ -7770,10 +7770,34 @@ function upgRedraw(d) {
   const keep = () => { if (here() && upgState[d.id]) upgState[d.id].view = upgView(); };
   if (typingIn()) whenNotTyping(() => upgAfterTap(() => { keep(); render(); })); else upgAfterTap(() => { if (here()) { keep(); drawUpgrade(d); } });
 }
-// a budget or cap preset button pressed and not yet clicked: the tab waits to be drawn again until the click lands (or 1.5 s pass), so
-// the click isn't lost under a redraw (leaving an amount box by pressing a preset enters the amount and would redraw the tab at once)
-let upgTapUntil = 0;
+// a budget or cap preset button pressed and not yet clicked: the tab waits to be drawn again until the click lands, so the click isn't
+// lost under a redraw (leaving an amount box by pressing a preset enters the amount and would redraw the tab at once). The wait lasts
+// while the press does, however long, up to 10 s; a press that ends without its click (moved off, cancelled, capture lost) ends it
+// 100 ms later, after any click. Only the press that started it (its pointer) can end it.
+let upgTapUntil = 0, upgPress = null;
 const upgAfterTap = fn => { if (Date.now() < upgTapUntil) setTimeout(() => upgAfterTap(fn), 50); else fn(); };
+for (const ev of ["pointerup", "pointercancel", "lostpointercapture"]) document.addEventListener(ev, e => {
+  if (!upgPress || e.pointerId !== upgPress.id) return; upgPress = null;
+  if (upgTapUntil > Date.now()) upgTapUntil = Math.min(upgTapUntil, Date.now() + 100); }, true);
+// an amount entered with Enter, Tab or Shift+Tab: the tab is drawn again, which replaces the box, so focus is put back where the key
+// left it: on the box (Enter), or on the control now just after it (Tab) or just before it (Shift+Tab). Only when focus has fallen to the
+// page, for 2 s, and not after a pointer press or a key pressed anywhere else. With focus back in the box, later updates wait for you to
+// leave it, as while typing.
+let upgFocus = null;
+document.addEventListener("keydown", e => { const t = e.target, box = t && (t.id === "uBudC" || t.id === "uCapC");
+  if (box && (e.key === "Enter" || e.key === "Tab")) upgFocus = { id: t.id, dir: e.key === "Enter" ? 0 : e.shiftKey ? -1 : 1, until: Date.now() + 2000 };
+  else if (upgFocus && !["Shift", "Control", "Alt", "Meta"].includes(e.key)) upgFocus = null; }, true);
+document.addEventListener("pointerdown", () => { upgFocus = null; }, true);
+function upgRefocus() {
+  const f = upgFocus, el = $("#dPane"); if (!f) return; if (Date.now() > f.until) { upgFocus = null; return; }
+  if (document.activeElement && document.activeElement !== document.body) return;
+  const box = document.getElementById(f.id); if (!el || !box || !el.contains(box)) { upgFocus = null; return; }
+  // Enter: an update that was waiting for you to leave the box runs first (the amount is entered, nothing half-typed to keep), then focus
+  // goes back to the box
+  if (f.dir === 0 && typingWait) { setTimeout(upgRefocus, 200); return; }
+  const all = [...el.querySelectorAll("button, input, select, textarea, summary, a[href], [tabindex]")].filter(x => x.tabIndex >= 0 && !x.disabled && x.offsetParent !== null);
+  const t = f.dir === 0 ? box : all[all.indexOf(box) + f.dir]; if (t) t.focus({ preventScroll: true }); else upgFocus = null;
+}
 // what you had open in the Upgrade tab and where you were on it, put back after a background redraw: each section's open state (by its
 // title, without the count in brackets), and the first suggestion, group or section on screen, kept at the same height
 const upgSecName = x => ((x.querySelector("summary") || {}).textContent || "").replace(/\s*\(\d+\)\s*$/, "");
@@ -7903,11 +7927,12 @@ async function drawUpgrade(d) {
   // actions
   const S_ = i => swaps[+i];
   // pressing a preset button (before its click) marks it, so that leaving an amount box this way doesn't redraw the tab under the click
-  $("#uBud").onpointerdown = $("#uCap").onpointerdown = e => { if (e.target.closest("button")) upgTapUntil = Date.now() + 1500; };
+  $("#uBud").onpointerdown = $("#uCap").onpointerdown = e => { if (e.target.closest("button")) { upgTapUntil = Date.now() + 10000; upgPress = { id: e.pointerId }; } };
   $("#uBud").onclick = e => { upgTapUntil = 0; const b = e.target.closest("button"); if (!b) return; d.upg.budget = b.dataset.b === "" ? null : +b.dataset.b; save(); drawUpgrade(d); };
-  $("#uBudC").onchange = e => { const v = parseFloat(e.target.value); d.upg.budget = isNaN(v) ? null : v; save(); upgAfterTap(() => drawUpgrade(d)); };
+  // an amount is saved at once; the tab is drawn again a moment later, once Enter / Tab / Shift+Tab has finished (see upgRefocus)
+  $("#uBudC").onchange = e => { const v = parseFloat(e.target.value); d.upg.budget = isNaN(v) ? null : v; save(); setTimeout(() => upgAfterTap(() => drawUpgrade(d))); };
   $("#uCap").onclick = e => { upgTapUntil = 0; const b = e.target.closest("button"); if (!b) return; d.upg.cap = b.dataset.c === "" ? null : +b.dataset.c; save(); drawUpgrade(d); };
-  $("#uCapC").onchange = e => { const v = parseFloat(e.target.value); d.upg.cap = isNaN(v) || v < 0 ? null : v; save(); upgAfterTap(() => drawUpgrade(d)); };
+  $("#uCapC").onchange = e => { const v = parseFloat(e.target.value); d.upg.cap = isNaN(v) || v < 0 ? null : v; save(); setTimeout(() => upgAfterTap(() => drawUpgrade(d))); };
   el.querySelectorAll("[data-srep]").forEach(b => b.onclick = () => upgConfirm(d, S_(b.dataset.srep), +b.dataset.srep, "replace"));
   el.querySelectorAll("[data-sadd]").forEach(b => b.onclick = () => { applyUpgrade(d, S_(b.dataset.sadd), "add"); drawUpgrade(d); });
   el.querySelectorAll("[data-scmp]").forEach(b => b.onclick = () => swapCompareSheet(d, S_(b.dataset.scmp), U));      // each option's impact is worked out when Compare opens
@@ -7923,6 +7948,7 @@ async function drawUpgrade(d) {
   // leaving an amount box by tapping elsewhere enters it and draws the tab before the box's focusout reaches the page, so an update that
   // was waiting for you to leave the box (see upgRedraw) is run from here, as the focusout listener would
   if (typingWait && !typingIn()) setTimeout(() => { if (typingWait && !typingIn()) { const f = typingWait; typingWait = null; f(); } }, 120);
+  upgRefocus();
 }
 // a message about a closed confirmation that doesn't take the place of a message with an action on screen (an Undo): it waits until
 // that one and any message after it have gone, then shows (only the latest such message waits)
